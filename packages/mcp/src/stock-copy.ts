@@ -1,8 +1,10 @@
 import {
   type AgentScope,
+  type ConnectionOutput,
   countWorkingSet,
   getAgentScope,
   getToolByName,
+  isConnectionUsable,
   listConnections,
   promoteTool,
   type ServiceContext,
@@ -12,6 +14,8 @@ import type { AuthoredToolRow } from "@graft/db/repo/tool";
 
 import type { McpDeps } from "./deps";
 import type { ToolListChangedNotifier } from "./notifier";
+import { revokedConnectionRefusal } from "./revoke";
+import { matchStockConnections, type StockHosts, stockToolRunsOver } from "./stock-match";
 import { authoredToolName } from "./tool-names";
 
 /**
@@ -23,34 +27,58 @@ import { authoredToolName } from "./tool-names";
  * per person (`@graft/publish`'s `copyStockVersion`), and a person's own tool of the name always
  * wins (the shadow rule): it is found first and stock is never asked.
  *
- * **A copy needs a connection of the integration in the agent's scope**, which becomes the copy's
- * default binding: matched by vendor slug for now (host matching is GRA-241). With none the answer
- * is `connection_needed`, carrying `connect`, the integration's `request_connection` arguments,
- * and nothing is written, so a person never holds a copy bound to nothing.
+ * **A copy needs a connection in the agent's scope that the stock tool runs over** (GRA-241;
+ * `stock-match.ts`: every host the manifest declares among the connection's, whatever its
+ * provider, the vendor slug breaking ties). The connection the caller named (`run_tool`'s
+ * `connectionId`), else the one match chosen, becomes the copy's default binding. With no match
+ * the answer is `connection_needed`, carrying `connect`, the integration's `request_connection`
+ * arguments, and nothing is written. With several matches and no choice the copy holds no default,
+ * and each run resolves its connection per agent (`run.ts`), which refuses two matches and no
+ * `connectionId` with `alternatives`.
  */
+
+export type EnsureRefusalReason =
+  | "tool_not_found"
+  | "connection_needed"
+  | "connection_not_in_scope"
+  | "connection_revoked"
+  | "connection_unusable"
+  | "connection_hosts_missing";
 
 export type EnsuredTool =
   | { ok: true; tool: AuthoredToolRow; copied: boolean }
   | {
       ok: false;
-      reason: "tool_not_found" | "connection_needed";
+      reason: EnsureRefusalReason;
       message: string;
-      details?: { connect: StockConnectProposal | null };
+      details?: { connect?: StockConnectProposal | null } & Record<string, unknown>;
     };
 
-/** The live connections of a vendor in the agent's scope, by id: what a stock tool can run over. */
-export function stockConnectionIds(
-  connections: readonly { id: string; vendor: string; revokedAt: Date | null }[],
+/**
+ * The connections a stock tool may run over for this agent, before matching: in the agent's scope
+ * and usable (`isConnectionUsable`: not revoked, its provider enabled, its credential in place), so
+ * a connection outside the scope is never matched, named or chosen.
+ */
+export function stockCandidates(
+  connections: readonly ConnectionOutput[],
   scopeIds: readonly string[],
-  vendor: string,
-): string[] {
+  providers: McpDeps["connection"]["providers"],
+): ConnectionOutput[] {
   const inScope = new Set(scopeIds);
-  return connections
-    .filter(
-      (connection) =>
-        connection.vendor === vendor && connection.revokedAt === null && inScope.has(connection.id),
-    )
-    .map((connection) => connection.id);
+  return connections.filter(
+    (connection) => inScope.has(connection.id) && isConnectionUsable(connection, providers),
+  );
+}
+
+/** The connections in the agent's scope a stock tool runs over, by id, the vendor's slug first. */
+export function stockConnectionIds(
+  connections: readonly ConnectionOutput[],
+  scopeIds: readonly string[],
+  stock: StockHosts,
+  providers: McpDeps["connection"]["providers"],
+): string[] {
+  const candidates = stockCandidates(connections, scopeIds, providers);
+  return matchStockConnections(stock, candidates).matches.map((connection) => connection.id);
 }
 
 /** The sentence for a stock tool whose integration the agent has no connection to. */
@@ -58,10 +86,65 @@ export function connectionNeededMessage(wire: string, vendor: string): string {
   return `${wire} is a ready-made tool for ${vendor}, and ${vendor} has no connection in this agent's scope. request_connection with the arguments in connect proposes one; once it is connected, the same call runs the tool.`;
 }
 
+/** The sentence for a named connection outside the agent's scope, the run's own (`run.ts`). */
+export function namedNotInScopeMessage(wire: string, connectionId: string): string {
+  return `${wire} was asked to run against connection ${connectionId}, which is not in this agent's scope. The person can add it in the console.`;
+}
+
+/**
+ * A connection the caller named for a stock tool, judged before the copy binds to it: in the
+ * agent's scope, not revoked, usable (`isConnectionUsable`, as an unnamed match is held to) and
+ * reaching every host the manifest declares. Null when it may be used. An unusable one is refused
+ * rather than bound, since a copy keeps its default until it is revoked or leaves the scope.
+ */
+function namedConnectionRefusal(
+  wire: string,
+  stock: StockHosts,
+  connectionId: string,
+  connection: ConnectionOutput | undefined,
+  scopeIds: readonly string[],
+  providers: McpDeps["connection"]["providers"],
+): Extract<EnsuredTool, { ok: false }> | null {
+  if (!connection || !scopeIds.includes(connectionId)) {
+    return {
+      ok: false,
+      reason: "connection_not_in_scope",
+      message: namedNotInScopeMessage(wire, connectionId),
+    };
+  }
+  if (connection.revokedAt !== null) {
+    const {
+      message,
+      error: _error,
+      reason: _reason,
+      ...details
+    } = revokedConnectionRefusal(connection);
+    return { ok: false, reason: "connection_revoked", message, details };
+  }
+  if (!isConnectionUsable(connection, providers)) {
+    return {
+      ok: false,
+      reason: "connection_unusable",
+      message: `${wire} was asked to run against connection ${connectionId} (${connection.displayName}), which cannot carry a call yet: its credential or consent is not in place, or its provider is not enabled here. The person completes it in the console.`,
+      details: { connectionId },
+    };
+  }
+  if (!stockToolRunsOver(stock, connection)) {
+    return {
+      ok: false,
+      reason: "connection_hosts_missing",
+      message: `${wire} calls ${stock.hosts.join(", ")}, and connection ${connectionId} (${connection.displayName}) does not reach all of them, so the tool cannot run over it.`,
+      details: { connectionId, hosts: [...stock.hosts] },
+    };
+  }
+  return null;
+}
+
 export async function ensureToolForAgent(
   deps: McpDeps,
   scope: AgentScope,
   key: { vendor: string; name: string },
+  options: { connectionId?: string } = {},
 ): Promise<EnsuredTool> {
   const ctx: ServiceContext = { db: deps.db };
   const principal = { personId: scope.personId };
@@ -80,19 +163,37 @@ export async function ensureToolForAgent(
     getAgentScope(ctx, scope, deps.agent),
     listConnections(ctx, principal, deps.connection),
   ]);
-  const [connectionId] = stockConnectionIds(connections, scopeIds, stock.vendor);
-  if (!connectionId) {
-    return {
-      ok: false,
-      reason: "connection_needed",
-      message: connectionNeededMessage(wire, stock.vendor),
-      details: { connect: stock.connect },
-    };
+  let defaultConnectionId: string | null;
+  if (options.connectionId) {
+    const named = connections.find((connection) => connection.id === options.connectionId);
+    const refused = namedConnectionRefusal(
+      wire,
+      stock,
+      options.connectionId,
+      named,
+      scopeIds,
+      deps.connection.providers,
+    );
+    if (refused) return refused;
+    defaultConnectionId = options.connectionId;
+  } else {
+    const candidates = stockCandidates(connections, scopeIds, deps.connection.providers);
+    const { matches, chosen } = matchStockConnections(stock, candidates);
+    if (matches.length === 0) {
+      return {
+        ok: false,
+        reason: "connection_needed",
+        message: connectionNeededMessage(wire, stock.vendor),
+        details: { connect: stock.connect },
+      };
+    }
+    defaultConnectionId = chosen?.id ?? null;
   }
   const tool = await (deps.toolSource as NonNullable<McpDeps["toolSource"]>).copy({
     personId: scope.personId,
+    agentId: scope.agentId,
     stock,
-    defaultConnectionId: connectionId,
+    defaultConnectionId,
   });
   return { ok: true, tool, copied: true };
 }
@@ -101,9 +202,9 @@ export type PromotedTool =
   | { ok: true; tool: string; changed: boolean; workingSetSize: number }
   | {
       ok: false;
-      reason: "tool_not_found" | "connection_needed" | "tool_has_no_version";
+      reason: EnsureRefusalReason | "tool_has_no_version";
       message: string;
-      details?: { connect: StockConnectProposal | null };
+      details?: { connect?: StockConnectProposal | null } & Record<string, unknown>;
     };
 
 /**

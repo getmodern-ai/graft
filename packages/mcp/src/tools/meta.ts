@@ -211,7 +211,13 @@ const findTool: MetaTool = {
     const stocked = stock
       .filter((entry) => !held.has(authoredToolName(entry.vendor, entry.name)))
       .map((entry) => {
-        const connectionIds = stockConnectionIds(allConnections, scopeIds, entry.vendor);
+        // By its hosts, any provider, the slug first (GRA-241; `../stock-match.ts`).
+        const connectionIds = stockConnectionIds(
+          allConnections,
+          scopeIds,
+          entry,
+          deps.connection.providers,
+        );
         return {
           vendor: entry.vendor,
           name: entry.name,
@@ -326,7 +332,8 @@ const runTool: MetaTool = {
   definition: {
     name: RUN_TOOL,
     description:
-      "Runs a toolbox tool by vendor and name, for the case where it is not in the agent's visible list: the turn a tool was just published or promoted, or a client that snapshots the list per conversation. A stock tool find_tool found is copied into the toolbox on its first run, over a connection of its vendor in the agent's scope; with none, the answer is connection_needed with connect, the request_connection arguments. " +
+      "Runs a toolbox tool by vendor and name, for the case where it is not in the agent's visible list: the turn a tool was just published or promoted, or a client that snapshots the list per conversation. A stock tool find_tool found is copied into the toolbox on its first run, over a connection in the agent's scope reaching every host it calls; with none, the answer is connection_needed with connect, the request_connection arguments. " +
+      "connectionId, one in the agent's scope, picks the connection; without it the tool's own is used, and where several could stand in a refusal names them under alternatives. " +
       "The effect is exactly a first-class call: the input is validated against the tool's inputSchema, which the acquire result and find_tool's hits carry and an input_invalid refusal answers beside the problems, and the vendor's answer, or the tool's failure, comes back verbatim. " +
       "A tool that changes something may answer awaiting_approval with a url on its first call: a handoff whose next step is the person's, in the console; the same call with the same arguments, once they have answered, runs the tool. " +
       "With dryRun: true reads reach the vendor and every other method stops at the proxy with a preview of the request; the answer is a dry-run report and nothing changes at the vendor. " +
@@ -341,6 +348,11 @@ const runTool: MetaTool = {
           type: "object",
           description:
             "The tool's input, matching the inputSchema the acquire result or find_tool answered; absent for a tool that takes nothing.",
+        },
+        connectionId: {
+          type: "string",
+          description:
+            "The connection to run over, one in the agent's scope: an id from find_tool's connections or a hit's connectionIds, or from a refusal's alternatives.",
         },
         dryRun: {
           type: "boolean",
@@ -375,12 +387,20 @@ const runTool: MetaTool = {
     if (args.input !== undefined && !isPlainObject(args.input)) {
       return toolRefusal("input_invalid", "input must be an object matching the tool's schema");
     }
+    if (
+      args.connectionId !== undefined &&
+      (typeof args.connectionId !== "string" || !args.connectionId.trim())
+    ) {
+      return toolRefusal("input_invalid", "connectionId must be a non-empty string");
+    }
+    const connectionId = typeof args.connectionId === "string" ? args.connectionId.trim() : null;
     const dryRun = args.dryRun === true;
     const detached = args.detached === true && !dryRun;
     const timeoutSeconds = clampTimeout(args.timeoutSeconds, detached);
     const run = await runAuthoredTool(deps, scope, {
       vendor: key.vendor,
       name: key.name,
+      ...(connectionId ? { connectionId } : {}),
       input: args.input ?? {},
       mode: { detached, timeoutSeconds, dryRun },
       channel,

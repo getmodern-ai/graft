@@ -205,7 +205,7 @@ beforeAll(async () => {
     publishTool: (args) => publishToolVersion(publish, args),
     toolSource: createStockToolSource({
       db: fake.db,
-      publish: { db: fake.db, store: toolbox, tool: fake.tool },
+      publish,
       stock: catalogue.deps,
     }),
     handoff: {

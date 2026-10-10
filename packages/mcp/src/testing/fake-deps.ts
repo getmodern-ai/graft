@@ -763,6 +763,8 @@ export function createFakeDeps(store: FakeStore): FakeDeps {
     },
     findConnection: connection.findConnection,
     findConnectionForUpdate: connection.findConnectionForUpdate,
+    // The store has no concurrent transactions; `copy-stock.test.ts` races with a lock that holds.
+    lockToolName: async () => {},
     newId: store.newId,
     now: store.now,
   };

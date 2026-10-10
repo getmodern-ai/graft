@@ -1,6 +1,6 @@
 {
-  "id": "58a6a8c5-e935-481d-91b6-149be9d69e91",
-  "prevId": "45158758-446d-445e-a506-f5b1e3ce331e",
+  "id": "f8fc1607-2d6a-4253-87d2-eeffb7d2cb06",
+  "prevId": "863d838a-2d0e-4912-9a53-1e6050453203",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -297,12 +297,6 @@
           "primaryKey": false,
           "notNull": false
         },
-        "from_tool_id": {
-          "name": "from_tool_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
         "owner": {
           "name": "owner",
           "type": "text",
@@ -371,21 +365,6 @@
           "method": "btree",
           "with": {}
         },
-        "acquire_job_from_tool_id_idx": {
-          "name": "acquire_job_from_tool_id_idx",
-          "columns": [
-            {
-              "expression": "from_tool_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
         "acquire_job_status_heartbeat_at_idx": {
           "name": "acquire_job_status_heartbeat_at_idx",
           "columns": [
@@ -432,15 +411,6 @@
           "tableFrom": "acquire_job",
           "tableTo": "authored_tool",
           "columnsFrom": ["tool_id"],
-          "columnsTo": ["id"],
-          "onDelete": "set null",
-          "onUpdate": "no action"
-        },
-        "acquire_job_from_tool_id_authored_tool_id_fk": {
-          "name": "acquire_job_from_tool_id_authored_tool_id_fk",
-          "tableFrom": "acquire_job",
-          "tableTo": "authored_tool",
-          "columnsFrom": ["from_tool_id"],
           "columnsTo": ["id"],
           "onDelete": "set null",
           "onUpdate": "no action"
@@ -2444,6 +2414,18 @@
         },
         "agent_id": {
           "name": "agent_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "starter_id": {
+          "name": "starter_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "goal": {
+          "name": "goal",
           "type": "text",
           "primaryKey": false,
           "notNull": false

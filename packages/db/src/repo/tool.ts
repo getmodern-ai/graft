@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, inArray } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
 
 import type { DbOrTx } from "../index";
 import {
@@ -29,6 +29,22 @@ function ownedToolIds(db: DbOrTx, personId: string, toolId: string) {
     .select({ id: authoredTool.id })
     .from(authoredTool)
     .where(and(eq(authoredTool.id, toolId), eq(authoredTool.personId, personId)));
+}
+
+/**
+ * Serialise the making of one person's tool of one name for the transaction: a transaction-scoped
+ * advisory lock on the hash of `person:vendor:name`, so two first copies of a stock tool
+ * (`@graft/publish`'s `copyStockVersion`, GRA-238) cannot both find no tool and both write its
+ * first version directory. Released with the transaction; a hash collision costs a wait only.
+ */
+export async function lockAuthoredToolName(
+  db: DbOrTx,
+  personId: string,
+  key: { vendor: string; name: string },
+): Promise<void> {
+  await db.execute(
+    sql`select pg_advisory_xact_lock(hashtext(${`authored-tool:${personId}:${key.vendor}:${key.name}`}))`,
+  );
 }
 
 export async function insertAuthoredTool(

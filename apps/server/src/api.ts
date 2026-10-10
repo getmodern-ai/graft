@@ -14,6 +14,7 @@ import {
   getConnection,
   getPendingActionForPerson,
   getPersonModelKey,
+  type IntegrationDirectory,
   isOAuthAuthorizationCode,
   issueConsoleAgentToken,
   type LedgerDeps,
@@ -31,6 +32,7 @@ import {
   orNotFound,
   type PendingActionDeps,
   type Principal,
+  planSetup,
   reconnectConnection,
   registerConnection,
   registerConnectionWithCredential,
@@ -89,6 +91,13 @@ import { cors } from "hono/cors";
 import { z } from "zod";
 
 import { trackedRoute } from "./analytics-routes";
+import {
+  createStarterDirectory,
+  directoryProposal,
+  searchSetupDirectory,
+  setupDirectoryHome,
+  withStarter,
+} from "./directory";
 import { createMcpConsentRoutes, type McpOAuthServerOptions } from "./mcp-oauth";
 import { beginConsent, createOAuthRoutes, type OAuthOptions } from "./oauth";
 import { createOriginGuard } from "./origin-guard";
@@ -105,6 +114,7 @@ import {
   signInDoorKey,
 } from "./rate-limit";
 import {
+  buildPlannedSetup,
   buildSetupTool,
   continueSetupBuild,
   createGoalSuggestionMemo,
@@ -118,6 +128,7 @@ import {
   setupGoalSuggestions,
 } from "./setup-build";
 import {
+  connectSetupProposal,
   connectSetupVendor,
   learnSetupConnection,
   listSetupVendors,
@@ -132,6 +143,11 @@ import {
 } from "./setup-prompt";
 import { runAgentTool } from "./tool-run";
 
+export type {
+  SetupDirectoryEntry,
+  SetupDirectoryHome,
+  SetupDirectoryPage,
+} from "./directory";
 export type {
   SetupBuildAvailability,
   SetupGoalContext,
@@ -268,6 +284,12 @@ export type ApiOptions = {
    */
   connectionRouting?: ConnectionRoutingDeps;
   /**
+   * The integration directory Setup's integration step searches (`directory.ts`; ADR 0001 as
+   * amended 2026-10-10): the private package's, bound by `index.ts` from `Backings.directory`.
+   * Absent, the starters this deployment connects (`createStarterDirectory`).
+   */
+  directory?: IntegrationDirectory;
+  /**
    * The seams Setup's build shares with `acquire` (GRA-207; ADR 0024; `setup-build.ts`): the model,
    * whose absence is the door's `acquire_unconfigured`; the job's record, which the job route reads
    * too; and the runner, woken once a job is queued. `index.ts` binds the MCP endpoint's `McpDeps`.
@@ -387,6 +409,32 @@ const setupBuildBody = z.strictObject({
 });
 /** The build's wire shape, as the console posts it. */
 export type SetupBuildBody = z.input<typeof setupBuildBody>;
+
+/**
+ * `POST /setup/starter` (Setup v2): the starter integration chosen before anything is connected,
+ * or null to go back to the integrations (`planSetup` in `@graft/core`).
+ */
+const setupStarterBody = z.strictObject({
+  starterId: z.enum(STARTER_VENDOR_IDS).nullable(),
+});
+export type SetupStarterBody = z.input<typeof setupStarterBody>;
+
+/**
+ * `POST /setup/task` (Setup v2): the task, chosen before connecting. It is saved, the starter is
+ * connected as the connect route would, and the build starts at once when the connection is made
+ * (or the record already names one); otherwise when the connection lands, on the next read.
+ */
+const setupTaskBody = z.strictObject({
+  goal: z.string().trim().min(1).max(GOAL_MAX_LENGTH),
+  discardJob: z.boolean().optional(),
+  /**
+   * Setup v2's directory: the integration the person chose there, by its slug, when it is not a
+   * starter (a starter is chosen through `/setup/starter` and named by the record). Read from the
+   * directory again here, so the proposal is the directory's and never the browser's.
+   */
+  slug: z.string().trim().min(1).max(100).optional(),
+});
+export type SetupTaskBody = z.input<typeof setupTaskBody>;
 
 /**
  * `POST /setup/back` (GRA-215): the step to return the record to, from the rail or the footer's
@@ -977,7 +1025,7 @@ export function createApi(options: ApiOptions): Hono {
 
   api.get("/setup", async (c) => {
     const principal = await principalOf(c.req.raw.headers);
-    const { state: afterConnect, connected } = await learnSetupConnection(ctx, principal, {
+    let { state: afterConnect, connected } = await learnSetupConnection(ctx, principal, {
       setup: setupDeps,
       agent: agentDeps,
       connection: connectionDeps,
@@ -985,6 +1033,9 @@ export function createApi(options: ApiOptions): Hono {
       notifier: options.notifier,
     });
     if (connected) countStep(principal, afterConnect, "connect");
+    // Setup v2: a task chosen before connecting is built the moment the connection is learned.
+    if (connected)
+      afterConnect = await buildPlannedSetup(ctx, principal, afterConnect, setupBuildDeps);
     // A tool still arriving past the building step, *Continue while it runs* and then, perhaps,
     // Finish Setup before it landed, is learned on the record as it would have been on `building`.
     const record = afterConnect.setup;
@@ -1092,6 +1143,102 @@ export function createApi(options: ApiOptions): Hono {
   api.get("/setup/vendors", async (c) => {
     await principalOf(c.req.raw.headers);
     return c.json({ vendors: await listSetupVendors(connectionDeps.providers) });
+  });
+
+  /**
+   * Setup v2's integration directory (`directory.ts`): the first view (`SetupDirectoryHome`) and a
+   * search (`SetupDirectoryPage`), both reads. The backing is the private package's when it has one
+   * and the starters this deployment connects otherwise.
+   */
+  const starterDirectory = createStarterDirectory(() => listSetupVendors(connectionDeps.providers));
+  const setupDirectory = () => options.directory ?? starterDirectory;
+
+  api.get("/setup/directory", async (c) => {
+    await principalOf(c.req.raw.headers);
+    return c.json(await setupDirectoryHome(setupDirectory()));
+  });
+
+  api.get("/setup/directory/search", async (c) => {
+    await principalOf(c.req.raw.headers);
+    const query = c.req.query("q") ?? "";
+    const category = c.req.query("category");
+    const cursor = c.req.query("cursor");
+    const limit = Number.parseInt(c.req.query("limit") ?? "", 10);
+    return c.json(
+      await searchSetupDirectory(setupDirectory(), {
+        query: query.slice(0, 200),
+        ...(category ? { category: category.slice(0, 100) } : {}),
+        ...(cursor ? { cursor: cursor.slice(0, 500) } : {}),
+        limit: Number.isFinite(limit) ? limit : 24,
+      }),
+    );
+  });
+
+  api.post("/setup/starter", async (c) => {
+    const principal = await principalOf(c.req.raw.headers);
+    const body = await parseBody(c.req.raw, setupStarterBody);
+    return c.json(await planSetup(ctx, principal, body, setupDeps, agentDeps));
+  });
+
+  api.post("/setup/task", async (c) => {
+    const principal = await principalOf(c.req.raw.headers);
+    const body = await parseBody(c.req.raw, setupTaskBody);
+    if (body.slug) {
+      const entry = await setupDirectory().get(body.slug);
+      if (!entry) throw new ServiceError("NOT_FOUND", "The directory has no such integration");
+      const starterId = withStarter(entry).starterId;
+      if (starterId) {
+        // A starter found through the directory takes the starter's path: its tasks' hints.
+        await planSetup(ctx, principal, { starterId }, setupDeps, agentDeps);
+      } else {
+        await planSetup(ctx, principal, { starterId: null }, setupDeps, agentDeps);
+        const planned = await planSetup(
+          ctx,
+          principal,
+          { goal: body.goal, withoutStarter: true },
+          setupDeps,
+          agentDeps,
+        );
+        let state = planned;
+        if (state.step === "vendor" && state.setup) {
+          const connecting = await connectSetupProposal(
+            ctx,
+            principal,
+            directoryProposal(entry),
+            {
+              ...(body.discardJob ? { discardJob: true } : {}),
+              plannedAt: state.setup.updatedAt,
+            },
+            setupConnectDeps(),
+          );
+          if (connecting.connected) countStep(principal, connecting.state, "connect");
+          state = connecting.state;
+        }
+        return c.json(
+          await buildPlannedSetup(ctx, principal, state, setupBuildDeps, body.discardJob === true),
+        );
+      }
+    }
+    let state = await planSetup(ctx, principal, { goal: body.goal }, setupDeps, agentDeps);
+    const starterId = state.setup?.starterId;
+    if (state.step === "vendor" && starterId && state.setup) {
+      const connecting = await connectSetupVendor(
+        ctx,
+        principal,
+        {
+          starterId,
+          ...(body.discardJob ? { discardJob: true } : {}),
+          // The connect lands only on the plan this request saved (Greptile on #201).
+          plannedAt: state.setup.updatedAt,
+        },
+        setupConnectDeps(),
+      );
+      if (connecting.connected) countStep(principal, connecting.state, "connect");
+      state = connecting.state;
+    }
+    return c.json(
+      await buildPlannedSetup(ctx, principal, state, setupBuildDeps, body.discardJob === true),
+    );
   });
 
   api.post("/setup/connect", async (c) => {

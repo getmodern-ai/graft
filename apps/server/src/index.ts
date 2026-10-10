@@ -506,6 +506,8 @@ const app = createServer({
     connectionRouting: mcp,
     // Setup's Build shares `acquire`'s model, job record and runner (GRA-207).
     acquire: mcp,
+    // Setup v2's integration directory: the private package's, or the starters when it has none.
+    ...(backings.directory ? { directory: backings.directory } : {}),
     // Setup's result step runs the tool through the same authored-run function (GRA-208).
     run: mcp,
   },
