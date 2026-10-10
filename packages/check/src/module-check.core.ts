@@ -4,7 +4,7 @@ import { posix } from "node:path";
 import ts from "typescript6";
 
 import { type ToolAnnotations, UNKNOWN_ANNOTATIONS } from "./annotations.ts";
-import { declarationsOf, isReadCall, stringifyTampered } from "./read-call.ts";
+import { declarationsOf, isDestructiveCall, isReadCall, stringifyTampered } from "./read-call.ts";
 
 /**
  * The static check of an authored module (`CONTEXT.md`, "Check"). Pure: files in, diagnostics and
@@ -389,7 +389,7 @@ export function checkModuleSync(input: ModuleCheckInput): ModuleCheckResult {
   }
   // The SDK rules and the annotations read the same bindings: which identifiers reach a package.
   const bindings = analyseSdkBindings(module);
-  const tally: MethodTally = { writes: 0, deletes: 0 };
+  const tally: MethodTally = { writes: 0, destructive: 0 };
   const bodiesUnknown = [...module.originals.values()].some(stringifyTampered);
   for (const [abs, source] of module.originals) {
     scanSdk(source, abs, bag, bindings.get(abs) ?? new Map(), tally, bodiesUnknown);
@@ -1197,7 +1197,7 @@ function rootPackageOf(expression: ts.Expression, locals: SdkBindings): string |
 }
 
 /** What the annotations are decided on; a read leaves no mark, so only the two that do are counted. */
-type MethodTally = { writes: number; deletes: number };
+type MethodTally = { writes: number; destructive: number };
 
 /** What of `ctx` the tool's function calls (`ModuleCheckResult.contextMembersUsed`, `blobReadFields`). */
 type ContextUse = { members: Set<string>; blobReadFields: Set<string> };
@@ -1378,8 +1378,9 @@ function inputFieldOf(
  * One walk per file for the two SDK-aware rules. Every `new X(…)` of a bound identifier — and every
  * call of one that carries an options object with a credential or base slot, the factory form — is
  * held to the binding (`checkSdkConstruction`). Every call rooted in a binding is tallied as a write;
- * every other `.fetch(…)` is tallied by its `method`, and a non-`DELETE` one that the proxy's
- * classifier calls a read on what the source states is not tallied at all (`read-call.ts`).
+ * every other `.fetch(…)` is tallied by the proxy's classifiers on what the source states
+ * (`read-call.ts`): destructive (a `DELETE` or a reviewed destructive endpoint), else not at all
+ * when it is a read, else a write.
  */
 function scanSdk(
   sf: ts.SourceFile,
@@ -1404,10 +1405,9 @@ function scanSdk(
         (ts.isIdentifier(node.expression) && node.expression.text === "fetch")
       ) {
         const method = fetchMethod(node.arguments[1]);
-        if (method === "DELETE") tally.deletes += 1;
-        else if (method === null || !isReadCall(node, method, declarations, bodiesUnknown)) {
-          tally.writes += 1;
-        }
+        if (method === null) tally.writes += 1;
+        else if (isDestructiveCall(node, method, declarations)) tally.destructive += 1;
+        else if (!isReadCall(node, method, declarations, bodiesUnknown)) tally.writes += 1;
       }
     }
     ts.forEachChild(node, visit);
@@ -1452,8 +1452,8 @@ function fetchMethod(init: ts.Expression | undefined): string | null {
 /** The annotations, from the tally — ADR 0008's rule, and the type's doc comment. */
 function deriveAnnotations(tally: MethodTally): ToolAnnotations {
   return {
-    readOnly: tally.writes === 0 && tally.deletes === 0,
-    destructive: tally.deletes > 0,
+    readOnly: tally.writes === 0 && tally.destructive === 0,
+    destructive: tally.destructive > 0,
   };
 }
 

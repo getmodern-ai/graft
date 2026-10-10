@@ -1,4 +1,8 @@
-import { classifyRequest, type RequestToClassify } from "@graft/proxy/read-request";
+import {
+  classifyRequest,
+  isDestructiveRequest,
+  type RequestToClassify,
+} from "@graft/proxy/read-request";
 import ts from "typescript6";
 
 /**
@@ -88,20 +92,28 @@ export function literalString(
     return left === null || right === null ? null : left + right;
   }
   if (ts.isIdentifier(expr)) {
-    const found = declarations.get(expr.text);
-    const only = found?.length === 1 ? found[0] : undefined;
-    if (
-      only === undefined ||
-      !ts.isVariableDeclaration(only) ||
-      only.initializer === undefined ||
-      !ts.isVariableDeclarationList(only.parent) ||
-      (only.parent.flags & ts.NodeFlags.Const) === 0
-    ) {
-      return null;
-    }
-    return literalString(only.initializer, declarations, depth + 1);
+    const initializer = constInitializer(expr, declarations);
+    return initializer === undefined ? null : literalString(initializer, declarations, depth + 1);
   }
   return null;
+}
+
+/** The initialiser of a name declared exactly once in the file, as a `const`; else undefined. */
+function constInitializer(
+  name: ts.Identifier,
+  declarations: Declarations,
+): ts.Expression | undefined {
+  const found = declarations.get(name.text);
+  const only = found?.length === 1 ? found[0] : undefined;
+  if (
+    only === undefined ||
+    !ts.isVariableDeclaration(only) ||
+    !ts.isVariableDeclarationList(only.parent) ||
+    (only.parent.flags & ts.NodeFlags.Const) === 0
+  ) {
+    return undefined;
+  }
+  return only.initializer;
 }
 
 /** Parentheses, `as` and `satisfies` change nothing a request carries. */
@@ -129,9 +141,96 @@ export function isReadCall(
   bodiesUnknown = false,
 ): boolean {
   const init = call.arguments[1] === undefined ? null : unwrap(call.arguments[1]);
+  if (init !== null && ts.isObjectLiteralExpression(init) && !plainlyNamed(init)) return false;
+  return classifyRequest(requestOf(call, method, declarations, false, bodiesUnknown)).read;
+}
+
+/**
+ * Whether the call is destructive (ADR 0008 as amended 2026-10-10, GRA-267): a `DELETE`, or a
+ * `POST` the reviewed table names (`@graft/proxy`'s `destructive-endpoints.ts`), judged by the
+ * proxy's `isDestructiveRequest` on the same request `isReadCall` builds. A relative path has no
+ * host, so it is matched as any entry's path under a base path: a module's `/refunds` on a
+ * Stripe connection is Stripe's `/v1/refunds`.
+ *
+ * Unlike a read, a destructive call is judged on the path's **shape** (`pathShape`), since erring
+ * here only asks more: a value the check cannot read stands for one segment the table's `*`
+ * matches, so `` `/charges/${input.charge}/refund` ``, `"/charges/" + id + "/refund"` and a
+ * `const` holding either are destructive, and a fragment is cut off as the runner cuts it rather
+ * than making the path unread. An unread start before a `/` is taken for a base
+ * (`` `${base}/refunds` ``); a path the check cannot read at all matches nothing, and the call
+ * stays an ordinary write.
+ */
+export function isDestructiveCall(
+  call: ts.CallExpression,
+  method: string,
+  declarations: Declarations,
+): boolean {
+  return isDestructiveRequest(requestOf(call, method, declarations, true));
+}
+
+/** What a value the check cannot read stands for in a destructive call's path: one segment. */
+const SUBSTITUTION = "{}";
+
+/**
+ * A path's shape: `literalString`'s text, with every part it could not read (a template's
+ * substitution, an operand of `+`, a name that is not a unique `const`) as `SUBSTITUTION`, and a
+ * unique `const` followed as `literalString` follows one. For the destructive judgement alone,
+ * never a read's.
+ */
+function pathShape(
+  expression: ts.Expression | undefined,
+  declarations: Declarations,
+  depth = 0,
+): string {
+  if (expression === undefined || depth > MAX_FOLLOW) return SUBSTITUTION;
+  const expr = unwrap(expression);
+  if (ts.isStringLiteral(expr) || ts.isNoSubstitutionTemplateLiteral(expr)) return expr.text;
+  if (ts.isTemplateExpression(expr)) {
+    return (
+      expr.head.text +
+      expr.templateSpans
+        .map((span) => pathShape(span.expression, declarations, depth + 1) + span.literal.text)
+        .join("")
+    );
+  }
+  if (ts.isBinaryExpression(expr) && expr.operatorToken.kind === ts.SyntaxKind.PlusToken) {
+    return (
+      pathShape(expr.left, declarations, depth + 1) + pathShape(expr.right, declarations, depth + 1)
+    );
+  }
+  if (ts.isIdentifier(expr)) {
+    const initializer = constInitializer(expr, declarations);
+    if (initializer !== undefined) return pathShape(initializer, declarations, depth + 1);
+  }
+  return SUBSTITUTION;
+}
+
+/**
+ * The request as far as the source states it, in the classifier's shape. `shapes` reads the path
+ * as `pathShape` does, and cuts a fragment off it: for the destructive judgement alone. A read's
+ * path is built from literals and a `#` leaves it unread.
+ */
+function requestOf(
+  call: ts.CallExpression,
+  method: string,
+  declarations: Declarations,
+  shapes = false,
+  /** Whether any file of the module may change what `JSON.stringify` answers (`stringifyTampered`). */
+  bodiesUnknown = false,
+): RequestToClassify {
+  const init = call.arguments[1] === undefined ? null : unwrap(call.arguments[1]);
   const literalInit = init !== null && ts.isObjectLiteralExpression(init) ? init : null;
-  if (literalInit !== null && !plainlyNamed(literalInit)) return false;
-  const rawPath = literalString(call.arguments[0], declarations);
+  let rawPath = shapes
+    ? pathShape(call.arguments[0], declarations)
+    : literalString(call.arguments[0], declarations);
+  if (shapes && rawPath !== null) {
+    if (rawPath.includes("#")) rawPath = rawPath.slice(0, rawPath.indexOf("#"));
+    // An unread start followed by a path is a base the module holds (`${base}/refunds`): what
+    // follows is matched as a path under a base path, as a relative one is.
+    if (rawPath.startsWith(`${SUBSTITUTION}/`)) rawPath = rawPath.slice(SUBSTITUTION.length);
+  }
+  const host = literalInit ? literalString(propertyValue(literalInit, "host"), declarations) : null;
+  if (shapes && rawPath !== null) rawPath = resolvedAsSent(rawPath, host !== null);
   let path = "";
   let hasQuery = false;
   if (rawPath !== null && !rawPath.includes("#")) {
@@ -139,8 +238,7 @@ export function isReadCall(
     path = at === -1 ? rawPath : rawPath.slice(0, at);
     hasQuery = at !== -1;
   }
-  const host = literalInit ? literalString(propertyValue(literalInit, "host"), declarations) : null;
-  const request: RequestToClassify = {
+  return {
     method,
     host: host === null ? null : host.toLowerCase(),
     path,
@@ -150,7 +248,33 @@ export function isReadCall(
         ? staticBody(propertyValue(literalInit, "body"), declarations)
         : null,
   };
-  return classifyRequest(request).read;
+}
+
+/** Stands for `SUBSTITUTION` while a shape goes through the URL parser, which would encode braces. */
+const SUBSTITUTION_MARK = "graft0substitution0mark";
+const RESOLVE_BASE = "https://check.invalid/c/connection/";
+
+/**
+ * A destructive path's shape as the runner sends it (`runner.mjs`'s `boundFetch`): resolved by the
+ * URL parser, so `/./refunds`, `/x/../refunds`, `/%2e/refunds` and `\refunds` are the `/refunds`
+ * that leaves (Greptile on #205). A relative path is resolved under the connection's prefix with its
+ * leading slashes dropped, as the runner does, and a path that would leave the prefix is answered
+ * unread, since the runner refuses it; a path beside `host` is appended to the host's origin.
+ */
+function resolvedAsSent(shape: string, named: boolean): string | null {
+  const marked = shape.replaceAll(SUBSTITUTION, SUBSTITUTION_MARK);
+  let url: URL;
+  try {
+    url = named
+      ? new URL(`https://check.invalid${marked}`)
+      : new URL(marked.replace(/^\/+/, ""), RESOLVE_BASE);
+  } catch {
+    return null;
+  }
+  const base = named ? "/" : new URL(RESOLVE_BASE).pathname;
+  if (!url.pathname.startsWith(base)) return null;
+  const resolved = `/${url.pathname.slice(base.length)}${url.search}`;
+  return resolved.replaceAll(SUBSTITUTION_MARK, SUBSTITUTION);
 }
 
 /**

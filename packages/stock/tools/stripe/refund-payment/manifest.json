@@ -35,6 +35,6 @@
   "hosts": ["api.stripe.com"],
   "annotations": {
     "readOnly": false,
-    "destructive": false
+    "destructive": true
   }
 }

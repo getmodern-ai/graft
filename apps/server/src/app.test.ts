@@ -206,6 +206,7 @@ describe("the proxy with the real verifier and the real vault", () => {
     expect(await write.json()).toEqual({
       dryRun: true,
       intercepted: true,
+      destructive: false,
       request: {
         method: "POST",
         host: "api.demo.example",

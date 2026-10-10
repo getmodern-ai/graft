@@ -1,3 +1,4 @@
+import { isDestructiveRequest } from "./read-request";
 import { credentialIncompleteRefusal, type SchemePlugin } from "./schemes";
 import type { SchemeConfig } from "./types";
 
@@ -55,11 +56,14 @@ export function isSafeMethod(method: string): boolean {
  * primary's base path plus the caller's, or the caller's alone under the explicit form). `hasQuery`
  * says whether a query string was present without repeating it — a scheme may put the key there.
  * The body is the caller's own, already read under the proxy's cap, as UTF-8 when it decodes as
- * such and base64 otherwise.
+ * such and base64 otherwise. `destructive` labels a write the person could not take back, a
+ * `DELETE` or an entry of the reviewed table (`read-request.ts`'s `isDestructiveRequest`, the
+ * judgement the check annotates a tool's `destructive` with; GRA-267).
  */
 export type DryRunPreview = {
   dryRun: true;
   intercepted: true;
+  destructive: boolean;
   request: {
     method: string;
     host: string;
@@ -87,6 +91,13 @@ export function buildDryRunPreview(input: DryRunPreviewInput): DryRunPreview {
   return {
     dryRun: true,
     intercepted: true,
+    destructive: isDestructiveRequest({
+      method: input.method,
+      host: input.url.hostname,
+      path: input.url.pathname,
+      hasQuery: input.url.search.length > 1,
+      body: null,
+    }),
     request: {
       method: input.method,
       host: input.url.hostname,

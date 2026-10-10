@@ -1215,6 +1215,121 @@ describe("derived annotations", () => {
     ).toEqual(DESTRUCTIVE);
   });
 
+  it("marks a POST the reviewed destructive table names destructive (GRA-267)", () => {
+    // Stripe's refund-payment, as the stock tool writes it: a relative path under the connection's
+    // `/v1`, a form body the check cannot read, no `host`.
+    expect(
+      tool(
+        [
+          "  const form = new URLSearchParams();",
+          '  form.set("charge", "ch_1");',
+          '  const res = await ctx.fetch("/refunds", {',
+          '    method: "POST",',
+          '    headers: { "content-type": "application/x-www-form-urlencoded" },',
+          "    body: form,",
+          "  });",
+          "  void res;",
+        ].join("\n"),
+      ),
+    ).toEqual(DESTRUCTIVE);
+    expect(tool('  await ctx.fetch("/charges/ch_1/refund", { method: "POST" });')).toEqual(
+      DESTRUCTIVE,
+    );
+    expect(
+      tool('  await ctx.fetch("/v1/refunds", { method: "POST", host: "api.stripe.com" });'),
+    ).toEqual(DESTRUCTIVE);
+    expect(
+      tool('  const PATH = "/chat.delete";\n  await ctx.fetch(PATH, { method: "POST" });'),
+    ).toEqual(DESTRUCTIVE);
+    // A template's substitution stands for one segment, for the destructive judgement alone.
+    expect(
+      tool('  await ctx.fetch(`/charges/${input.notes}/refund`, { method: "POST" });'),
+    ).toEqual(DESTRUCTIVE);
+    expect(
+      tool('  await ctx.fetch(`/invoices/${input.notes}/void?expand=x`, { method: "POST" });'),
+    ).toEqual(DESTRUCTIVE);
+    // ...and never makes a read: a templated search path stays a write.
+    expect(
+      tool(
+        '  await ctx.fetch(`/crm/v3/objects/${input.notes}/search`, { method: "POST", host: "api.hubapi.com" });',
+      ),
+    ).toEqual(WRITE);
+    // A destructive call beside reads and ordinary writes still makes the tool destructive.
+    expect(
+      tool(
+        [
+          '  await ctx.fetch("/charges/ch_1");',
+          '  await ctx.fetch("/customers", { method: "POST" });',
+          '  await ctx.fetch("/refunds", { method: "POST" });',
+        ].join("\n"),
+      ),
+    ).toEqual(DESTRUCTIVE);
+  });
+
+  it("leaves a POST the table does not name, on the host it names or a path it cannot read, a write", () => {
+    expect(tool('  await ctx.fetch("/customers", { method: "POST" });')).toEqual(WRITE);
+    expect(
+      tool('  await ctx.fetch("/refunds", { method: "POST", host: "api.example.com" });'),
+    ).toEqual(WRITE);
+    expect(tool('  await ctx.fetch(input.notes ?? "/refunds", { method: "POST" });')).toEqual(
+      WRITE,
+    );
+    expect(tool('  await ctx.fetch(`${input.notes}/cancel`, { method: "POST" });')).toEqual(WRITE);
+    expect(tool('  await ctx.fetch("/refunds", { method: "PUT" });')).toEqual(WRITE);
+  });
+
+  it("reads a destructive path's shape: a const, a concatenation, a fragment, a held base (Greptile on #205)", () => {
+    expect(
+      tool(
+        '  const path = `/charges/${input.notes}/refund`;\n  await ctx.fetch(path, { method: "POST" });',
+      ),
+    ).toEqual(DESTRUCTIVE);
+    expect(
+      tool('  await ctx.fetch("/charges/" + input.notes + "/refund", { method: "POST" });'),
+    ).toEqual(DESTRUCTIVE);
+    expect(
+      tool(
+        '  const id = input.notes;\n  const path = "/charges/" + id + "/refund";\n  await ctx.fetch(path, { method: "POST" });',
+      ),
+    ).toEqual(DESTRUCTIVE);
+    expect(tool('  await ctx.fetch("/refunds#receipt", { method: "POST" });')).toEqual(DESTRUCTIVE);
+    expect(
+      tool('  await ctx.fetch(`/invoices/${input.notes}/void#x?y`, { method: "POST" });'),
+    ).toEqual(DESTRUCTIVE);
+    expect(tool('  await ctx.fetch(`${input.notes}/refunds`, { method: "POST" });')).toEqual(
+      DESTRUCTIVE,
+    );
+    // A shadowed const is not followed: the path is unread, and the call an ordinary write.
+    expect(
+      tool(
+        '  const path = "/refunds";\n  { const path = "/customers"; void path; }\n  await ctx.fetch(path, { method: "POST" });',
+      ),
+    ).toEqual(WRITE);
+    // The shape is the destructive judgement's alone: a fragment still leaves a read unread.
+    expect(tool('  await ctx.fetch("/items#x", { method: "POST" });')).toEqual(WRITE);
+  });
+
+  it("reads a destructive path as the runner resolves it: dot segments, encoded dots, backslashes, doubled slashes", () => {
+    for (const path of [
+      "/./refunds",
+      "/customers/../refunds",
+      "/%2e/refunds",
+      "/x/%2E%2E/refunds",
+      "/x\\..\\refunds",
+      "//refunds",
+      "/charges/./ch_1/../ch_2/refund",
+    ]) {
+      expect(tool(`  await ctx.fetch(${JSON.stringify(path)}, { method: "POST" });`), path).toEqual(
+        DESTRUCTIVE,
+      );
+    }
+    expect(
+      tool('  await ctx.fetch(`/charges/${input.notes}/./refund`, { method: "POST" });'),
+    ).toEqual(DESTRUCTIVE);
+    // A path that climbs out of the connection is refused by the runner, so it matches nothing.
+    expect(tool('  await ctx.fetch("/../../refunds", { method: "POST" });')).toEqual(WRITE);
+  });
+
   it("counts a method it cannot read as a write: a variable init, a shorthand, a spread, a computed method", () => {
     expect(tool('  const init = { method: "GET" };\n  await ctx.fetch("/items", init);')).toEqual(
       WRITE,

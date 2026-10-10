@@ -1,5 +1,6 @@
 import { Kind, parse } from "graphql";
 
+import { DESTRUCTIVE_ENDPOINTS } from "./destructive-endpoints.ts";
 import { READ_ENDPOINTS, type ReadEndpoint } from "./read-endpoints.ts";
 
 /**
@@ -9,6 +10,9 @@ import { READ_ENDPOINTS, type ReadEndpoint } from "./read-endpoints.ts";
  * disagree: the check (`@graft/check`), which derives a tool's `readOnly` annotation from the
  * calls it can see, and the proxy's dry run (`app.ts`), which lets a read reach the vendor and
  * stops everything else at the preview.
+ *
+ * `isDestructiveRequest`, below, is the same pair's other judgement: whether a write is one the
+ * person cannot take back (`destructive-endpoints.ts`, GRA-267).
  *
  * Anything this function cannot judge is a write. The check calls it with what it sees
  * statically: `host` null where the call names none, a `body` built from the literals it could
@@ -111,6 +115,59 @@ function matches(entry: ReadEndpoint, method: string, request: RequestToClassify
     const actual = got[index] ?? "";
     return segment === "*" ? PLAIN_SEGMENT.test(actual) : segment === actual;
   });
+}
+
+/**
+ * Whether a request is **destructive** (ADR 0008 as amended 2026-10-10, GRA-267): a `DELETE`, or
+ * an entry of the reviewed table (`destructive-endpoints.ts`). The same two callers as
+ * `classifyRequest`: the check derives a tool's `destructive` annotation from it, and the proxy
+ * labels a dry run's preview with it.
+ *
+ * Where the host is known the entry's path is matched from the host's root. Where it is not (the
+ * check, for a relative path, which goes to the connection's primary host under its base path)
+ * the request's path is matched as the entry's path under a base path, on any host
+ * (`matchesTail`): `/refunds` under Stripe's `/v1` is the entry `/v1/refunds`. Matching here leans the other way from the read
+ * table's, since a false yes only asks the person more often: empty segments (a doubled or
+ * trailing slash) are dropped and `*` matches any segment. A path the caller could not read
+ * (`""`, or one not starting with `/`) matches nothing, and the request stays an ordinary write.
+ */
+export function isDestructiveRequest(request: RequestToClassify): boolean {
+  const method = request.method.toUpperCase();
+  if (method === "DELETE") return true;
+  if (!request.path.startsWith("/")) return false;
+  const got = nonEmptySegments(request.path);
+  if (got.length === 0) return false;
+  return DESTRUCTIVE_ENDPOINTS.some((entry) => {
+    if (entry.method !== method) return false;
+    const want = nonEmptySegments(entry.path);
+    if (request.host !== null) return entry.host === request.host && sameSegments(want, got);
+    return matchesTail(want, got);
+  });
+}
+
+/**
+ * Whether a path with no host is an entry's path under some base path: the entry's trailing
+ * segments, starting at a literal one, with only literal segments dropped in front. So `/refunds`
+ * and `/v1/refunds` are `/v1/refunds`, and `/payment_intents/pi_1/cancel` is the entry for
+ * `/v1/payment_intents/<id>/cancel`, but `/pi_1/cancel` and `/cancel` are not: a tail that begins
+ * at a wildcard, or drops one, would make every `POST …/cancel` destructive.
+ */
+function matchesTail(want: readonly string[], got: readonly string[]): boolean {
+  if (got.length > want.length) return false;
+  const start = want.length - got.length;
+  if (want[start] === "*" || want.slice(0, start).includes("*")) return false;
+  return sameSegments(want.slice(start), got);
+}
+
+function nonEmptySegments(path: string): string[] {
+  return path.split("/").filter((segment) => segment !== "");
+}
+
+function sameSegments(want: readonly string[], got: readonly string[]): boolean {
+  return (
+    want.length === got.length &&
+    want.every((segment, index) => segment === "*" || segment === got[index])
+  );
 }
 
 /** A request body as `RequestToClassify.body`: well-formed UTF-8 that parses as JSON, else null. */

@@ -182,3 +182,9 @@ entry there makes every request to the path a read, mutations included.
 **Unchanged.** Reads never ask; anything else asks once per agent. A search that bills credits
 (Apollo's paid people search) is still a read under this rule: it changes nothing in the account,
 and the dry run reaching it is the same spend a `GET` that bills would be.
+
+**Destructive, the same way** (GRA-267): a request is destructive by its method (`DELETE`) or by
+the reviewed table beside the reads, `packages/proxy/src/destructive-endpoints.ts` (Stripe's refunds
+and voids, Slack's `chat.delete`, Gmail's `batchDelete`), judged by `isDestructiveRequest` in the
+same module for the check's `destructive` annotation and the dry-run preview's label; a relative
+path matches an entry under any base path, so the check errs toward destructive.
