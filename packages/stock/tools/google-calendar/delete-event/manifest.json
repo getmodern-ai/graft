@@ -1,0 +1,33 @@
+{
+  "name": "delete-event",
+  "description": "Deletes (cancels) a Google Calendar event or meeting; attendees are told it was cancelled unless sendUpdates says otherwise, and it cannot be undone. google-calendar__list-events supplies the eventId; calendarId defaults to \"primary\" and google-calendar__list-calendars supplies others.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "eventId": {
+        "type": "string",
+        "minLength": 1,
+        "description": "Google Calendar event ID supplied by list-events."
+      },
+      "calendarId": {
+        "type": "string",
+        "minLength": 1,
+        "default": "primary",
+        "description": "Calendar ID supplied by list-calendars. Defaults to primary."
+      },
+      "sendUpdates": {
+        "type": "string",
+        "enum": ["all", "externalOnly", "none"],
+        "default": "all",
+        "description": "Who receives cancellation notifications. Defaults to all attendees."
+      }
+    },
+    "required": ["eventId"],
+    "additionalProperties": false
+  },
+  "hosts": ["www.googleapis.com"],
+  "annotations": {
+    "readOnly": false,
+    "destructive": true
+  }
+}
