@@ -2,6 +2,7 @@ import type { UpstreamRequest } from "@graft/proxy";
 import { describe, expect, it } from "vitest";
 
 import { jsonTextNotes, proveReplay } from "./harness";
+import type { LiveConnection } from "./mode";
 import { recordStockProof } from "./record";
 import type { StockWorkspaceTool } from "./workspace";
 
@@ -388,6 +389,51 @@ describe("recordStockProof", () => {
       ),
     ]);
     expect(jsonTextNotes(tool, recorded.recording)).toEqual([]);
+  });
+
+  it("records a test input scrubbed within its schema, and fails a scrub the schema leaves no room for", async () => {
+    const connection: LiveConnection = {
+      scheme: "bearer",
+      schemeConfig: {},
+      credential: { token: TOKEN },
+    };
+    const bounded: StockWorkspaceTool = {
+      ...tool,
+      inputSchema: {
+        type: "object",
+        properties: { limit: { type: "integer", minimum: 1, maximum: 100 } },
+        required: ["limit"],
+        additionalProperties: false,
+      },
+      testInput: { limit: 100 },
+    };
+    const recorded = await recordStockProof(bounded, { connection, upstreamFetch: vendor([]) });
+    if (!recorded.ok) throw new Error(recorded.problems.join("\n"));
+    const { limit } = recorded.recording.input as { limit: number };
+    expect(limit).toBeGreaterThanOrEqual(1);
+    expect(limit).toBeLessThanOrEqual(100);
+    expect(limit).not.toBe(100);
+    expect(recorded.recording.exchanges[0]?.url).toBe(
+      `https://api.github.com/user/repos?per_page=${limit}`,
+    );
+
+    const pinned = await recordStockProof(
+      {
+        ...bounded,
+        inputSchema: {
+          type: "object",
+          properties: { limit: { type: "integer", minimum: 100, maximum: 100 } },
+          required: ["limit"],
+        },
+      },
+      { connection, upstreamFetch: vendor([]) },
+    );
+    expect(pinned).toEqual({
+      ok: false,
+      problems: [
+        "stock tool github__list-repos: the scrub failed: no placeholder the tool's input schema admits could be drawn for one of its values, in the input; nothing was recorded",
+      ],
+    });
   });
 
   it("refuses a keyed starter with no connection", async () => {

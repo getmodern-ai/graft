@@ -112,17 +112,27 @@ to keep the values.
 - **Every string and number** in a response body, in the kept headers but `content-type`, and in
   the input becomes a placeholder of the same type and shape: an email stays an email (its local
   part redrawn, at `example.com`); an ISO date or time stays one, in the same layout; a URL keeps
-  its scheme and host and loses its path and query (inside a `link` header too); any other string
+  its scheme and host and loses its path and query (a `link` header's targets too, where every
+  parameter value is drawn again but a `rel` of the standard relations, `next` or `last`); any other string
   keeps its length, its punctuation and spaces, each letter a letter of the same case and each digit
   a digit (an id stays id-like, a hex id hex); a number keeps its sign, its digit counts and its
   decimal places. A text body is one string; a binary body becomes the same number of drawn bytes.
 - **Keys, array lengths and nesting are kept**, and so are booleans and `null` (one bit, and the
   bit a module branches on), the integers 0 to 99 (counts, pages and codes a module loops on), a
-  redaction marker, and a string with no letter or digit.
-- **A value the module's code spells is kept**: every string literal in its files, and every string
-  in its input schema (`keptLiteralsOf`). They are public already, and a module comparing an answer
-  with `"message"` must still find it. An input value that must reach a live vendor as it is (a
-  city) survives the scrub by being the schema's `default`, an `examples` entry or an `enum` value.
+  redaction marker (the text beside it is scrubbed as any other), and a string with no letter or
+  digit.
+- **A value the module's code spells is kept**: every string its files spell, read by a parse with
+  the check's own TypeScript (string literals and template text, inside a `${…}` too, escapes
+  decoded), and every string in its input schema, with its `enum` and `const` numbers
+  (`keptLiteralsOf`). They are public already, and a module comparing an answer with `"message"`
+  must still find it. An input value that must reach a live vendor as it is (a city) survives the
+  scrub by being the schema's `default`, an `examples` entry or an `enum` value.
+- **The input is scrubbed within its schema**: an `enum` value stays, a number is drawn inside its
+  bounds and `multipleOf`, a string is one its length, pattern and format admit; then the whole
+  scrubbed input is validated against the schema, and one that fails fails the recording.
+- **When in doubt it fails, never keeps.** A value for which no placeholder can be drawn that is
+  neither an original value nor another's placeholder, or that the input schema admits, fails the
+  recording with a sentence naming where it is and never the value.
 - **One value is one placeholder** across the whole recording, so an id one answer gave and a later
   request names is the same placeholder in both. Placeholders are drawn from a random seed per
   recording, so one is not a keyed hash of a guessable name.
@@ -136,7 +146,10 @@ to keep the values.
   requests by the order the module issued them, as the first run's were recorded (GRA-246).
 - **The last check** (`survivingValuesOf`) looks for every string of six characters or more from
   the raw input and answers in what is about to be written, after redaction, setting aside the
-  module's own text and the keys; a survivor fails the recording, naming where it was and never the
+  module's own text and the keys (a value with a redaction marker is looked for as its text beside
+  the marker, a `link` header as its targets and parameters, and a website root written without its
+  closing slash is not read as surviving inside its own placeholder); a survivor fails the
+  recording, naming where it was and never the
   value. Redaction comes first because a credential the proxy put in a request (a query key a vendor
   may quote back) is redaction's to remove, not a vendor value the scrub missed.
 

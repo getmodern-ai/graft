@@ -9,6 +9,8 @@ import {
   type UpstreamRequest,
 } from "@graft/proxy";
 import { echoableSecrets } from "@graft/proxy/echo";
+import type { JsonSchemaType } from "@modelcontextprotocol/sdk/validation";
+import { AjvJsonSchemaValidator } from "@modelcontextprotocol/sdk/validation/ajv";
 
 import { dryRunFailureOf, dryRunStockTool, issueSequence, stockConnectionFor } from "./dry-run";
 import type { LiveConnection } from "./mode";
@@ -23,7 +25,7 @@ import {
   replayResponseOf,
   type StockRecording,
 } from "./recording";
-import { keptLiteralsOf, scrubRecording, survivingValuesOf } from "./scrub";
+import { keptLiteralsOf, ScrubFailure, scrubRecording, survivingValuesOf } from "./scrub";
 import { credentialForms } from "./secrets";
 import type { StockWorkspaceTool } from "./workspace";
 
@@ -77,6 +79,20 @@ function echoRedactedBytes(bytes: Uint8Array, secrets: readonly string[]): Uint8
     return bytes;
   }
   return new TextEncoder().encode(echoRedacted(text, secrets));
+}
+
+/**
+ * Why an input fails the tool's schema, by the validator a run uses (`harness.ts`'s
+ * `proveTestInput`, `@graft/mcp`'s `schema.ts`), or null where it passes. Ajv's sentence names the
+ * path and the rule, not the value.
+ */
+function inputSchemaProblemOf(schema: unknown, input: unknown): string | null {
+  try {
+    const verdict = new AjvJsonSchemaValidator().getValidator(schema as JsonSchemaType)(input);
+    return verdict.valid ? null : (verdict.errorMessage ?? "invalid");
+  } catch (error) {
+    return `the schema does not compile: ${String(error)}`;
+  }
 }
 
 export type RecordProofResult =
@@ -201,10 +217,28 @@ export async function recordStockProof(
 
   // The scrub: the answers and the input, then the module again over them.
   const keep = keptLiteralsOf(tool.files, tool.inputSchema);
-  const scrubbed = scrubRecording(raw, {
-    seed: options.seed ?? randomBytes(16).toString("hex"),
-    keep,
-  });
+  let scrubbed: StockRecording;
+  try {
+    scrubbed = scrubRecording(raw, {
+      seed: options.seed ?? randomBytes(16).toString("hex"),
+      keep,
+      inputSchema: tool.inputSchema,
+    });
+  } catch (error) {
+    // Where, never what: the sentence reaches the maintainer's terminal and the build's report.
+    if (!(error instanceof ScrubFailure)) throw error;
+    problems.push(`the scrub failed: ${error.message}; nothing was recorded`);
+    return fail();
+  }
+  // The scrubbed input is the test input the build writes and the harness validates, so it must
+  // still be one the tool takes (Greptile on #192).
+  const inputProblem = inputSchemaProblemOf(tool.inputSchema, scrubbed.input);
+  if (inputProblem !== null) {
+    problems.push(
+      `its scrubbed test input fails its input schema (${inputProblem}); nothing was recorded`,
+    );
+    return fail();
+  }
   const answers = scrubbed.exchanges.filter(
     (exchange): exchange is RecordedRead => exchange.kind === "read",
   );
