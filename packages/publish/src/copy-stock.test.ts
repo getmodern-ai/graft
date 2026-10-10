@@ -118,57 +118,83 @@ describe("copyStockVersion", () => {
     expect(files.find((file) => file.path === "index.ts")?.content).toBe(winner.files[0]?.content);
   });
 
-  it("serialises a publish and a first copy of the same name: neither writes over the other's version directory", async () => {
-    const { db, lockToolName } = lockingDb();
-    tool.lockToolName = lockToolName;
-    const published = "export default async () => ({ authored: true });" + "\n";
-    const toolboxId = toolboxIdOf(PERSON);
-    await deps.store.writeTree(toolboxId, ".drafts/job1", [
-      { path: "index.ts", content: published },
-    ]);
-    const publishing = publishToolVersion(
-      {
-        ...deps,
-        db,
-        sandbox,
-        metadata: createFakeMetadataSource({}),
-        policy: DEFAULT_PACKAGE_POLICY,
-        check: async (input) => ({
-          entry: input.entry,
-          refusals: [],
-          advice: [],
-          annotations: { readOnly: true, destructive: false },
-          contextMembersUsed: [],
-          blobReadFields: [],
-        }),
-      },
-      {
-        personId: PERSON,
-        toolboxId,
-        vendor: STOCK.vendor,
-        name: STOCK.name,
-        description: "My own weather tool.",
-        inputSchema: { type: "object" },
-        draftPath: ".drafts/job1",
-        activate: false,
-      },
-    );
-    const copying = copyStockVersion(
-      { ...deps, db },
-      { personId: PERSON, stock: STOCK, defaultConnectionId: null },
-    );
-    const [outcome] = await Promise.all([publishing, copying]);
-    expect(outcome.ok, JSON.stringify(outcome)).toBe(true);
+  it.each([
+    ["the two started together", false],
+    ["the copy arriving while the publish writes the directory it reserved", true],
+  ])(
+    "serialises a publish and a first copy of the same name, %s: neither writes another's directory",
+    async (_case, midPublish) => {
+      const { db, lockToolName } = lockingDb();
+      tool.lockToolName = lockToolName;
+      const published = "export default async () => ({ authored: true });" + "\n";
+      const toolboxId = toolboxIdOf(PERSON);
+      // Every write under tools/, by whose module it carried: a directory two writers wrote is a collision.
+      const writers = new Map<string, Set<string | undefined>>();
+      const store = deps.store;
+      let copying: Promise<unknown> | null = null;
+      const startCopy = () => {
+        copying ??= copyStockVersion(
+          { ...deps, store: recording, db },
+          { personId: PERSON, stock: STOCK, defaultConnectionId: null },
+        );
+        return copying;
+      };
+      const recording: typeof store = Object.create(store);
+      recording.writeTree = async (id, path, files) => {
+        const module = files.find((file) => file.path === "index.ts")?.content;
+        if (path.startsWith("tools/")) {
+          const seen = writers.get(path) ?? new Set();
+          seen.add(module);
+          writers.set(path, seen);
+          if (midPublish && module === published) await startCopy();
+        }
+        return store.writeTree(id, path, files);
+      };
+      await store.writeTree(toolboxId, ".drafts/job1", [{ path: "index.ts", content: published }]);
+      const publishing = publishToolVersion(
+        {
+          ...deps,
+          store: recording,
+          db,
+          sandbox,
+          metadata: createFakeMetadataSource({}),
+          policy: DEFAULT_PACKAGE_POLICY,
+          check: async (input) => ({
+            entry: input.entry,
+            refusals: [],
+            advice: [],
+            annotations: { readOnly: true, destructive: false },
+            contextMembersUsed: [],
+            blobReadFields: [],
+          }),
+        },
+        {
+          personId: PERSON,
+          toolboxId,
+          vendor: STOCK.vendor,
+          name: STOCK.name,
+          description: "My own weather tool.",
+          inputSchema: { type: "object" },
+          draftPath: ".drafts/job1",
+          activate: false,
+        },
+      );
+      if (!midPublish) startCopy();
+      const outcome = await publishing;
+      await copying;
+      expect(outcome.ok, JSON.stringify(outcome)).toBe(true);
 
-    expect(tool.tools).toHaveLength(1);
-    const paths = tool.versions.map((version) => version.path);
-    expect(new Set(paths).size).toBe(paths.length);
-    for (const version of tool.versions) {
-      const files = await deps.store.readTree(toolboxId, version.path);
-      const expected = version.stockVersionId ? STOCK.files[0]?.content : published;
-      expect(files.find((file) => file.path === "index.ts")?.content).toBe(expected);
-    }
-  });
+      for (const [path, modules] of writers) expect(modules.size, path).toBe(1);
+      expect(tool.tools).toHaveLength(1);
+      const paths = tool.versions.map((version) => version.path);
+      expect(new Set(paths).size).toBe(paths.length);
+      for (const version of tool.versions) {
+        const files = await store.readTree(toolboxId, version.path);
+        const expected = version.stockVersionId ? STOCK.files[0]?.content : published;
+        expect(files.find((file) => file.path === "index.ts")?.content).toBe(expected);
+      }
+    },
+  );
 
   it("answers the winner's row when the losing insert is refused by the unique constraint", async () => {
     const insert = tool.insertAuthoredTool;

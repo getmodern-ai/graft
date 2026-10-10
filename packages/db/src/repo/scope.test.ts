@@ -72,6 +72,7 @@ import {
   lockStockCatalogue,
 } from "./stock";
 import {
+  deleteUnversionedAuthoredTool,
   findToolVersion,
   listToolVersions,
   lockAuthoredToolName,
@@ -448,6 +449,19 @@ describe("agent-scoped writes take both ids too, so a mis-scoped write edits not
     const s = only();
     expect(s.sql).toBe("select pg_advisory_xact_lock(hashtext($1))");
     expect(s.params).toEqual(["authored-tool:person_1:open-meteo:current-weather"]);
+  });
+
+  /** A first publish refused after its reservation withdraws the row, under the person, only while nothing names it. */
+  it("withdrawing an unfilled tool row takes the person and requires no pointer and no version", async () => {
+    await deleteUnversionedAuthoredTool(db, "person_1", "tool_1");
+    const s = only();
+    expect(s.sql).toMatch(/^delete from "authored_tool" where/);
+    expect(s.sql).toContain('"authored_tool"."person_id" = $2');
+    expect(s.sql).toContain('"authored_tool"."current_version_id" is null');
+    expect(s.sql).toContain(
+      'not exists (select "id" from "tool_version" where "tool_version"."tool_id" = "authored_tool"."id")',
+    );
+    expect(s.params).toEqual(["tool_1", "person_1"]);
   });
 });
 

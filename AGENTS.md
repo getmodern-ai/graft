@@ -653,9 +653,12 @@ of the vendor in scope, `connectionIds`) and 3 (none, `connect`: the starter's
 version copied by `@graft/publish`'s `copyStockVersion` as an ordinary tool whose version records
 `stock_tool_id` and `stock_version_id`, bound to the vendor's connection in scope, or
 `connection_needed` with `connect`. A copy writes its files and rows in one transaction under
-`ToolDeps.lockToolName` (`repo/tool.ts`'s `lockAuthoredToolName`), and a publish takes the same
-lock around its version number, files, install and rows, so two first copies make one, a copy and
-a publish of one name never write one directory, a unique-constraint loser answers the winner's
+`ToolDeps.lockToolName` (`repo/tool.ts`'s `lockAuthoredToolName`). A publish takes the same lock
+twice and briefly, never across its install: once to make the tool row on a first publish (the
+name's reservation, which a copy then answers) and read the version number, once to confirm the
+number and write the rows (`publish-raced` if another publish took it); a first publish refused
+in between withdraws its row (`deleteUnversionedAuthoredTool`). So two first copies make one, a
+copy never writes a directory a publish reserved, a unique-constraint loser answers the winner's
 row, and the mirror is asked for a copy's version as a publish asks it. Connections match by vendor slug until GRA-241's
 host matching. `@graft/core`'s `listStockToolsForVendor` is the console's read of one integration's.
 

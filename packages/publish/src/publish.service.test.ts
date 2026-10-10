@@ -683,6 +683,44 @@ describe("a module declaring packages", () => {
     expect(h.install).toHaveBeenCalledTimes(2);
   });
 
+  it("holds no transaction, and so no pooled connection, while the install runs (Greptile on #184)", async () => {
+    h.deps.policy = { ...DEFAULT_PACKAGE_POLICY, allowlist: ["left-pad"] };
+    h.metadata = createFakeMetadataSource({ "left-pad@1.3.0": ADMITTED });
+    h.deps.metadata = h.metadata;
+    let open = 0;
+    const transactions: number[] = [];
+    h.deps.db = {
+      transaction: async <T>(fn: (tx: unknown) => Promise<T>): Promise<T> => {
+        open += 1;
+        transactions.push(open);
+        try {
+          return await fn(h.deps.db);
+        } finally {
+          open -= 1;
+        }
+      },
+    } as unknown as typeof h.deps.db;
+    const seenDuringInstall: number[] = [];
+    const install = h.deps.sandbox.install;
+    h.deps.sandbox = {
+      install: async (args) => {
+        seenDuringInstall.push(open);
+        return install(args);
+      },
+    };
+
+    const result = await publish({
+      name: "pad",
+      inputSchema: PAD_SCHEMA,
+      draftPath: await draft("job1", await readFixture("left-pad")),
+    });
+
+    expect(result.ok, JSON.stringify(result)).toBe(true);
+    expect(seenDuringInstall).toEqual([0]);
+    // The reservation before the install and the rows after it: two short transactions.
+    expect(transactions.filter((depth) => depth === 1)).toHaveLength(2);
+  });
+
   it("refuses when the install reports success but left no lockfile", async () => {
     h.deps.policy = { ...DEFAULT_PACKAGE_POLICY, allowlist: ["left-pad"] };
     h.metadata = createFakeMetadataSource({ "left-pad@1.3.0": ADMITTED });

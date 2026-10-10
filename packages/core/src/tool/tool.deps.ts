@@ -1,5 +1,6 @@
 import { findConnection, findConnectionForUpdate } from "@graft/db/repo/connection";
 import {
+  deleteUnversionedAuthoredTool,
   findAuthoredTool,
   findAuthoredToolById,
   findToolVersion,
@@ -38,6 +39,8 @@ export type ToolDeps = {
    * overwrites the other's directory.
    */
   lockToolName: typeof lockAuthoredToolName;
+  /** A first publish's reserved row withdrawn when its install is refused (`publish.service.ts`). */
+  deleteUnversionedTool: typeof deleteUnversionedAuthoredTool;
   newId: () => string;
   now: () => Date;
 };
@@ -56,6 +59,7 @@ export const defaultToolDeps: ToolDeps = {
   findConnection,
   findConnectionForUpdate,
   lockToolName: lockAuthoredToolName,
+  deleteUnversionedTool: deleteUnversionedAuthoredTool,
   newId: () => crypto.randomUUID(),
   now: () => new Date(),
 };

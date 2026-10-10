@@ -73,6 +73,7 @@ function fakeDeps(overrides: Partial<ToolDeps> = {}): ToolDeps {
     findConnection: vi.fn(async () => ({ id: "conn_1" }) as never),
     findConnectionForUpdate: vi.fn(async () => ({ id: "conn_1", revokedAt: null }) as never),
     lockToolName: vi.fn(async () => {}),
+    deleteUnversionedTool: vi.fn(async () => false),
     newId: () => "new_id",
     now: () => NOW,
     ...overrides,

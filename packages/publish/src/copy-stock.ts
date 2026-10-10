@@ -39,10 +39,12 @@ export type CopyStockDeps = Pick<
  * **A person's own tool of the name is answered as it is** (the shadow rule): nothing is written,
  * so a tool the person authored before stock existed is never overwritten. **Two first copies are
  * serialised** (Greptile on #184): the files and the rows are written in one transaction holding
- * the person's lock on the name, which looks for the tool again once held, so the second copy finds
- * the first's committed row and writes nothing, and `v1` never holds one copy's files under the
- * other's rows. A writer that does not take the lock (a publish of the same name) can still win the
- * insert; the unique constraint refuses this copy then, and it answers the winner's row.
+ * the person's lock on the name (`ToolDeps.lockToolName`), which looks for the tool again once
+ * held, so the second copy finds the first's committed row and writes nothing, and `v1` never
+ * holds one copy's files under the other's rows. A publish of the same name takes the same lock to
+ * make its tool row before it writes a directory (`publish.service.ts`, step 6), so a copy arriving
+ * mid-publish answers that row and never touches the directory the publish reserved. Should a
+ * writer still win the insert, the unique constraint refuses this copy and it answers the winner's.
  */
 export async function copyStockVersion(
   deps: CopyStockDeps,
