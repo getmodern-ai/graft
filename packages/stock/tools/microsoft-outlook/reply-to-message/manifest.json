@@ -1,0 +1,31 @@
+{
+  "name": "reply-to-message",
+  "description": "Replies to an Outlook email (message), or replies to all its recipients, and sends the reply at once. The message id comes from microsoft-outlook__search-messages.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "messageId": {
+        "type": "string",
+        "minLength": 1,
+        "description": "The message id microsoft-outlook__search-messages answers."
+      },
+      "comment": {
+        "type": "string",
+        "minLength": 1,
+        "description": "Reply text placed above the quoted original message."
+      },
+      "replyAll": {
+        "type": "boolean",
+        "default": false,
+        "description": "Reply to all original recipients when true; otherwise reply only to the sender."
+      }
+    },
+    "required": ["messageId", "comment"],
+    "additionalProperties": false
+  },
+  "hosts": ["graph.microsoft.com"],
+  "annotations": {
+    "readOnly": false,
+    "destructive": false
+  }
+}

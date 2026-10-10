@@ -354,6 +354,28 @@ export const STARTER_VENDORS = [
     moreTasks: [],
   },
   {
+    id: "microsoft-outlook",
+    // Pipedream's app is `microsoft_outlook`, the name its catalogue reads this slug as. Mail and
+    // calendar are one Microsoft Graph host, for a personal account and a work tenant alike.
+    vendor: "microsoft-outlook",
+    displayName: "Microsoft Outlook",
+    primaryHost: "https://graph.microsoft.com/v1.0",
+    hosts: ["graph.microsoft.com"],
+    docsUrl: "https://learn.microsoft.com/en-us/graph/api/resources/mail-api-overview",
+    scheme: "oauth_authorization_code",
+    schemeConfig: {
+      authorizeUrl: "https://login.microsoftonline.com/common/oauth2/v2.0/authorize",
+      tokenUrl: "https://login.microsoftonline.com/common/oauth2/v2.0/token",
+      scopes: "offline_access Mail.Read",
+    },
+    goal: "Show me my ten latest emails",
+    hints:
+      "List the ten most recent messages in the inbox with the mail folder's messages list endpoint, one GET of `me/mailFolders/inbox/messages` with `$top=10`, `$orderby=receivedDateTime desc` and `$select=subject,from,receivedDateTime,bodyPreview`, returning those four for each. Make no other call. The tool takes no input. Read only.",
+    runInput: null,
+    outcome: "Your ten latest emails, with who sent each and its first line.",
+    moreTasks: [],
+  },
+  {
     id: "open-meteo",
     vendor: "open-meteo",
     displayName: "Open-Meteo",

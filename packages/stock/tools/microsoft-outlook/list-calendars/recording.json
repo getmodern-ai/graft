@@ -1,0 +1,53 @@
+{
+  "format": 1,
+  "tool": "microsoft-outlook__list-calendars",
+  "recordedAt": "2026-10-10T06:29:36.154Z",
+  "input": {},
+  "exchanges": [
+    {
+      "kind": "read",
+      "method": "GET",
+      "url": "https://graph.microsoft.com/v1.0/me/calendars?$top=100&$select=id,name,color,isDefaultCalendar,canEdit,owner",
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json; odata.metadata=minimal; odata.streaming=true; IEEE754Compatible=false; charset=utf-8"
+        },
+        "body": {
+          "json": {
+            "@odata.context": "https://graph.microsoft.com/",
+            "value": [
+              {
+                "id": "AHGaCNYmQQX8NpBOLPJmTDAoKOXuXbQzDZRJVJAfCsJIPLQURlxZhNiPWuMIrs7pMK7jkhsAYRaug45Jrc6SfqvwKlOUGS7MTWTBPoKJHKpye74Paj2ChflcCvBZMB6YKWCufcBIJQD=",
+                "name": "Ojvbpjsi",
+                "color": "vwdt",
+                "isDefaultCalendar": true,
+                "canEdit": true,
+                "owner": {
+                  "name": "Tntkb Fnmypbvq",
+                  "address": "olcrtvo_2GJ36FKG36968664@example.com"
+                }
+              }
+            ]
+          }
+        }
+      }
+    }
+  ],
+  "result": {
+    "calendars": [
+      {
+        "id": "AHGaCNYmQQX8NpBOLPJmTDAoKOXuXbQzDZRJVJAfCsJIPLQURlxZhNiPWuMIrs7pMK7jkhsAYRaug45Jrc6SfqvwKlOUGS7MTWTBPoKJHKpye74Paj2ChflcCvBZMB6YKWCufcBIJQD=",
+        "name": "Ojvbpjsi",
+        "color": "vwdt",
+        "isDefaultCalendar": true,
+        "canEdit": true,
+        "owner": {
+          "name": "Tntkb Fnmypbvq",
+          "address": "olcrtvo_2GJ36FKG36968664@example.com"
+        }
+      }
+    ],
+    "complete": true
+  }
+}

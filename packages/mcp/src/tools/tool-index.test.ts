@@ -244,7 +244,8 @@ describe("every query concept must hit (GRA-115)", () => {
     expect(hits(rates, "exchange rate")).toBe(true);
     expect(hits(rates, "rate exchange")).toBe(true);
     expect(hits(gmailAttachment, "gmail attachment")).toBe(true);
-    // An email is a message, and "latest" reaches "newest", since GRA-248's Gmail queries.
+    // An email is a message, and "latest" reaches "newest", since GRA-248's Gmail queries and
+    // GRA-268's Outlook ones.
     expect(hits(gmailAttachment, "latest email attachment")).toBe(true);
     expect(hits(gmailAttachment, "latest invoice attachment")).toBe(false);
     expect(hits(gmailAttachment, "latest attachment message")).toBe(true);
@@ -445,5 +446,73 @@ describe("GitHub's and HubSpot's stock tools (GRA-253, GRA-254)", () => {
     }));
     const [first] = searchTools(tools, query, { vendorNames }).hits;
     expect(first && `${first.vendor}__${first.name}`).toBe(wire);
+  });
+});
+
+/**
+ * Microsoft Outlook's stock tools as they ship (GRA-268), searched as the HubSpot suite above
+ * searches them: every stock tool at once, with the integrations' display names. A query that names
+ * Outlook finds Outlook's tool first. A query that names no vendor finds Outlook's tool or the
+ * Gmail or Google Calendar tool that does the same (GRA-248, GRA-249), whichever of them is in the
+ * workspace, and a query that names Gmail or Google Calendar never finds Outlook's.
+ */
+describe("Microsoft Outlook's stock tools (GRA-268)", () => {
+  const vendorNames = new Map(
+    STARTER_VENDORS.map((starter) => [starter.vendor, [starter.displayName]]),
+  );
+  const firstOf = async (query: string) => {
+    const tools = (await readStockWorkspace()).map((tool) => ({
+      vendor: tool.vendor,
+      name: tool.name,
+      description: tool.description,
+      inputSchema: tool.inputSchema,
+      readOnly: tool.annotations.readOnly,
+    }));
+    const [first] = searchTools(tools, query, { vendorNames }).hits;
+    return first && `${first.vendor}__${first.name}`;
+  };
+
+  const NAMED: [query: string, wire: string][] = [
+    ["send an outlook email", "microsoft-outlook__send-mail"],
+    ["find an outlook email from a sender", "microsoft-outlook__search-messages"],
+    ["search my outlook email", "microsoft-outlook__search-messages"],
+    ["unread outlook emails", "microsoft-outlook__search-messages"],
+    ["list outlook mail folders", "microsoft-outlook__list-mail-folders"],
+    ["draft an outlook email", "microsoft-outlook__create-draft"],
+    ["reply to an outlook email", "microsoft-outlook__reply-to-message"],
+    ["archive an outlook email", "microsoft-outlook__move-message"],
+    ["delete an outlook email", "microsoft-outlook__delete-message"],
+    ["my outlook meetings this week", "microsoft-outlook__list-events"],
+    ["list outlook calendars", "microsoft-outlook__list-calendars"],
+    ["find free time in outlook", "microsoft-outlook__find-free-time"],
+    ["schedule an outlook meeting", "microsoft-outlook__create-event"],
+    ["change the time of an outlook meeting", "microsoft-outlook__update-event"],
+    ["cancel an outlook meeting", "microsoft-outlook__delete-event"],
+    ["accept an outlook invitation", "microsoft-outlook__respond-to-event"],
+    ["decline an outlook meeting invite", "microsoft-outlook__respond-to-event"],
+  ];
+
+  it.each(NAMED)('"%s" finds %s first', async (query, wire) => {
+    expect(await firstOf(query)).toBe(wire);
+  });
+
+  const UNNAMED: [query: string, wires: string[]][] = [
+    ["send an email", ["microsoft-outlook__send-mail", "gmail__send-email"]],
+    ["find an email from", ["microsoft-outlook__search-messages", "gmail__search-messages"]],
+    ["move an email to a folder", ["microsoft-outlook__move-message"]],
+    ["my meetings this week", ["microsoft-outlook__list-events", "google-calendar__list-events"]],
+  ];
+
+  it.each(UNNAMED)('"%s" finds one of %j first', async (query, wires) => {
+    expect(wires).toContain(await firstOf(query));
+  });
+
+  it.each([
+    "send a gmail email",
+    "search gmail",
+    "my google calendar meetings this week",
+    "schedule a google calendar meeting",
+  ])('"%s" never finds an Outlook tool first', async (query) => {
+    expect((await firstOf(query)) ?? "").not.toMatch(/^microsoft-outlook__/);
   });
 });

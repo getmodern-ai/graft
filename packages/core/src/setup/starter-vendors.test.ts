@@ -44,6 +44,7 @@ describe("the starter integrations", () => {
       "github",
       "hubspot",
       "stripe",
+      "microsoft-outlook",
       "open-meteo",
     ]);
     for (const starter of STARTER_VENDORS) {
@@ -175,6 +176,7 @@ describe("setupVendorOptions", () => {
       "github",
       "hubspot",
       "stripe",
+      "microsoft-outlook",
       "open-meteo",
     ]);
     expect(list.slice(0, -1).every((option) => option.connect === "link")).toBe(true);
@@ -209,6 +211,7 @@ describe("setupVendorOptions", () => {
       "google-sheets:link",
       "slack:link",
       "notion:link",
+      "microsoft-outlook:link",
       "github:none",
       "open-meteo:keyless",
     ]);

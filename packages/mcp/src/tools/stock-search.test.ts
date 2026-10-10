@@ -89,8 +89,8 @@ const CASES: [query: string, tool: string][] = [
   ["list gmail labels", "gmail__list-labels"],
   ["send an email", "gmail__send-email"],
   ["draft an email", "gmail__create-draft"],
-  ["reply to an email", "gmail__reply-to-thread"],
-  ["archive an email", "gmail__modify-labels"],
+  ["reply to a gmail email", "gmail__reply-to-thread"],
+  ["archive a gmail email", "gmail__modify-labels"],
   // Google Sheets' (GRA-259).
   ["find a spreadsheet", "google-sheets__find-spreadsheets"],
   ["list my spreadsheets", "google-sheets__find-spreadsheets"],
@@ -125,6 +125,21 @@ const CASES: [query: string, tool: string][] = [
   ["send an invoice", "stripe__create-invoice"],
   ["refund a payment", "stripe__refund-payment"],
   ["refund a charge", "stripe__refund-payment"],
+  // Microsoft Outlook's (GRA-268), also pinned in tool-index.test.ts.
+  ["send an outlook email", "microsoft-outlook__send-mail"],
+  ["search my outlook email", "microsoft-outlook__search-messages"],
+  ["list outlook mail folders", "microsoft-outlook__list-mail-folders"],
+  ["draft an outlook email", "microsoft-outlook__create-draft"],
+  ["reply to an outlook email", "microsoft-outlook__reply-to-message"],
+  ["archive an outlook email", "microsoft-outlook__move-message"],
+  ["delete an outlook email", "microsoft-outlook__delete-message"],
+  ["my outlook meetings this week", "microsoft-outlook__list-events"],
+  ["list outlook calendars", "microsoft-outlook__list-calendars"],
+  ["find free time in outlook", "microsoft-outlook__find-free-time"],
+  ["schedule an outlook meeting", "microsoft-outlook__create-event"],
+  ["change the time of an outlook meeting", "microsoft-outlook__update-event"],
+  ["cancel an outlook meeting", "microsoft-outlook__delete-event"],
+  ["accept an outlook invitation", "microsoft-outlook__respond-to-event"],
 ];
 
 let catalogue: (IndexedTool & { wire: string })[] = [];
