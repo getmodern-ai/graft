@@ -1,0 +1,19 @@
+{
+  "format": 1,
+  "tool": "microsoft-outlook__delete-message",
+  "recordedAt": "2026-10-10T06:12:51.671Z",
+  "input": {
+    "messageId": "pvuc-yeoucpg-ra"
+  },
+  "exchanges": [
+    {
+      "kind": "write",
+      "method": "DELETE",
+      "url": "https://graph.microsoft.com/v1.0/me/messages/pvuc-yeoucpg-ra"
+    }
+  ],
+  "result": {
+    "deleted": false,
+    "messageId": "pvuc-yeoucpg-ra"
+  }
+}

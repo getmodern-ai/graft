@@ -1,0 +1,43 @@
+{
+  "format": 1,
+  "tool": "microsoft-outlook__find-free-time",
+  "recordedAt": "2026-10-10T06:15:55.366Z",
+  "input": {
+    "start": "2020-01-06T00:00:00Z",
+    "end": "2020-01-08T00:00:00Z",
+    "durationMinutes": 30
+  },
+  "exchanges": [
+    {
+      "kind": "read",
+      "method": "GET",
+      "url": "https://graph.microsoft.com/v1.0/me/calendar/calendarView?startDateTime=2020-01-06T00%3A00%3A00Z&endDateTime=2020-01-08T00%3A00%3A00Z&%24orderby=start%2FdateTime&%24top=500&%24select=start%2Cend%2CshowAs%2CisCancelled",
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json; odata.metadata=minimal; odata.streaming=true; IEEE754Compatible=false; charset=utf-8"
+        },
+        "body": {
+          "json": {
+            "@odata.context": "https://graph.microsoft.com/",
+            "value": []
+          }
+        }
+      }
+    }
+  ],
+  "result": {
+    "slots": [
+      {
+        "start": "2020-01-06T09:00:00",
+        "end": "2020-01-06T17:00:00",
+        "timeZone": "UTC"
+      },
+      {
+        "start": "2020-01-07T09:00:00",
+        "end": "2020-01-07T17:00:00",
+        "timeZone": "UTC"
+      }
+    ]
+  }
+}

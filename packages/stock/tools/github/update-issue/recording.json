@@ -1,0 +1,32 @@
+{
+  "format": 1,
+  "tool": "github__update-issue",
+  "recordedAt": "2026-10-09T19:04:26.742Z",
+  "input": {
+    "owner": "cwchkhjvq-jx",
+    "repo": "ehyww",
+    "issueNumber": 958,
+    "state": "closed",
+    "stateReason": "completed"
+  },
+  "exchanges": [
+    {
+      "kind": "write",
+      "method": "PATCH",
+      "url": "https://api.github.com/repos/cwchkhjvq-jx/ehyww/issues/958",
+      "body": {
+        "json": {
+          "state": "closed",
+          "state_reason": "completed"
+        }
+      }
+    }
+  ],
+  "result": {
+    "updated": false,
+    "sent": {
+      "state": "closed",
+      "state_reason": "completed"
+    }
+  }
+}

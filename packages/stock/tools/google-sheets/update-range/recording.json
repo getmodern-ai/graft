@@ -1,0 +1,31 @@
+{
+  "format": 1,
+  "tool": "google-sheets__update-range",
+  "recordedAt": "2026-10-09T19:21:12.329Z",
+  "input": {
+    "spreadsheet": "https://docs.google.com/spreadsheets/d/1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms/edit",
+    "tab": "Tdakf Mmux",
+    "range": "M7",
+    "values": [["Izjzdm"]]
+  },
+  "exchanges": [
+    {
+      "kind": "write",
+      "method": "PUT",
+      "url": "https://sheets.googleapis.com/v4/spreadsheets/1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms/values/'Tdakf%20Mmux'!M7",
+      "body": {
+        "json": {
+          "range": "'Tdakf Mmux'!M7",
+          "majorDimension": "ROWS",
+          "values": [["Izjzdm"]]
+        }
+      }
+    }
+  ],
+  "result": {
+    "updatedRange": null,
+    "updatedRows": null,
+    "updatedColumns": null,
+    "updatedCells": null
+  }
+}

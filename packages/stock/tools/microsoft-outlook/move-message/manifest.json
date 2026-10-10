@@ -1,0 +1,27 @@
+{
+  "name": "move-message",
+  "description": "Moves an Outlook email (message) to another mail folder, or archives it, the default destination. The message id comes from microsoft-outlook__search-messages and a folder id from microsoft-outlook__list-mail-folders. The moved message has a new id.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "messageId": {
+        "type": "string",
+        "minLength": 1,
+        "description": "The message id microsoft-outlook__search-messages answers."
+      },
+      "destinationId": {
+        "type": "string",
+        "minLength": 1,
+        "default": "archive",
+        "description": "Folder ID from microsoft-outlook__list-mail-folders, or a well-known folder name such as archive, inbox, deleteditems, junkemail, drafts, or sentitems. Defaults to archive."
+      }
+    },
+    "required": ["messageId"],
+    "additionalProperties": false
+  },
+  "hosts": ["graph.microsoft.com"],
+  "annotations": {
+    "readOnly": false,
+    "destructive": false
+  }
+}

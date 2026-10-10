@@ -1,0 +1,21 @@
+{
+  "name": "delete-event",
+  "description": "Deletes or cancels an Outlook calendar event or meeting. Destructive: for a meeting the person organised, Outlook sends the attendees a cancellation. The event id comes from microsoft-outlook__list-events; to decline someone else's invitation, microsoft-outlook__respond-to-event.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "eventId": {
+        "type": "string",
+        "minLength": 1,
+        "description": "The event id microsoft-outlook__list-events answers."
+      }
+    },
+    "required": ["eventId"],
+    "additionalProperties": false
+  },
+  "hosts": ["graph.microsoft.com"],
+  "annotations": {
+    "readOnly": false,
+    "destructive": true
+  }
+}

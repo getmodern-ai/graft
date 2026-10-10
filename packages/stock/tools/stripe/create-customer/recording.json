@@ -1,0 +1,26 @@
+{
+  "format": 1,
+  "tool": "stripe__create-customer",
+  "recordedAt": "2026-10-09T23:56:14.608Z",
+  "input": {
+    "email": "fiwslabo@example.com",
+    "name": "Powftkk Dhnavxle"
+  },
+  "exchanges": [
+    {
+      "kind": "write",
+      "method": "POST",
+      "url": "https://api.stripe.com/v1/customers",
+      "body": {
+        "text": "email=fiwslabo%40example.com&name=Powftkk+Dhnavxle"
+      }
+    }
+  ],
+  "result": {
+    "created": false,
+    "sent": {
+      "email": "fiwslabo@example.com",
+      "name": "Powftkk Dhnavxle"
+    }
+  }
+}

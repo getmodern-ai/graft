@@ -1,0 +1,35 @@
+{
+  "format": 1,
+  "tool": "stripe__find-customer",
+  "recordedAt": "2026-10-09T23:51:57.213Z",
+  "input": {
+    "query": "uqaeonwh"
+  },
+  "exchanges": [
+    {
+      "kind": "read",
+      "method": "GET",
+      "url": "https://api.stripe.com/v1/customers/search?query=name%7E%22uqaeonwh%22&limit=10",
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "json": {
+            "object": "knqhyc_bvhjhk",
+            "data": [],
+            "has_more": false,
+            "next_page": null,
+            "url": "/v1/customers/search"
+          }
+        }
+      }
+    }
+  ],
+  "result": {
+    "customers": [],
+    "hasMore": false,
+    "nextCursor": null
+  }
+}

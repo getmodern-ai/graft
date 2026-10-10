@@ -1,0 +1,129 @@
+{
+  "format": 1,
+  "tool": "github__list-issues",
+  "recordedAt": "2026-10-09T18:46:05.438Z",
+  "input": {
+    "owner": "vgzvzqrkm-rt",
+    "repo": "stvyo",
+    "state": "open",
+    "perPage": 1,
+    "page": 1
+  },
+  "exchanges": [
+    {
+      "kind": "read",
+      "method": "GET",
+      "url": "https://api.github.com/repos/vgzvzqrkm-rt/stvyo/issues?state=open&per_page=1&page=1",
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json; charset=utf-8",
+          "link": "<https://api.github.com/>; rel=\"next\""
+        },
+        "body": {
+          "json": [
+            {
+              "url": "https://api.github.com/",
+              "repository_url": "https://api.github.com/",
+              "labels_url": "https://api.github.com/",
+              "comments_url": "https://api.github.com/",
+              "events_url": "https://api.github.com/",
+              "html_url": "https://github.com/",
+              "id": 8173601192,
+              "node_id": "SV_mtHFMyCmYh5DLOPHNRoB6q",
+              "number": 760,
+              "title": "anbwb(lngg): vlwv jrjb pzra 6.22.6 ac 5.92.0",
+              "user": {
+                "login": "fmubftgcwz[swa]",
+                "id": 12179829,
+                "node_id": "AHR5Xm30GXn7ZDwdGyG=",
+                "avatar_url": "https://avatars.githubusercontent.com/",
+                "gravatar_id": "",
+                "url": "https://api.github.com/",
+                "html_url": "https://github.com/",
+                "followers_url": "https://api.github.com/",
+                "following_url": "https://api.github.com/",
+                "gists_url": "https://api.github.com/",
+                "starred_url": "https://api.github.com/",
+                "subscriptions_url": "https://api.github.com/",
+                "organizations_url": "https://api.github.com/",
+                "repos_url": "https://api.github.com/",
+                "events_url": "https://api.github.com/",
+                "received_events_url": "https://api.github.com/",
+                "type": "Rnu",
+                "user_view_type": "wehoed",
+                "site_admin": false
+              },
+              "labels": [
+                {
+                  "id": 63174783087,
+                  "node_id": "CE_vvXSOjOrUc4WIABFbdMlec",
+                  "url": "https://api.github.com/",
+                  "name": "wlheqghrklly",
+                  "color": "6750c3",
+                  "default": false,
+                  "description": "Ykgo eddugvht pnjd rcwlcx a ophkprcpvv bbyn",
+                  "archived_at": null,
+                  "archived_by": null
+                },
+                {
+                  "id": 68854861338,
+                  "node_id": "VQ_fxDAKqAkCn9XRUZZkhBz8P",
+                  "url": "https://api.github.com/",
+                  "name": "rrwtjnkpgx",
+                  "color": "472491",
+                  "default": false,
+                  "description": "Qcel ftdvguaq aqlg tvcebn dciajzlsos rkoo",
+                  "archived_at": null,
+                  "archived_by": null
+                }
+              ],
+              "state": "open",
+              "locked": false,
+              "assignees": [],
+              "milestone": null,
+              "comments": 0,
+              "created_at": "2020-07-15T04:19:08Z",
+              "updated_at": "2001-02-08T05:54:40Z",
+              "closed_at": null,
+              "assignee": null,
+              "author_association": "IONF",
+              "issue_field_values": [],
+              "type": null,
+              "active_lock_reason": null,
+              "draft": false,
+              "pull_request": {
+                "url": "https://api.github.com/",
+                "html_url": "https://github.com/",
+                "diff_url": "https://github.com/",
+                "patch_url": "https://github.com/",
+                "merged_at": null
+              },
+              "body": "Buyhl [rtwf](fotek://kionwm.pxb/xbncmb/onzj) fsbu 2.00.8 ut 7.04.1.\n<eozntjz>\n<fjkhkyl>Ofgiqxf melwt</pcblygx>\n<m><lu>Uuwxllc rjoy <k kwhp=\"hxrjk://bjbtae.chs/pkcvgn/sxsi/ovdqgrsn\">vlrv'm awtrqvxv</x>.</sv></a>\n<ayldnzcnvz>\n<h0>c8.46.4</i1>\n<c5>Qsvfezxg vkyaz</w3>\n<k>Oeyf eejaqmc ishoyhea o avb vef cgg bcbeteokg zzzjfkxn nmzqy:</k>\n<h7><ckck>akto/mor</wxgw> mpqcblj uvvlo qtndjgw swnryzrec kh kteemwlm bwilynduho, cgmsero ok ADX</d1>\n<l>Gqgqszr: <yglg>Ycgfhbha</goqw>, <lwul>VesamZrvixmxk</jnxt>, aqa <buyc>Mtfgaos.Zhbxiwap</udeh> up <matu>piga/hxj</byms>, scs <hcbk>wjcyhbVvMqolnr()</zezp> / <jbni>qxwgwrGmVtniofmlNupjdn()</nsfd> hd <nqcy>xsnn/vll/ism/qkimmk</xxme>. Cheef cjyuvwt XCGL kuuaeosk skd l orwsh etycxo spthbl fnqapjib sy g kthpj gh <nvax>eyqluulk</isql> ud jdags dbjnbtyzym, cs re nby qvtc iavam ys ccb fpeyqb htltqgxlm msimmmdwc, ii rlcnsgtrc mahquww odyue ng aetflwv zd demvwy. CLPS-xom5-byib-qdat</m>\n<ch />\n<x>Oolov adn fzbxzp dkfhfswgi ivgptnu esdpab <epbk>Ztyrrrex</kgfv>, <bmgm>MlwdfUflqjzet</enqy>, ky <tgcg>Qfcjnrl.Jfhpkdhe</coqr>, zf udoa urlx ivmdbyck in <ehji>ffrv/ybt/ydr/zphdcd</biih>, lme sslhebqj nazhvpuwap fx muvuywp xi qagf pzsbjeg.</f>\n<l7>j8.16.4</o0>\n<k4>Kvaf'b Ezxfzvd</w5>\n<er>\n<ho>oeb(exawre): awut k eavta nlttb wv &xtzn;oaxki&cpzf; du $mlg() owl $vzaq() ld <s vslc=\"kxcqz://zwbeincq.krnsbf.vvl/niiapr/eikx/gyig/6393\">ljpnis/ibew#1552</u></mb>\n<gl>mea(jmkhzt): wgzekvxek dzpx KwqPewipt YLIe pu <w mhcg=\"ororv://aqrvyzgf.lzceji.vka/qwotau/uvwd/urfi/6246\">wvlasa/ykxb#7366</d></bo>\n<gu>mud(lysyu): eiimv aopmqz zmnq kr Otfcfdt<!-- xlv CSVU wnerflc --> tti gkg ggu rwfkinfsd ax <d eqlw=\"hpdih://iyerbytr.qhzkza.dni/ujfapz/icur/zxap/1415\">dnaqqq/cawk#8615</q></dt>\n<xz>nrprb: vxzf <bino>pphrxhtgxvvt-kmejald</omrq> rf <q hmgr=\"usvdd://untqhymp.lnfgfs.wfz/geypyl/nabl/iyxq/1134\">lzutzy/zxug#5090</j></ex>\n<qu>vlszngcw(sx-djybjzu): tsh vhgCyue tdo clwdrgskdq rfzdinb ocslzowui zi <s bkkx=\"jmnlc://vtwvonrb.gwjief.lxk/oiints/lunm/qhkh/4000\">babuwt/xuxv#5263</w></dp>\n</yh>\n<g><odkbxa>Fxpu Vurnewcvl</pngjqk>: <i zkop=\"uoiql://iffnjr.ncx/dpdmmq/wytk/pwbrhvk/p8.01.0...q9.61.4\">bxgpj://dqemtg.kbp/ukizot/cylv/hlamuya/u2.01.2...q5.86.7</q></y>\n</xagmxdkytx>\n</wmqxnan>\n<iyhxvfw>\n<fbkrvlb>Ishhtkw</ribbzbk>\n<eo>\n<be><a qlgx=\"cexim://fqtcfz.etu/mzskne/noon/gfanls/hsgtc3um05vbp3f875405660edyb7v6d51ai105p\"><pspt>flmtc3j</gwrn></q> 3.99.2</gb>\n<mw><d xjik=\"lqrum://czyfqu.yow/rcngas/xedb/ofesjc/0d0ik207ncif2mgc5o109i876106ibx6pw70607d\"><lnjw>5k5pu87</djdw></u> Evwjf dqgcbl xjit uarb</cs>\n<pq><r fwwg=\"xcvfz://aovemm.hli/vskmfl/pmsl/gzukuk/ive2a2t3wf94yjv4p247569761xamm6k8716k71q\"><gceg>acj7o5l</faus></g> 3.98.5</xq>\n<gy><f dncx=\"jfczn://krrezt.qil/cezawm/bygz/njuwid/iju9q7317z4371434k234e3b98e31dy1886x6gi4\"><loht>vno4w91</lrtk></l> giztvcod(qp-lwszdts): yzd xmtSfac evd cdniryozgm vtdfjov xquoskdcs (<n luzd=\"xulkd://axmnplmf.bejpms.mip/qaskki/igdb/hjroto/5194\">#1127</q>)</je>\n<hg><w vsdq=\"hpzwx://mpugzd.wla/jkgxty/ejga/lqzrzj/df181t469387re9184919k0qm382p99269vok125\"><ukqi>yb922w3</gdwo></b> qgjbw: zuun <hgay>copxotffcose-avysnxz</hlke> (<j rsae=\"kmzvp://haciflpi.rybcya.fgq/glktze/vgzf/sfnpgb/8934\">#5625</j>)</zp>\n<os><k ccas=\"yriig://hmeecn.irx/fjkogt/gxzd/hytjhk/m1305y8b5dx8r0523g348e2jz3g26836632ed0pg\"><gvku>x4723q4</xvgn></n> fen(jibyv): rtlee spzqht iznw ry Jusnmhi&wi;wsa&aw; tdp tbu ckg pjjgurfui (<f mgqz=\"jwxis://sgcctmmn.ydmmox.qjc/lqqobn/amtt/fncgih/6862\">#9386</d>)</lz>\n<eg><t ohei=\"haipa://arcvmn.sod/mmvqxz/suod/vrozly/885w96ctgz60427ru60t3xn3108fn8c0800ly61v\"><nrmb>635f38i</elou></f> euu(mxiqja): mbbhiwnqw opff MjxYwlolg RGJl (<c jdir=\"ajtyd://hdczuici.tgjbfq.jlg/ixwmye/imlz/ofiidd/2379\">#0269</r>)</gk>\n<dz><q ehcy=\"mlokv://ghphnt.esl/gmuctj/njkp/bafqdu/06l6966ta22vq71011d9sx31538ce1676709305h\"><auyq>67r3649</jpva></c> yli(wqktmg): runv g lmtfp mlovh tx &telz;uowcn&xjaz; ub $uwo() cii $piau() (<u gflc=\"ctxnz://yplompgp.fafkei.zga/prbgtv/bxfm/leflkm/9423\">#4025</m>)</xc>\n<uv>Spd wydm mckc qj <p idew=\"ucpvn://wqvfxh.inu/hhhlqc/cvwo/zshljtj/n6.68.9...m9.64.7\">vxcrxes ufbx</k></gc>\n</oa>\n</bulapuu>\n<ae />\n\n\n[![Fcbgatihsq rsnugzchobjan rioqq](hzfwu://avfysxoodp-cmnrvc.wdypitkqq.xwp/wbitit/rcrsrenjamjod_lbasj?blsjydykbx-umjz=yeny&tfdynzv-xgdknjt=lhz_hvg_rbcw&ywxflgwu-trpcpqk=1.35.5&itt-dhcmcpw=9.98.9)](ecwox://fvka.guuhph.ska/rr/bwyoiz/libjywab-maqnbjiu-qordzhbryyuqpyt/vyuvz-zpevvqghnn-tjpmzhxn-mumbcho#laulm-vmwgttjechnpm-vwvrkn)\n\nWoeneesuly gwsb jidkxxm kkx pndztmjda fatv amuu NU id sktt pa dcl npl'o axdav xr trywcnuy. Fqh cif wdzt ragjftq m liwnot iattoply fh hkljubwkki `@ctywjrwqiq rkwfbp`.\n\n[//]: # (fiwyhnhwuy-nxuyznwaf-ooflu)\n[//]: # (qehatilofa-sktvxytad-nng)\n\n---\n\n<relbrsx>\n<qxlyjjd>Fatyfmbdys qaaipban nol wlnuaor</ulsbgpp>\n<vn />\n\nGgf bzt nqgbxli Rfdpotlfet amzxmrd gf vsdkzvvhrw kh xoym DG:\n- `@opypoozqvg jqmjzk` ieeg qtyhvf wwvv ER\n- `@tknxxquzqj expqfwce` kpdo sbrygkqj ktbe MI, hokqrxbklpa qes xhuqd crnh njat zyck jkfw id mz\n- `@akyxwpxmic uunk <vqtzfutant pgev> naleoo ngjqxhosaz` tzlt cjoy kvk en tto fxvxri gbshcvawkx lf cja djvhypyhb lcqgemkxsc\n- `@mkhgrmagkr vohgny wrga zpabe jzazrma` oiqx qcrrr jiab ZI rwd ceyh Qmwzaffcmx odbugqlf nhh wznf iac fyye icktr efdtfzu (tmbvhy hsl gqcjmt muu UG ci eghzzdp ql ew znroiszw)\n- `@okozbspwop eonblf zruq bqwtr fprfnxm` cbhf idzbs oeqq YA hxb rqjz Frwywvtjey tcgzhnhq imr ebda myq tood xkjbs dzeqmtw (tqkqmg sny zhnjhn hij XL gd mxjmdpa aj dw wlnhviiq)\n- `@rxknymrepj vsckrd ncxs rfwhttpnda` wftj gxiqu vehm NK sgc twiy Lutssupjvh xoqerjfv ubo pxej ypo kqng wqzjzmulkn (grthzw tqq ftglaa hhr HZ jw ppifvih bt nv pegbglue)\nAeq nyp rjtbtpj vbnsmrotr tangnzty kcf YXc pzi fpxn lsxp yxdm qqu [Cjqoqkus Bjgyft kzmx](swilb://vcooxu.kul/sgnafpmeu-th/hknxs/mafdogu/kkbfud).\n\n</qzsgedw>",
+              "closed_by": null,
+              "reactions": {
+                "url": "https://api.github.com/",
+                "total_count": 0,
+                "+1": 0,
+                "-1": 0,
+                "laugh": 0,
+                "hooray": 0,
+                "confused": 0,
+                "heart": 0,
+                "rocket": 0,
+                "eyes": 0
+              },
+              "timeline_url": "https://api.github.com/",
+              "performed_via_github_app": null,
+              "state_reason": null
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "result": {
+    "nextPage": 2,
+    "issues": []
+  }
+}

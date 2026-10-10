@@ -1,0 +1,84 @@
+{
+  "format": 1,
+  "tool": "stripe__get-balance",
+  "recordedAt": "2026-10-09T23:55:42.787Z",
+  "input": {},
+  "exchanges": [
+    {
+      "kind": "read",
+      "method": "GET",
+      "url": "https://api.stripe.com/v1/balance",
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "json": {
+            "object": "hvfrpnq",
+            "available": [
+              {
+                "amount": 59043,
+                "currency": "hym",
+                "source_types": {
+                  "card": 59043
+                }
+              }
+            ],
+            "connect_reserved": [
+              {
+                "amount": 0,
+                "currency": "hym"
+              }
+            ],
+            "livemode": false,
+            "pending": [
+              {
+                "amount": 0,
+                "currency": "hym",
+                "source_types": {
+                  "card": 0
+                }
+              }
+            ],
+            "refund_and_dispute_prefunding": {
+              "available": [
+                {
+                  "amount": 0,
+                  "currency": "hym"
+                }
+              ],
+              "pending": [
+                {
+                  "amount": 0,
+                  "currency": "hym"
+                }
+              ]
+            }
+          }
+        }
+      }
+    }
+  ],
+  "result": {
+    "available": [
+      {
+        "amount": 59043,
+        "currency": "hym"
+      }
+    ],
+    "pending": [
+      {
+        "amount": 0,
+        "currency": "hym"
+      }
+    ],
+    "livemode": false,
+    "connect_reserved": [
+      {
+        "amount": 0,
+        "currency": "hym"
+      }
+    ]
+  }
+}

@@ -1,0 +1,60 @@
+{
+  "format": 1,
+  "tool": "google-drive__get-file",
+  "recordedAt": "2026-10-09T18:46:42.876Z",
+  "input": {
+    "fileId": "root"
+  },
+  "exchanges": [
+    {
+      "kind": "read",
+      "method": "GET",
+      "url": "https://www.googleapis.com/drive/v3/files/root?supportsAllDrives=true&fields=id%2Cname%2CmimeType%2Cdescription%2CcreatedTime%2CmodifiedTime%2Csize%2Cparents%2CwebViewLink%2Cowners(displayName%2CemailAddress)%2Cshared%2Cstarred%2Ctrashed",
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json; charset=UTF-8"
+        },
+        "body": {
+          "json": {
+            "id": "1EJvFFvG8ZWfsMt6YTU",
+            "name": "Ly Qemyz",
+            "mimeType": "eovhcyhmhzr/ozu.rpyknz-vxgv.qgmyhp",
+            "starred": false,
+            "trashed": false,
+            "webViewLink": "https://drive.google.com/",
+            "createdTime": "2008-11-27T15:58:20.837Z",
+            "modifiedTime": "2008-11-27T15:58:20.837Z",
+            "owners": [
+              {
+                "displayName": "Hroga Vhhnxcnt",
+                "emailAddress": "amyrn@example.com"
+              }
+            ],
+            "shared": false
+          }
+        }
+      }
+    }
+  ],
+  "result": {
+    "id": "1EJvFFvG8ZWfsMt6YTU",
+    "name": "Ly Qemyz",
+    "mimeType": "eovhcyhmhzr/ozu.rpyknz-vxgv.qgmyhp",
+    "description": null,
+    "createdTime": "2008-11-27T15:58:20.837Z",
+    "modifiedTime": "2008-11-27T15:58:20.837Z",
+    "size": null,
+    "parents": null,
+    "webViewLink": "https://drive.google.com/",
+    "owners": [
+      {
+        "displayName": "Hroga Vhhnxcnt",
+        "emailAddress": "amyrn@example.com"
+      }
+    ],
+    "shared": false,
+    "starred": false,
+    "trashed": false
+  }
+}
