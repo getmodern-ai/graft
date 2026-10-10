@@ -1566,7 +1566,12 @@ in `events.ts`: `noun_verbed`, counts and kinds, never content) and **model tele
 `Backings` carries the three and the boot line names each: `logs stdout, analytics off, model
 telemetry off` on every self-host. Every `POST /mcp` event carries the tool call under `mcp` — the
 tool, its kind, the agent, the person, the outcome, the refusal's reason, the latency — from
-`McpDeps.onToolCall`, which `tools.ts` fires once per call from its one dispatch point; a `/mcp`
+`McpDeps.onToolCall`, which `tools.ts` fires once per call from its one dispatch point, and a run
+of a stock copy or a remix of one adds `mcp.stock`: the stock tool and version, `remix`, and on a
+failure its kind and the vendor's last error status, never the input, output or body, which
+`tool_called` carries flat (GRA-244; `stock-signal.ts`, the runner's `VENDOR_STATUS_MARKER`; a
+response the proxy marks `x-graft-refused`, which every proxy refusal carries, is never a vendor's
+status); a `/mcp`
 request the door or the SDK's transport refuses before any tool runs carries the refusal under
 `mcpRefusal` — status, JSON-RPC code, the answer's own sentence, whether a session was named, and the
 agent once the token resolved to one — from `McpDeps.onTransportRefusal` (GRA-131: a bare 400 in the

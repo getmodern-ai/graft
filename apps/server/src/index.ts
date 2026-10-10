@@ -62,6 +62,7 @@ import {
 } from "./connections";
 import { createModel } from "./model";
 import { describeObservability, flushObservability } from "./observability";
+import { toolCalledProperties } from "./tool-called";
 
 /**
  * The server's boot: validated environment in, one listening process out. Everything it decides
@@ -327,7 +328,8 @@ const mcp = createMcpDeps({
   /**
    * Every tool call, once (GRA-100): onto this request's wide event under `mcp`, so the line for a
    * `POST /mcp` says which tool, for which agent, with what outcome — and onto the person's
-   * analytics profile as `tool_called`. Both carry the same fields and neither carries the input.
+   * analytics profile as `tool_called`. Both carry the same fields and neither carries the input;
+   * a stock copy's run adds its origin and a failure's shape under `mcp.stock` (GRA-244).
    */
   /** A refused `/mcp` request, with the transport's or the door's reason (GRA-131): the same line, under `mcpRefusal`. */
   onTransportRefusal: (event) => {
@@ -338,14 +340,7 @@ const mcp = createMcpDeps({
     backings.analytics.capture({
       distinctId: event.personId,
       event: "tool_called",
-      properties: {
-        tool: event.tool,
-        kind: event.kind,
-        agent_id: event.agentId,
-        outcome: event.outcome,
-        reason: event.reason ?? null,
-        latency_ms: event.latencyMs,
-      },
+      properties: toolCalledProperties(event),
     });
   },
   /**

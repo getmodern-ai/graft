@@ -24,6 +24,7 @@ import {
   EXIT_USAGE,
   MODULE_ENTRIES,
   readRunnerEnvelope,
+  VENDOR_STATUS_MARKER,
 } from "@graft/runner";
 import type { SandboxHandle, SandboxProcessResult } from "@graft/sandbox";
 import { MAX_CAPABILITY_TOKEN_TTL_SECONDS, mintCapabilityToken } from "@graft/token";
@@ -52,6 +53,7 @@ import {
 import { compileInputSchema } from "./schema";
 import { ensureToolForAgent, namedNotInScopeMessage } from "./stock-copy";
 import { matchStockConnections, stockToolRunsOver } from "./stock-match";
+import { noteRunFailure, noteStockRun, readStockOrigin } from "./stock-signal";
 import { authoredToolName } from "./tool-names";
 
 /**
@@ -227,8 +229,37 @@ export type ModuleRunOutcome =
    * the same `ENVELOPE_MARKER` line a result's envelope sits behind, before the error, so
    * `readRunnerEnvelope` reads both. `[]` for every other failure, a timeout included, whose
    * committed blobs are the sweep's to adopt (GRA-189).
+   *
+   * `kind` and `vendorStatus` are for a stock tool's failure signal (GRA-244; `stock-signal.ts`)
+   * and never reach the wire: which way the run failed, and the last error status a vendor answered
+   * `ctx.fetch` with, read off the runner's last stderr line.
    */
-  | { ok: false; failure: RunFailure; blobs: BlobLedgerEntry[]; blobsDropped: number };
+  | {
+      ok: false;
+      failure: RunFailure;
+      kind: RunFailureKind;
+      vendorStatus?: number;
+      blobs: BlobLedgerEntry[];
+      blobsDropped: number;
+    };
+
+/**
+ * Which way a run failed, as a word a chart cuts by (GRA-244): the module threw (`threw`, exit 1),
+ * timed out inside the runner (`timeout`, exit 2), had its invocation refused (`invocation_refused`,
+ * exit 64), was not on the toolbox (`module_missing`), was killed at the sandbox's limit (`killed`)
+ * or left running (`still_running`), exited 0 with no envelope (`no_envelope`), found no sandbox
+ * (`sandbox_unavailable`), or wrote past the blob quota (`blob_quota`).
+ */
+export type RunFailureKind =
+  | "threw"
+  | "timeout"
+  | "invocation_refused"
+  | "module_missing"
+  | "killed"
+  | "still_running"
+  | "no_envelope"
+  | "sandbox_unavailable"
+  | "blob_quota";
 
 function shellQuote(value: string): string {
   return `'${value.replace(/'/g, `'\\''`)}'`;
@@ -289,6 +320,7 @@ export async function runModule(
             exitCode: EXIT_MODULE_MISSING,
             stderrTail: "",
           },
+          kind: "module_missing",
           blobs: [],
           blobsDropped: 0,
         };
@@ -349,14 +381,22 @@ export function describeModuleRun(
   timeoutSeconds: number,
 ): ModuleRunOutcome {
   const [stdout, stderrTail = ""] = splitAtMarker(result.stdout);
-  const stderr = stderrTail.trim();
+  // Only an exit the runner worded ends on its vendor status line (GRA-244; `runner.mjs`'s `fail`):
+  // read there, and stripped from every tail, so a module's own copy of the line is never believed.
+  const worded =
+    result.status !== "running" &&
+    result.status !== "killed" &&
+    (result.exitCode === 1 || result.exitCode === EXIT_TIMEOUT || result.exitCode === EXIT_USAGE);
+  const { tail: stderr, vendorStatus } = readVendorStatus(stderrTail, worded);
   // A failure that followed a write carries the ledger behind the runner's marker (the outcome
   // type); a killed or timed-out process printed nothing, so its list is empty.
-  const failure = (error: string): ModuleRunOutcome => {
+  const failure = (kind: RunFailureKind, error: string): ModuleRunOutcome => {
     const envelope = readRunnerEnvelope(stdout);
     return {
       ok: false,
       failure: { error, exitCode: result.exitCode, stderrTail: stderr },
+      kind,
+      ...(vendorStatus !== null ? { vendorStatus } : {}),
       blobs: envelope?.blobs ?? [],
       blobsDropped: envelope?.dropped ?? 0,
     };
@@ -364,23 +404,33 @@ export function describeModuleRun(
 
   if (result.status === "running") {
     return failure(
+      "still_running",
       `The tool was still running after ${timeoutSeconds} seconds and was left behind. Its output so far: ${stdout.trim().slice(-500)}`,
     );
   }
   if (result.status === "killed") {
     return failure(
+      "killed",
       `The tool was killed before it finished: it ran past the ${timeoutSeconds}-second limit.`,
     );
   }
-  if (result.exitCode === EXIT_MODULE_MISSING) return failure(moduleMissingMessage(modulePath));
+  if (result.exitCode === EXIT_MODULE_MISSING) {
+    return failure("module_missing", moduleMissingMessage(modulePath));
+  }
   if (result.exitCode === EXIT_TIMEOUT) {
-    return failure(`The tool timed out inside the runner: ${stderr || "no output"}`);
+    return failure("timeout", `The tool timed out inside the runner: ${stderr || "no output"}`);
   }
   if (result.exitCode === EXIT_USAGE) {
-    return failure(`The runner refused the invocation: ${stderr || "no output"}`);
+    return failure(
+      "invocation_refused",
+      `The runner refused the invocation: ${stderr || "no output"}`,
+    );
   }
   if (result.exitCode !== 0) {
-    return failure(`The tool failed (exit code ${result.exitCode}): ${stderr || "no output"}`);
+    return failure(
+      "threw",
+      `The tool failed (exit code ${result.exitCode}): ${stderr || "no output"}`,
+    );
   }
 
   const text = stdout.trim();
@@ -389,6 +439,7 @@ export function describeModuleRun(
   return (
     unwrapped ??
     failure(
+      "no_envelope",
       `The tool exited 0 but its stdout carries no runner envelope. The runner prints the module's result behind its marker line and nothing else, so the module printed to stdout itself: ${text.slice(-500)}`,
     )
   );
@@ -413,6 +464,31 @@ export function unwrapEnvelope(text: string): ModuleRunOutcome | null {
     result: envelope.result,
     blobs: envelope.blobs,
     blobsDropped: envelope.dropped,
+  };
+}
+
+/**
+ * The runner's vendor status line off a stderr tail (GRA-244): every line carrying the marker is
+ * taken out of the tail, and the status is read from the last line only when `worded` says the
+ * runner wrote the tail's end. Null when there is none, or the line names none.
+ */
+function readVendorStatus(
+  stderrTail: string,
+  worded: boolean,
+): { tail: string; vendorStatus: number | null } {
+  const lines = stderrTail.trim().split("\n");
+  const last = lines.at(-1) ?? "";
+  const status = last.startsWith(VENDOR_STATUS_MARKER)
+    ? Number.parseInt(last.slice(VENDOR_STATUS_MARKER.length), 10)
+    : Number.NaN;
+  const tail = lines
+    .filter((line) => !line.startsWith(VENDOR_STATUS_MARKER))
+    .join("\n")
+    .trim();
+  return {
+    tail,
+    vendorStatus:
+      worded && Number.isInteger(status) && status >= 400 && status <= 599 ? status : null,
   };
 }
 
@@ -602,6 +678,11 @@ async function runHeld(
         );
   }
   const versioned = { toolId: tool.id, versionId: version.id };
+  // A stock copy's run, or a remix's, names its origin on the call's event from here on, refusals
+  // included (GRA-244; `stock-signal.ts`). A dry run is `acquire`'s proof and is not a stock run.
+  if (!args.mode.dryRun) {
+    noteStockRun(await readStockOrigin(ctx, scope.personId, version, deps.tool));
+  }
   const admission = args.admit ? await args.admit(tool, version.id) : null;
   if (admission) return refuse(admission.reason, admission.message, versioned);
 
@@ -772,6 +853,7 @@ async function runHeld(
               exitCode: null,
               stderrTail: "",
             },
+            kind: "sandbox_unavailable",
             blobs: [],
             blobsDropped: 0,
           };
@@ -815,6 +897,7 @@ async function runHeld(
       );
       const overshoot = blobQuotaOvershoot(recorded);
       await record("error", versioned);
+      noteRunFailure(run.kind, run.vendorStatus);
       return {
         answer: {
           ...run.failure,
@@ -850,6 +933,7 @@ async function runHeld(
     const overshoot = blobQuotaOvershoot(recorded);
     if (overshoot) {
       await record("error", versioned);
+      noteRunFailure("blob_quota");
       return {
         answer: {
           ...overshoot,

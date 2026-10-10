@@ -19,7 +19,7 @@ import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { NO_ELICITATION } from "./approval";
-import type { McpDeps } from "./deps";
+import type { McpDeps, ToolCallEvent } from "./deps";
 import { createInFlightRegistry } from "./in-flight";
 import { createToolListChangedNotifier } from "./notifier";
 import { runAuthoredTool } from "./run";
@@ -48,7 +48,13 @@ const AGENTS = {
   promoter: { person: "p_promoter", agent: "a_promoter", connection: "conn_meteo_promoter" },
   console: { person: "p_console", agent: "a_console", connection: "conn_meteo_console" },
   owner: { person: "p_owner", agent: "a_owner", connection: "conn_meteo_owner" },
+  signal: { person: "p_signal", agent: "a_signal", connection: "conn_meteo_signal" },
 } as const;
+
+/** A city the fake geocoder answers 503 for, with a body that must never reach an event (GRA-244). */
+const FAILING_CITY = "Failing-City-Secret";
+const VENDOR_BODY = "Vendor-Body-Secret";
+const events: ToolCallEvent[] = [];
 const tokenOf = (agent: string) => `grft_token_${agent}`.padEnd(46, "0");
 
 /**
@@ -132,6 +138,9 @@ beforeAll(async () => {
           )
         : relayed;
       if (url.hostname === "geocoding-api.open-meteo.com") {
+        if (url.searchParams.get("name") === FAILING_CITY) {
+          return new Response(VENDOR_BODY, { status: 503 });
+        }
         return Response.json({
           results: [
             {
@@ -267,6 +276,7 @@ beforeAll(async () => {
       },
       stock: catalogue.deps,
     }),
+    onToolCall: (event) => events.push(event),
     handoff: {
       consoleUrl: "http://console.graft.test",
       secret: "graft-mcp-test-handoff-secret-that-is-long-enough",
@@ -474,6 +484,95 @@ describe("a person's own tool of the same name", () => {
       const result = await harness.call("run_tool", { ...KEY, input: {} });
       expect(body(result)).toEqual({ mine: true });
       expect(copyOf(AGENTS.owner.person).versions[0]?.stockVersionId).toBeNull();
+    } finally {
+      await harness.close();
+    }
+  });
+});
+
+/**
+ * GRA-244: what a hosted monitor of a stock version's failure rate reads. A run of the copy, or of
+ * a remix of it, names the stock tool and version on the tool call's event; a failure adds its kind
+ * and the vendor's status; nothing of the input, the output or the vendor's body is there.
+ */
+describe("the signal a stock tool's runs give", () => {
+  const lastEventFor = (agentId: string, tool: string) =>
+    events.filter((event) => event.agentId === agentId && event.tool === tool).at(-1);
+
+  it("names the stock tool and version on a run of the copy, and its failure's shape alone", async () => {
+    const harness = await connect(AGENTS.signal.agent);
+    try {
+      const ok = await harness.call("run_tool", { ...KEY, input: { city: "Perth" } });
+      expect(ok.isError ?? false).toBe(false);
+      const [version] = copyOf(AGENTS.signal.person).versions;
+      const okEvent = lastEventFor(AGENTS.signal.agent, "run_tool");
+      expect(okEvent).toMatchObject({
+        outcome: "ok",
+        stock: { toolId: version?.stockToolId, versionId: version?.stockVersionId, remix: false },
+      });
+      expect(okEvent?.stock).not.toHaveProperty("failureKind");
+      expect(JSON.stringify(okEvent)).not.toContain("Perth");
+
+      // The first-class name, once promoted, gives the same signal.
+      await harness.call("promote", KEY);
+      const failed = await harness.call(WIRE, { city: FAILING_CITY });
+      expect(failed.isError).toBe(true);
+      // The vendor's body reaches the model in the failure's stderr, as before; not the event.
+      expect(JSON.stringify(body(failed))).toContain(VENDOR_BODY);
+      const failedEvent = lastEventFor(AGENTS.signal.agent, WIRE);
+      expect(failedEvent).toMatchObject({
+        kind: "authored",
+        outcome: "error",
+        stock: {
+          toolId: version?.stockToolId,
+          versionId: version?.stockVersionId,
+          remix: false,
+          failureKind: "threw",
+          vendorStatus: 503,
+        },
+      });
+      const text = JSON.stringify(failedEvent);
+      expect(text).not.toContain(FAILING_CITY);
+      expect(text).not.toContain(VENDOR_BODY);
+      expect(text).not.toContain("search");
+    } finally {
+      await harness.close();
+    }
+  });
+
+  it("names the stock version a remix came from, as a remix", async () => {
+    const { tool, versions } = copyOf(AGENTS.signal.person);
+    const [copy] = versions;
+    if (!tool || !copy) throw new Error("the copy is the previous case's");
+    // The person's own version over the copy: same code, no stock origin.
+    store.versions.set("ver_signal_remix", {
+      ...copy,
+      id: "ver_signal_remix",
+      versionNumber: 2,
+      stockToolId: null,
+      stockVersionId: null,
+    });
+    store.tools.set(tool.id, { ...tool, currentVersionId: "ver_signal_remix" });
+    const harness = await connect(AGENTS.signal.agent);
+    try {
+      await harness.call("run_tool", { ...KEY, input: { city: "Darwin" } });
+      expect(lastEventFor(AGENTS.signal.agent, "run_tool")?.stock).toEqual({
+        toolId: copy.stockToolId,
+        versionId: copy.stockVersionId,
+        remix: true,
+      });
+    } finally {
+      await harness.close();
+    }
+  });
+
+  it("gives none for a tool that never came from stock, or a call that ran nothing", async () => {
+    const harness = await connect(AGENTS.owner.agent);
+    try {
+      await harness.call("run_tool", { ...KEY, input: {} });
+      expect(lastEventFor(AGENTS.owner.agent, "run_tool")).not.toHaveProperty("stock");
+      await harness.call("find_tool", { query: "weather" });
+      expect(lastEventFor(AGENTS.owner.agent, "find_tool")).not.toHaveProperty("stock");
     } finally {
       await harness.close();
     }
