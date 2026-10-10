@@ -1,0 +1,29 @@
+{
+  "format": 1,
+  "tool": "gmail__modify-labels",
+  "recordedAt": "2026-10-09T18:57:46.218Z",
+  "input": {
+    "threadId": "5c64ec155f00d51b",
+    "archive": true,
+    "markRead": true
+  },
+  "exchanges": [
+    {
+      "kind": "write",
+      "method": "POST",
+      "url": "https://gmail.googleapis.com/gmail/v1/users/me/threads/5c64ec155f00d51b/modify",
+      "body": {
+        "json": {
+          "addLabelIds": [],
+          "removeLabelIds": ["INBOX", "UNREAD"]
+        }
+      }
+    }
+  ],
+  "result": {
+    "target": "thread",
+    "id": "5c64ec155f00d51b",
+    "addedLabelIds": [],
+    "removedLabelIds": ["INBOX", "UNREAD"]
+  }
+}

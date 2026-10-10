@@ -1,0 +1,30 @@
+{
+  "name": "reply-to-thread",
+  "description": "Replies at once to a Gmail conversation. Provide a threadId from gmail__search-messages and a plain-text body. Set replyAll to include the conversation’s other recipients. To save a reply without sending, use gmail__create-draft with a threadId instead.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "threadId": {
+        "type": "string",
+        "minLength": 1,
+        "description": "Thread ID from gmail__search-messages or gmail__get-message."
+      },
+      "body": {
+        "type": "string",
+        "description": "Plain-text reply body."
+      },
+      "replyAll": {
+        "type": "boolean",
+        "default": false,
+        "description": "Also reply to the last message's To and Cc recipients, excluding your own address."
+      }
+    },
+    "required": ["threadId", "body"],
+    "additionalProperties": false
+  },
+  "hosts": ["gmail.googleapis.com"],
+  "annotations": {
+    "readOnly": false,
+    "destructive": false
+  }
+}

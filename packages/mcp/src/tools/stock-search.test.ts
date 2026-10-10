@@ -67,7 +67,7 @@ const CASES: [query: string, tool: string][] = [
   ["read a slack thread", "slack__read-thread"],
   ["find a slack user by email", "slack__find-user"],
   ["post a message to a slack channel", "slack__post-message"],
-  ["reply in thread", "slack__reply-in-thread"],
+  ["reply in a slack thread", "slack__reply-in-thread"],
   ["send a direct message on slack", "slack__send-direct-message"],
   ["add a reaction", "slack__add-reaction"],
   // GitHub's (GRA-253), also pinned in tool-index.test.ts.
@@ -82,6 +82,15 @@ const CASES: [query: string, tool: string][] = [
   ["comment on pull request", "github__comment-on-issue-or-pull-request"],
   ["close issue", "github__update-issue"],
   ["create pull request", "github__create-pull-request"],
+  // Gmail's (GRA-248), also pinned over Gmail's tools alone in tool-index.test.ts.
+  ["search my email", "gmail__search-messages"],
+  ["read an email", "gmail__get-message"],
+  ["read a gmail conversation", "gmail__get-thread"],
+  ["list gmail labels", "gmail__list-labels"],
+  ["send an email", "gmail__send-email"],
+  ["draft an email", "gmail__create-draft"],
+  ["reply to an email", "gmail__reply-to-thread"],
+  ["archive an email", "gmail__modify-labels"],
 ];
 
 let catalogue: (IndexedTool & { wire: string })[] = [];

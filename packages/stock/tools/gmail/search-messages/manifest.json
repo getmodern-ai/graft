@@ -1,0 +1,28 @@
+{
+  "name": "search-messages",
+  "description": "Finds Gmail messages (emails) matching a Gmail search query and returns each one's sender, recipients, subject, date, snippet, labels and unread status. Message ids feed gmail__get-message; threadIds feed gmail__get-thread and gmail__reply-to-thread.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "query": {
+        "type": "string",
+        "description": "Gmail search syntax, as used in the Gmail search box (for example, from:someone is:unread).",
+        "default": "in:inbox"
+      },
+      "maxResults": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 25,
+        "default": 10,
+        "description": "Maximum number of matching messages to return."
+      }
+    },
+    "required": ["query", "maxResults"],
+    "additionalProperties": false
+  },
+  "hosts": ["gmail.googleapis.com"],
+  "annotations": {
+    "readOnly": true,
+    "destructive": false
+  }
+}
