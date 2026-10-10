@@ -59,4 +59,25 @@ export const READ_ENDPOINTS: readonly ReadEndpoint[] = [
     reason:
       "Apollo Search for Contacts (docs.apollo.io/reference/search-for-contacts): writes nothing.",
   },
+  {
+    host: "api.notion.com",
+    method: "POST",
+    path: "/v1/search",
+    reason:
+      "Notion Search by title (developers.notion.com/reference/post-search): lists pages and data sources shared with the integration, writes nothing.",
+  },
+  {
+    host: "api.notion.com",
+    method: "POST",
+    path: "/v1/databases/*/query",
+    reason:
+      "Notion Query a database (developers.notion.com/reference/post-database-query), deprecated from version 2025-09-03: filters and sorts the database's pages, writes nothing.",
+  },
+  {
+    host: "api.notion.com",
+    method: "POST",
+    path: "/v1/data_sources/*/query",
+    reason:
+      "Notion Query a data source (developers.notion.com/reference/query-a-data-source): filters and sorts the data source's pages, writes nothing.",
+  },
 ];

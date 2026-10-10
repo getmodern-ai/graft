@@ -142,6 +142,19 @@ describe("classifyRequest: the reviewed table", () => {
     ).toEqual({ read: true, by: "endpoint" });
   });
 
+  it("calls Notion's search and query endpoints reads, and its page create a write", () => {
+    const notion = (path: string) => search({ host: "api.notion.com", path });
+    expect(classifyRequest(notion("/v1/search"))).toEqual({ read: true, by: "endpoint" });
+    expect(
+      classifyRequest(notion("/v1/databases/897e5a76-ae52-4b48-9fdf-e71f5945d1af/query")),
+    ).toEqual({ read: true, by: "endpoint" });
+    expect(
+      classifyRequest(notion("/v1/data_sources/248104cd477e80afbc30000bd28de8f9/query")),
+    ).toEqual({ read: true, by: "endpoint" });
+    expect(classifyRequest(notion("/v1/pages"))).toEqual({ read: false });
+    expect(classifyRequest(notion("/v1/databases"))).toEqual({ read: false });
+  });
+
   it("calls a miss on the host, the method or the path a write", () => {
     expect(classifyRequest(search({ host: "api.example.com" }))).toEqual({ read: false });
     expect(classifyRequest(search({ host: null }))).toEqual({ read: false });
