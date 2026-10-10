@@ -42,6 +42,19 @@ const ENTITIES: Record<string, string> = {
   "#39": "'",
 };
 
+/**
+ * The body's partial-response mask, nested PART_DEPTH levels: Gmail answers `parts` only as deep
+ * as the mask names them, and a forwarded or signed message nests multiparts several levels down.
+ */
+const PART_DEPTH = 10;
+
+function bodyFieldsMask(): string {
+  let part = "mimeType,filename,body";
+  for (let level = 0; level < PART_DEPTH; level += 1)
+    part = `mimeType,filename,body,parts(${part})`;
+  return `id,payload(${part})`;
+}
+
 function stripHtml(html: string): string {
   return (
     html
@@ -95,8 +108,7 @@ export default async (input: Input, ctx: Context) => {
 
   const fullQuery = new URLSearchParams({
     format: "full",
-    fields:
-      "id,payload(mimeType,filename,body,parts(mimeType,filename,body,parts(mimeType,filename,body,parts(mimeType,filename,body))))",
+    fields: bodyFieldsMask(),
   });
   const fullRes = await ctx.fetch(`/users/me/messages/${encodedId}?${fullQuery}`);
   if (!fullRes.ok) {

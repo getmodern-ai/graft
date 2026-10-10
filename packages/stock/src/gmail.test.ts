@@ -189,4 +189,33 @@ describe("the HTML readers", () => {
     const result = (await getMessage({ messageId: "m1" }, ctx)) as { text: string };
     expect(result.text).toBe("a &lt; b\n  done");
   });
+
+  it("gmail__get-thread decodes each entity once and drops every script and style", async () => {
+    const getThread = await gmailTool("get-thread");
+    const { ctx } = fakeGmail((path) =>
+      path.startsWith("/users/me/threads/")
+        ? { id: "t1", messages: [{ id: "m1", payload: { headers: [] } }] }
+        : { id: "m1", payload: { mimeType: "text/html", body: { data } } },
+    );
+    const result = (await getThread({ threadId: "t1" }, ctx)) as { messages: { text: string }[] };
+    expect(result.messages[0]?.text).toBe("a &lt; b\n  done");
+  });
+});
+
+describe("gmail__get-thread", () => {
+  it("keeps a long conversation's text within one budget, the newest messages first", async () => {
+    const getThread = await gmailTool("get-thread");
+    const long = Buffer.from("a".repeat(20_000), "utf8").toString("base64url");
+    const ids = ["m1", "m2", "m3", "m4"];
+    const { ctx } = fakeGmail((path) =>
+      path.startsWith("/users/me/threads/")
+        ? { id: "t1", messages: ids.map((id) => ({ id, payload: { headers: [] } })) }
+        : { id: "m", payload: { mimeType: "text/plain", body: { data: long } } },
+    );
+
+    const result = (await getThread({ threadId: "t1" }, ctx)) as { messages: { text: string }[] };
+
+    expect(result.messages.map((message) => message.text.length)).toEqual([0, 0, 20_000, 20_000]);
+    expect(JSON.stringify(result).length).toBeLessThan(64_000);
+  });
 });

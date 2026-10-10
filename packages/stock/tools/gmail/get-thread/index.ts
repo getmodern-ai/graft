@@ -50,6 +50,9 @@ function decodeBase64Url(data: string): string {
   return Buffer.from(data, "base64url").toString("utf8");
 }
 
+/** Characters of message text across a whole conversation, under the runner's 64,000 result. */
+const THREAD_TEXT_BUDGET = 40_000;
+
 const ENTITIES: Record<string, string> = {
   nbsp: " ",
   amp: "&",
@@ -77,6 +80,19 @@ function stripHtml(html: string): string {
       .replace(/\n{3,}/g, "\n\n")
       .trim()
   );
+}
+
+/**
+ * The body's partial-response mask, nested PART_DEPTH levels: Gmail answers `parts` only as deep
+ * as the mask names them, and a forwarded or signed message nests multiparts several levels down.
+ */
+const PART_DEPTH = 10;
+
+function bodyFieldsMask(): string {
+  let part = "mimeType,filename,body";
+  for (let level = 0; level < PART_DEPTH; level += 1)
+    part = `mimeType,filename,body,parts(${part})`;
+  return `id,payload(${part})`;
 }
 
 function collectParts(root: GmailPart | undefined): {
@@ -142,8 +158,7 @@ export default async (input: Input, ctx: Context) => {
 
   const thread = (await threadRes.json()) as GmailThread;
   const messages = [];
-  const bodyFields =
-    "id,payload(mimeType,filename,body,parts(mimeType,filename,body,parts(mimeType,filename,body,parts(mimeType,filename,body))))";
+  const bodyFields = bodyFieldsMask();
 
   for (const metadata of thread.messages ?? []) {
     const messageId = metadata.id ?? "";
@@ -179,6 +194,15 @@ export default async (input: Input, ctx: Context) => {
       text,
       attachments: content.attachments,
     });
+  }
+
+  // The whole conversation's text shares one budget, the newest messages first, so a long thread
+  // still fits the runner's result limit rather than arriving as a cut-off prefix.
+  let remaining = THREAD_TEXT_BUDGET;
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    message.text = message.text.slice(0, remaining);
+    remaining -= message.text.length;
   }
 
   return {
