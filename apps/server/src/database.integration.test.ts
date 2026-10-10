@@ -66,7 +66,7 @@ import {
   importCapabilityTokenKeys,
   mintCapabilityToken,
 } from "@graft/token";
-import { createFilesystemToolboxStore } from "@graft/toolbox";
+import { createFilesystemToolboxStore, createNoopToolboxMirror } from "@graft/toolbox";
 import {
   CredentialScopeMismatchError,
   createCredentialVault,
@@ -1037,11 +1037,25 @@ describe.skipIf(!adminUrl)("the schema, the account and the services over a real
 
     const personId = await signUp("stock-copy@example.com");
     const root = await mkdtemp(join(tmpdir(), "graft-stock-it-"));
-    const copied = await copyStockVersion(
-      { db, store: createFilesystemToolboxStore({ root }), tool: defaultToolDeps },
-      { personId, stock, defaultConnectionId: null },
-    );
-    const [version] = await listToolVersions(ctx, { personId }, copied.id, defaultToolDeps);
+    const mirror = createNoopToolboxMirror();
+    const copyDeps = {
+      db,
+      store: createFilesystemToolboxStore({ root }),
+      tool: defaultToolDeps,
+      mirror,
+      onMirror: () => {},
+      now: () => new Date(),
+    };
+    // Two first copies racing (Greptile on #184): the lock on the name makes one, and both answer it.
+    const [copied, raced] = await Promise.all([
+      copyStockVersion(copyDeps, { personId, stock, defaultConnectionId: null }),
+      copyStockVersion(copyDeps, { personId, stock, defaultConnectionId: null }),
+    ]);
+    expect(raced.id).toBe(copied.id);
+    const versions = await listToolVersions(ctx, { personId }, copied.id, defaultToolDeps);
+    expect(versions).toHaveLength(1);
+    const [version] = versions;
+    await vi.waitFor(() => expect(mirror.calls).toHaveLength(1));
     expect(version).toMatchObject({
       versionNumber: 1,
       stockToolId: stock.stockToolId,
@@ -1080,10 +1094,9 @@ describe.skipIf(!adminUrl)("the schema, the account and the services over a real
       defaultStockDeps,
     );
     if (!v2) throw new Error("no stock v2");
-    const publish = { db, store: createFilesystemToolboxStore({ root }), tool: defaultToolDeps };
     const advances = await Promise.all([
-      advanceStockCopy(publish, { personId, toolId: copied.id, stock: v2 }),
-      advanceStockCopy(publish, { personId, toolId: copied.id, stock: v2 }),
+      advanceStockCopy(copyDeps, { personId, toolId: copied.id, stock: v2 }),
+      advanceStockCopy(copyDeps, { personId, toolId: copied.id, stock: v2 }),
     ]);
     expect(advances.filter((advance) => advance.advanced)).toHaveLength(1);
     const origins = await listToolVersionOrigins(ctx, { personId }, defaultToolDeps, copied.id);

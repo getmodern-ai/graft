@@ -24,6 +24,7 @@ import type { ToolCallEvent } from "./deps";
 import { isPlainObject, toolError, toolRefusal, toolResult } from "./result";
 import { runAuthoredTool } from "./run";
 import { advanceIfBehind, lineageOf, originsByTool } from "./stock-copy";
+import { type StockSignal, withStockSignal } from "./stock-signal";
 import { authoredToolName, parseAuthoredToolName, parseExecuteToolName } from "./tool-names";
 import { AUTHORING_TOOLS } from "./tools/authoring";
 import { callExecuteTool, executeToolDefinition } from "./tools/execute";
@@ -167,10 +168,15 @@ export async function callToolFor(
   const startedAt = Date.now();
   // The blob counts the event carries come from the runner's parsed ledger (`blobs.ts`), tallied
   // over this call, and never from the answer, whose keys are the module's.
-  const { value: result, tally } = await withBlobTally(() => answer(session, name, args));
+  // A stock copy's run notes its origin and its failure's shape the same way (GRA-244;
+  // `stock-signal.ts`), so the event never reads them off the answer either.
+  const {
+    value: { value: result, tally },
+    stock,
+  } = await withStockSignal(() => withBlobTally(() => answer(session, name, args)));
   // The hook sees every answer, an unknown tool's `McpError` excepted — that one never reached a tool.
   session.deps.onToolCall?.(
-    toolCallEvent(session, name, result, Date.now() - startedAt, args, tally),
+    toolCallEvent(session, name, result, Date.now() - startedAt, args, tally, stock),
   );
   return result;
 }
@@ -206,6 +212,7 @@ export function toolCallEvent(
   latencyMs: number,
   args: Record<string, unknown> = {},
   tally: BlobTally = { seen: false, written: 0, dropped: 0 },
+  stock: StockSignal | null = null,
 ): ToolCallEvent {
   const kind = FIXED_BY_NAME.has(name)
     ? "meta"
@@ -224,6 +231,8 @@ export function toolCallEvent(
     ...(refused && typeof body?.reason === "string" ? { reason: body.reason } : {}),
     latencyMs,
     ...(detail ? { detail } : {}),
+    // A stock copy's run or a remix's (GRA-244): the origin, and a failure's kind and vendor status.
+    ...(stock ? { stock: { ...stock } } : {}),
     // Observed, never trusted: the gate reads the client's callback host (GRA-150, `deps.ts`).
     uiExtensionDeclared: session.uiExtensionDeclared(),
   };

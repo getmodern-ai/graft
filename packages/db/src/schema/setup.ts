@@ -64,6 +64,14 @@ export const setup = pgTable(
     harness: text("harness", { enum: setupHarness }),
     /** The agent Setup runs as: minted at the harness step, or adopted. */
     agentId: text("agent_id").references(() => agent.id, { onDelete: "set null" }),
+    /**
+     * The starter integration chosen before anything is connected (Setup v2): the tool step reads
+     * it, and choosing the task connects it. Null for *Another integration*, whose connection the
+     * record names at once.
+     */
+    starterId: text("starter_id"),
+    /** The task chosen before connecting (Setup v2), built the moment the connection lands. */
+    goal: text("goal"),
     /** The open connection ask the connect step made (GRA-206). */
     pendingActionId: text("pending_action_id").references(() => pendingAction.id, {
       onDelete: "set null",

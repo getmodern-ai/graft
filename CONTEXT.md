@@ -94,8 +94,8 @@ _Avoid_: container, VM, worker, isolate (as the name of the thing)
 ### Tools and the toolbox
 
 **Tool**:
-A single capability the harness sees as an MCP tool. Everything in an agent's list is either a
-meta-tool or an authored tool. On the wire an authored tool is `<vendor>__<name>` — the two
+A single capability the harness sees as an MCP tool. Everything in an agent's list is a meta-tool,
+an authored tool or a stock tool. On the wire an authored tool is `<vendor>__<name>` — the two
 kebab-case halves joined by a double underscore, which neither can contain — and a connection's
 execute tool is `execute__<connection id>`.
 _Avoid_: function, action, capability, skill
@@ -112,6 +112,28 @@ A tool Graft's model wrote: a small module of code making one call against a con
 of the vendor's API than the task needs. Versioned in the toolbox, bound to a connection's vendor
 rather than a connection row, and promoted per agent.
 _Avoid_: custom tool, generated tool, function, script
+
+**Stock tool**:
+A tool every person has without acquiring it: a vendor's basic read or write, there as soon as the
+integration is connected, over any connection of that integration. Graft authors its own stock
+ahead of time with the same loop, verified before it ships; a later tool source may add more.
+Found and promoted like an authored tool, and like one it reaches an agent's list only when
+reached for. Its first promote or run puts a copy in the person's toolbox under the same name,
+which follows stock's new versions until the person remixes it. A person's own authored tool of
+the same name shadows it. Person-facing copy calls it ready-made.
+_Avoid_: catalogue tool, prebuilt tool, upstream tool, provided tool, action (a source's word)
+
+**Remix**:
+A person's own version of a stock tool, published from it under the same name, after which stock's
+new versions no longer reach that tool until the person, or their agent, goes back to stock.
+_Avoid_: fork, customise, override, variation (a tool that does a different job is a new authored
+tool, not a remix)
+
+**Tool source**:
+Where stock tools come from: the seam that lists and describes them and puts one in a person's
+reach. Graft's own stock is the first source, copied into the toolbox when reached for; a later
+source, a broker or a vendor's MCP server, would run its tools itself.
+_Avoid_: catalogue, registry, gateway, marketplace
 
 **Toolbox**:
 A person's store of authored tools, every version kept, demoted ones included. Nothing is ever
@@ -131,8 +153,8 @@ deletes.
 _Avoid_: file store, scratch, cache, bucket
 
 **Working set**:
-The authored tools currently promoted for one agent, and therefore present in its MCP tool list.
-Bounded by a cap and an idle window per agent.
+The authored and stock tools currently promoted for one agent, and therefore present in its MCP
+tool list. Bounded by a cap and an idle window per agent.
 _Avoid_: active tools, loaded tools, context, enabled tools
 
 **Promote** / **Demote**:
@@ -197,10 +219,11 @@ _Avoid_: link, redirect, elicitation (which is a different mechanism, used only 
 
 **Approval**:
 A person's answer to a tool's ask. Reads never ask. Any other tool, destructive included, asks once
-and the answer holds; the person may set a tool to ask every time, and back. The answer is for the
-version it was given for: a new version of a write asks again once, except a ready-made tool's
-update that does not widen what it may do. `acquire` asks once per agent per connection.
-Answerable later through the console.
+and the answer holds; the person may set a tool to ask every time, and back. The person may also
+allow every tool of an integration for an agent at once, destructive ones only if they say so. The
+answer is for the version it was given for: a new version of a write asks again once, except a
+ready-made tool's update that does not widen what it may do. `acquire` asks once per agent per
+connection. Answerable later through the console.
 _Avoid_: grant, permission, consent (fine in prose, not as the noun for the record)
 
 **Setup**:

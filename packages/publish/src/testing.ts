@@ -159,6 +159,8 @@ export function createInMemoryToolDeps(options: { now?: () => Date } = {}): InMe
       for (const row of moved) row.toolVersionId = args.toVersionId;
       return moved as never;
     },
+    // One process and no concurrent transactions; a race test brings a lock that holds.
+    lockToolName: async () => {},
   };
 }
 

@@ -1,6 +1,6 @@
 {
-  "id": "4d606506-4ccb-4eba-aa19-c07a485da6ba",
-  "prevId": "45158758-446d-445e-a506-f5b1e3ce331e",
+  "id": "f8fc1607-2d6a-4253-87d2-eeffb7d2cb06",
+  "prevId": "863d838a-2d0e-4912-9a53-1e6050453203",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -833,12 +833,6 @@
           "notNull": true,
           "default": false
         },
-        "tool_version_id": {
-          "name": "tool_version_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
         "owner": {
           "name": "owner",
           "type": "text",
@@ -876,21 +870,6 @@
           "concurrently": false,
           "method": "btree",
           "with": {}
-        },
-        "approval_tool_version_id_idx": {
-          "name": "approval_tool_version_id_idx",
-          "columns": [
-            {
-              "expression": "tool_version_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
         }
       },
       "foreignKeys": {
@@ -910,15 +889,6 @@
           "columnsFrom": ["tool_id"],
           "columnsTo": ["id"],
           "onDelete": "cascade",
-          "onUpdate": "no action"
-        },
-        "approval_tool_version_id_tool_version_id_fk": {
-          "name": "approval_tool_version_id_tool_version_id_fk",
-          "tableFrom": "approval",
-          "tableTo": "tool_version",
-          "columnsFrom": ["tool_version_id"],
-          "columnsTo": ["id"],
-          "onDelete": "set null",
           "onUpdate": "no action"
         }
       },
@@ -2444,6 +2414,18 @@
         },
         "agent_id": {
           "name": "agent_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "starter_id": {
+          "name": "starter_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "goal": {
+          "name": "goal",
           "type": "text",
           "primaryKey": false,
           "notNull": false

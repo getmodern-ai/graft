@@ -61,6 +61,20 @@ describe("decideStockAdvance", () => {
     ).toEqual({ action: "stay", reason: "current" });
   });
 
+  it("stays on a stale catalogue read: a version no newer than one the copy already took", () => {
+    const taken = (stockVersionId: string, stockVersionNumber: number): VersionOrigin => ({
+      ...fromStock(stockVersionId),
+      stockVersionNumber,
+    });
+    // Another reach advanced the copy from v1 to v3 while this one held its read of v2.
+    expect(
+      decideStockAdvance({
+        versions: [taken("sv3", 3), taken("sv1", 1)],
+        catalogue: catalogueAt("sv2", 2),
+      }),
+    ).toEqual({ action: "stay", reason: "current" });
+  });
+
   it("never advances a remix, however far the catalogue moved", () => {
     expect(
       decideStockAdvance({

@@ -24,6 +24,7 @@ import {
   EXIT_USAGE,
   MODULE_ENTRIES,
   readRunnerEnvelope,
+  VENDOR_STATUS_MARKER,
 } from "@graft/runner";
 import type { SandboxHandle, SandboxProcessResult } from "@graft/sandbox";
 import { MAX_CAPABILITY_TOKEN_TTL_SECONDS, mintCapabilityToken } from "@graft/token";
@@ -50,7 +51,9 @@ import {
   startDetached,
 } from "./sandbox";
 import { compileInputSchema } from "./schema";
-import { ensureToolForAgent } from "./stock-copy";
+import { ensureToolForAgent, namedNotInScopeMessage } from "./stock-copy";
+import { matchStockConnections, stockToolRunsOver } from "./stock-match";
+import { noteRunFailure, noteStockRun, readStockOrigin } from "./stock-signal";
 import { authoredToolName } from "./tool-names";
 
 /**
@@ -97,6 +100,15 @@ import { authoredToolName } from "./tool-names";
  * scope is read before the choice, so a live row the agent was never given is never followed; the
  * approval gate still sits after the choice, so a write asks on the connection it will run against
  * (ADR 0008). A caller that names the connection (`connectionId`) gets no following: it said which.
+ *
+ * **A stock copy follows by hosts, not by slug** (GRA-241; ADR 0025). A version copied from stock
+ * (`stockVersionId` set) runs over any connection whose hosts cover the stock tool's manifest,
+ * whatever its provider, and the candidates are judged by `stock-match.ts`: one match is followed,
+ * several are broken by the vendor slug, and what is still tied is refused naming them under
+ * `alternatives`. A copy made where several matched holds no default, so each of its runs resolves
+ * this way, refused `connection_ambiguous` while it is tied. A named connection the manifest's hosts
+ * are not all among is refused `connection_hosts_missing`. A remix (a version with no stock origin)
+ * is the person's own tool and follows by slug as above.
  *
  * **A blob the module wrote comes back on the runner's ledger, never through the model** (GRA-186;
  * ADR 0023). The runner prints an envelope, `{ result, blobs }`, and this file is where it is read
@@ -217,8 +229,37 @@ export type ModuleRunOutcome =
    * the same `ENVELOPE_MARKER` line a result's envelope sits behind, before the error, so
    * `readRunnerEnvelope` reads both. `[]` for every other failure, a timeout included, whose
    * committed blobs are the sweep's to adopt (GRA-189).
+   *
+   * `kind` and `vendorStatus` are for a stock tool's failure signal (GRA-244; `stock-signal.ts`)
+   * and never reach the wire: which way the run failed, and the last error status a vendor answered
+   * `ctx.fetch` with, read off the runner's last stderr line.
    */
-  | { ok: false; failure: RunFailure; blobs: BlobLedgerEntry[]; blobsDropped: number };
+  | {
+      ok: false;
+      failure: RunFailure;
+      kind: RunFailureKind;
+      vendorStatus?: number;
+      blobs: BlobLedgerEntry[];
+      blobsDropped: number;
+    };
+
+/**
+ * Which way a run failed, as a word a chart cuts by (GRA-244): the module threw (`threw`, exit 1),
+ * timed out inside the runner (`timeout`, exit 2), had its invocation refused (`invocation_refused`,
+ * exit 64), was not on the toolbox (`module_missing`), was killed at the sandbox's limit (`killed`)
+ * or left running (`still_running`), exited 0 with no envelope (`no_envelope`), found no sandbox
+ * (`sandbox_unavailable`), or wrote past the blob quota (`blob_quota`).
+ */
+export type RunFailureKind =
+  | "threw"
+  | "timeout"
+  | "invocation_refused"
+  | "module_missing"
+  | "killed"
+  | "still_running"
+  | "no_envelope"
+  | "sandbox_unavailable"
+  | "blob_quota";
 
 function shellQuote(value: string): string {
   return `'${value.replace(/'/g, `'\\''`)}'`;
@@ -279,6 +320,7 @@ export async function runModule(
             exitCode: EXIT_MODULE_MISSING,
             stderrTail: "",
           },
+          kind: "module_missing",
           blobs: [],
           blobsDropped: 0,
         };
@@ -339,14 +381,22 @@ export function describeModuleRun(
   timeoutSeconds: number,
 ): ModuleRunOutcome {
   const [stdout, stderrTail = ""] = splitAtMarker(result.stdout);
-  const stderr = stderrTail.trim();
+  // Only an exit the runner worded ends on its vendor status line (GRA-244; `runner.mjs`'s `fail`):
+  // read there, and stripped from every tail, so a module's own copy of the line is never believed.
+  const worded =
+    result.status !== "running" &&
+    result.status !== "killed" &&
+    (result.exitCode === 1 || result.exitCode === EXIT_TIMEOUT || result.exitCode === EXIT_USAGE);
+  const { tail: stderr, vendorStatus } = readVendorStatus(stderrTail, worded);
   // A failure that followed a write carries the ledger behind the runner's marker (the outcome
   // type); a killed or timed-out process printed nothing, so its list is empty.
-  const failure = (error: string): ModuleRunOutcome => {
+  const failure = (kind: RunFailureKind, error: string): ModuleRunOutcome => {
     const envelope = readRunnerEnvelope(stdout);
     return {
       ok: false,
       failure: { error, exitCode: result.exitCode, stderrTail: stderr },
+      kind,
+      ...(vendorStatus !== null ? { vendorStatus } : {}),
       blobs: envelope?.blobs ?? [],
       blobsDropped: envelope?.dropped ?? 0,
     };
@@ -354,23 +404,33 @@ export function describeModuleRun(
 
   if (result.status === "running") {
     return failure(
+      "still_running",
       `The tool was still running after ${timeoutSeconds} seconds and was left behind. Its output so far: ${stdout.trim().slice(-500)}`,
     );
   }
   if (result.status === "killed") {
     return failure(
+      "killed",
       `The tool was killed before it finished: it ran past the ${timeoutSeconds}-second limit.`,
     );
   }
-  if (result.exitCode === EXIT_MODULE_MISSING) return failure(moduleMissingMessage(modulePath));
+  if (result.exitCode === EXIT_MODULE_MISSING) {
+    return failure("module_missing", moduleMissingMessage(modulePath));
+  }
   if (result.exitCode === EXIT_TIMEOUT) {
-    return failure(`The tool timed out inside the runner: ${stderr || "no output"}`);
+    return failure("timeout", `The tool timed out inside the runner: ${stderr || "no output"}`);
   }
   if (result.exitCode === EXIT_USAGE) {
-    return failure(`The runner refused the invocation: ${stderr || "no output"}`);
+    return failure(
+      "invocation_refused",
+      `The runner refused the invocation: ${stderr || "no output"}`,
+    );
   }
   if (result.exitCode !== 0) {
-    return failure(`The tool failed (exit code ${result.exitCode}): ${stderr || "no output"}`);
+    return failure(
+      "threw",
+      `The tool failed (exit code ${result.exitCode}): ${stderr || "no output"}`,
+    );
   }
 
   const text = stdout.trim();
@@ -379,6 +439,7 @@ export function describeModuleRun(
   return (
     unwrapped ??
     failure(
+      "no_envelope",
       `The tool exited 0 but its stdout carries no runner envelope. The runner prints the module's result behind its marker line and nothing else, so the module printed to stdout itself: ${text.slice(-500)}`,
     )
   );
@@ -403,6 +464,31 @@ export function unwrapEnvelope(text: string): ModuleRunOutcome | null {
     result: envelope.result,
     blobs: envelope.blobs,
     blobsDropped: envelope.dropped,
+  };
+}
+
+/**
+ * The runner's vendor status line off a stderr tail (GRA-244): every line carrying the marker is
+ * taken out of the tail, and the status is read from the last line only when `worded` says the
+ * runner wrote the tail's end. Null when there is none, or the line names none.
+ */
+function readVendorStatus(
+  stderrTail: string,
+  worded: boolean,
+): { tail: string; vendorStatus: number | null } {
+  const lines = stderrTail.trim().split("\n");
+  const last = lines.at(-1) ?? "";
+  const status = last.startsWith(VENDOR_STATUS_MARKER)
+    ? Number.parseInt(last.slice(VENDOR_STATUS_MARKER.length), 10)
+    : Number.NaN;
+  const tail = lines
+    .filter((line) => !line.startsWith(VENDOR_STATUS_MARKER))
+    .join("\n")
+    .trim();
+  return {
+    tail,
+    vendorStatus:
+      worded && Number.isInteger(status) && status >= 400 && status <= 599 ? status : null,
   };
 }
 
@@ -464,10 +550,12 @@ export type AuthoredRunArgs = {
   /**
    * The connection to run against instead of the tool's default — `acquire`'s dry run passes the
    * job's (GRA-122): a version published onto an existing tool row is proved against the connection
-   * the job authored it for, not against a default the person may have revoked since. Held to the
-   * same check as the default: in the agent's scope, which names the person's rows and no others
-   * (`connection_not_in_scope` otherwise). Unset, the default decides, and a default this agent
-   * cannot use follows the one live connection of the vendor in its scope (the header).
+   * the job authored it for, not against a default the person may have revoked since; `run_tool`
+   * passes the agent's own (GRA-241), so an agent holding two connections a tool runs over picks
+   * one per call. Held to the same check as the default: in the agent's scope, which names the
+   * person's rows and no others (`connection_not_in_scope` otherwise). Unset, the default decides,
+   * and a default this agent cannot use follows the one live connection of the vendor in its scope
+   * (the header).
    */
   connectionId?: string;
   /**
@@ -556,7 +644,12 @@ async function runHeld(
     ? await getToolByName(ctx, principal, key, deps.tool).then((found) =>
         found ? { ok: true as const, tool: found } : null,
       )
-    : await ensureToolForAgent(deps, scope, key);
+    : await ensureToolForAgent(
+        deps,
+        scope,
+        key,
+        args.connectionId ? { connectionId: args.connectionId } : {},
+      );
   if (!ensured?.ok) {
     return ensured
       ? refuse(ensured.reason, ensured.message, undefined, ensured.details)
@@ -585,11 +678,22 @@ async function runHeld(
         );
   }
   const versioned = { toolId: tool.id, versionId: version.id };
+  // A stock copy's run, or a remix's, names its origin on the call's event from here on, refusals
+  // included (GRA-244; `stock-signal.ts`). A dry run is `acquire`'s proof and is not a stock run.
+  if (!args.mode.dryRun) {
+    noteStockRun(await readStockOrigin(ctx, scope.personId, version, deps.tool));
+  }
   const admission = args.admit ? await args.admit(tool, version.id) : null;
   if (admission) return refuse(admission.reason, admission.message, versioned);
 
+  // A stock copy's hosts, which decide what it runs over (the header; GRA-241): the hosts of the
+  // stock version this copy's version came from, which a later catalogue version may have changed.
+  // A remix has no stock origin and follows by slug.
+  const stock = version.stockVersionId
+    ? ((await deps.toolSource?.describeVersion(version.stockVersionId)) ?? null)
+    : null;
   const bound = args.connectionId ?? tool.defaultConnectionId;
-  if (!bound) {
+  if (!bound && !stock) {
     return refuse(
       "connection_not_bound",
       `${wireName} is bound to no connection, so there is nothing to run it against.`,
@@ -597,36 +701,54 @@ async function runHeld(
     );
   }
   const scopeIds = await getAgentScope(ctx, scope, deps.agent);
-  const inScope = scopeIds.includes(bound);
+  const inScope = bound !== null && scopeIds.includes(bound);
   if (args.connectionId && !inScope) {
     return refuse(
       "connection_not_in_scope",
-      `${wireName} was asked to run against connection ${bound}, which is not in this agent's scope. The person can add it in the console.`,
+      namedNotInScopeMessage(wireName, args.connectionId),
       versioned,
     );
   }
   // After the scope check and before the gate: a revoked connection's approvals are gone with it,
   // and asking the person for them again is not the next step (GRA-69).
-  const connection = inScope ? await getConnection(ctx, principal, bound, deps.connection) : null;
+  const connection =
+    bound && inScope ? await getConnection(ctx, principal, bound, deps.connection) : null;
   const revoked = connection?.revokedAt != null;
   if (args.connectionId && revoked && connection) {
     await record("refused", versioned);
     return { answer: revokedConnectionRefusal(connection), isError: true };
   }
-  let connectionId = bound;
+  if (args.connectionId && stock && connection && !stockToolRunsOver(stock, connection)) {
+    return refuse(
+      "connection_hosts_missing",
+      `${wireName} calls ${stock.hosts.join(", ")}, and connection ${connection.id} (${connection.displayName}) does not reach all of them, so the tool cannot run over it.`,
+      versioned,
+      { connectionId: connection.id, hosts: [...stock.hosts] },
+    );
+  }
+  let connectionId: string;
   let gated = tool;
-  if (!inScope || revoked) {
+  if (!bound || !inScope || revoked) {
     // The header's last paragraph (GRA-122): the one live connection of the vendor in this agent's
-    // scope, or the refusal naming what stands in the way.
-    const live = await liveConnectionsOfVendor(ctx, principal, tool.vendor, bound, scopeIds, deps);
-    const [target] = live;
-    if (!target || live.length !== 1) {
+    // scope, or for a stock copy the one its hosts choose (GRA-241), or the refusal naming what
+    // stands in the way.
+    const live = await liveConnectionsInScope(ctx, principal, bound, scopeIds, deps);
+    const followed = stock
+      ? matchStockConnections(stock, live)
+      : ((ofVendor) => ({
+          matches: ofVendor,
+          chosen: ofVendor.length === 1 ? (ofVendor[0] ?? null) : null,
+        }))(live.filter((row) => row.vendor === tool.vendor));
+    const target = followed.chosen;
+    if (!target) {
       await record("refused", versioned);
       return {
         answer:
           revoked && connection
-            ? revokedConnectionRefusal(connection, live)
-            : notInScopeRefusal(wireName, bound, live),
+            ? revokedConnectionRefusal(connection, followed.matches)
+            : bound
+              ? notInScopeRefusal(wireName, bound, followed.matches)
+              : unboundStockRefusal(wireName, followed.matches),
         isError: true,
       };
     }
@@ -649,6 +771,8 @@ async function runHeld(
       gated = result.tool;
       if (!result.rebound) connectionId = result.tool.defaultConnectionId ?? target.id;
     }
+  } else {
+    connectionId = bound;
   }
 
   const validator = compileInputSchema(tool.inputSchema);
@@ -729,6 +853,7 @@ async function runHeld(
               exitCode: null,
               stderrTail: "",
             },
+            kind: "sandbox_unavailable",
             blobs: [],
             blobsDropped: 0,
           };
@@ -772,6 +897,7 @@ async function runHeld(
       );
       const overshoot = blobQuotaOvershoot(recorded);
       await record("error", versioned);
+      noteRunFailure(run.kind, run.vendorStatus);
       return {
         answer: {
           ...run.failure,
@@ -807,6 +933,7 @@ async function runHeld(
     const overshoot = blobQuotaOvershoot(recorded);
     if (overshoot) {
       await record("error", versioned);
+      noteRunFailure("blob_quota");
       return {
         answer: {
           ...overshoot,
@@ -883,24 +1010,48 @@ function notInScopeRefusal(
 }
 
 /**
- * The live connections of a vendor this agent may run against, other than the tool's default — the
- * candidates a tool whose default this agent cannot use may follow (the header; GRA-122). In the
- * scope, and usable as `request_connection` judges usable (`isConnectionUsable`: not revoked, its
- * provider enabled, its credential or consent in place), so a row the agent was never given, or one
- * that would refuse the call anyway, is neither followed nor named.
+ * The refusal for a stock copy with no default whose hosts several connections in this agent's
+ * scope cover and the slug does not single out (the header; GRA-241): they are named in the
+ * sentence and under `alternatives`, and `run_tool`'s `connectionId` picks one.
  */
-async function liveConnectionsOfVendor(
+function unboundStockRefusal(wireName: string, alternatives: readonly ConnectionOutput[]): Refusal {
+  if (alternatives.length === 0) {
+    return refusal(
+      "connection_not_bound",
+      `${wireName} is bound to no connection, and no connection in this agent's scope reaches the hosts it calls.`,
+    );
+  }
+  const named = alternatives.map((other) => `${other.displayName} (${other.id})`).join(", ");
+  return refusal(
+    "connection_ambiguous",
+    `${wireName} runs over any of ${alternatives.length} connections in this agent's scope — ${named} — and holds no default among them. run_tool with connectionId runs it over the one named.`,
+    {
+      alternatives: alternatives.map((other) => ({
+        connectionId: other.id,
+        displayName: other.displayName,
+      })),
+    },
+  );
+}
+
+/**
+ * The live connections this agent may run against, other than the tool's default — the candidates
+ * a tool whose default this agent cannot use may follow (the header; GRA-122), narrowed to the
+ * tool's vendor or, for a stock copy, to its hosts by the caller. In the scope, and usable as
+ * `request_connection` judges usable (`isConnectionUsable`: not revoked, its provider enabled, its
+ * credential or consent in place), so a row the agent was never given, or one that would refuse
+ * the call anyway, is neither followed nor named.
+ */
+async function liveConnectionsInScope(
   ctx: ServiceContext,
   principal: Principal,
-  vendor: string,
-  defaultId: string,
+  defaultId: string | null,
   scopeIds: readonly string[],
   deps: McpDeps,
 ): Promise<ConnectionOutput[]> {
   const rows = await listConnections(ctx, principal, deps.connection);
   return rows.filter(
     (row) =>
-      row.vendor === vendor &&
       row.id !== defaultId &&
       scopeIds.includes(row.id) &&
       isConnectionUsable(row, deps.connection.providers),

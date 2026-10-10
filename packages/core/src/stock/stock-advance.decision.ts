@@ -16,8 +16,16 @@
  * lock, so two reaches at once decide the second time over the first's version and stay.
  */
 
-/** One version of a person's tool, by where it came from. Null on a version the agent published. */
-export type VersionOrigin = { stockToolId: string | null; stockVersionId: string | null };
+/**
+ * One version of a person's tool, by where it came from. Null on a version the agent published.
+ * `stockVersionNumber` is the stock version's own number where the caller read it (`repo/tool.ts`'s
+ * `listToolVersionOrigins` does), so a stale catalogue read is never advanced onto.
+ */
+export type VersionOrigin = {
+  stockToolId: string | null;
+  stockVersionId: string | null;
+  stockVersionNumber?: number | null;
+};
 
 export type StockLineage = "stock" | "remix" | "authored";
 
@@ -56,6 +64,18 @@ export function decideStockAdvance(input: {
   if (!catalogue) return { action: "stay", reason: "not_in_catalogue" };
   if (input.versions.some((version) => version.stockToolId !== catalogue.stockToolId)) {
     return { action: "stay", reason: "other_stock_tool" };
+  }
+  // A catalogue version no newer than one the copy already took is a stale read (a reach that read
+  // the catalogue before another reach advanced the copy past it): advancing would put older code
+  // back (Greptile on #189).
+  if (
+    input.versions.some(
+      (version) =>
+        typeof version.stockVersionNumber === "number" &&
+        version.stockVersionNumber >= catalogue.versionNumber,
+    )
+  ) {
+    return { action: "stay", reason: "current" };
   }
   if (input.versions.some((version) => version.stockVersionId === catalogue.stockVersionId)) {
     return { action: "stay", reason: "current" };

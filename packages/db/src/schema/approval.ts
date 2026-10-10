@@ -39,7 +39,7 @@ export const approval = pgTable(
      * The version of the tool the answer was given for (ADR 0008: a republished write tool asks
      * again once; GRA-245). An `allow` for another version than the tool's current one asks again
      * and the yes moves it; a new stock version that does not widen the annotations carries it
-     * forward (ADR 0008 as amended 2026-10-09). Null reads as no version, so it asks: migration 0014
+     * forward (ADR 0008 as amended 2026-10-09). Null reads as no version, so it asks: migration 0016
      * set every existing row to its tool's current version, and a version is never deleted.
      */
     toolVersionId: text("tool_version_id").references(() => toolVersion.id, {
