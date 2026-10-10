@@ -1267,6 +1267,19 @@ a stepper in the top bar, a centred hero (`SetupEyebrowContext`), selection card
 `src/assets/setup/`) and a sticky footer with a summary; `tool-step.tsx` and `task-picker.tsx` are
 the tool screen. The rows count `setup_step_completed` as `vendor` (or `vendor_cleared`) and `goal`.
 
+**The integration step searches a directory, a seam with two backings** (ADR 0001 as amended
+2026-10-10). `@graft/core`'s `IntegrationDirectory` (`home`, `search`, `get`; `connection/directory.ts`)
+is `Backings.directory`: the private package's, over its link provider's catalogue, or null, when the
+server answers the starters it connects (`apps/server/src/directory.ts`'s `createStarterDirectory`).
+`GET /api/setup/directory` (`SetupDirectoryHome`: the count, the categories, seven popular, the logo
+wall) and `GET /api/setup/directory/search` (`SetupDirectoryPage`, by `q`, `category` and an opaque
+`cursor`) answer it, each entry with the `starterId` it is when it is one. A starter takes the
+starter's path; any other entry is held by the page (`SetupAppContext`, so the stepper and browser
+Back read it as the *Tool* stage) until its task is chosen, when `POST /api/setup/task` with its
+`slug` reads the entry from the directory again and proposes it (`directoryProposal`: the slug as the
+vendor, the first host as the primary) through the starter's routing (`connectSetupProposal`). No
+column holds it: a reload on that tool screen returns to the directory.
+
 **Setup's words are integration and task** (GRA-216; CONTEXT.md, *Integration*; ADR 0024's
 amendment of 2026-09-24). Person-facing copy says *integration* for the service a person connects
 and *task* for what the first tool should do: Setup's steps (*Choose an integration*, *What should

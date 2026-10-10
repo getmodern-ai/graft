@@ -5,6 +5,9 @@ import type {
   SetupBackBody,
   SetupBuildBody,
   SetupConnectBody,
+  SetupDirectoryEntry,
+  SetupDirectoryHome,
+  SetupDirectoryPage,
   SetupFinishOutput,
   SetupGoalContext,
   SetupGoalSuggestions,
@@ -15,7 +18,7 @@ import type {
   SetupToolContext,
   ToolRunBody,
 } from "@graft/server/api";
-import { type QueryClient, queryOptions } from "@tanstack/react-query";
+import { infiniteQueryOptions, type QueryClient, queryOptions } from "@tanstack/react-query";
 
 import { api, type Jsonified } from "./api";
 
@@ -107,6 +110,39 @@ export function chooseSetupStarter(body: SetupStarterBody) {
  */
 export function chooseSetupTask(body: SetupTaskBody) {
   return api<SetupStateData>("/setup/task", { method: "POST", body });
+}
+
+export type DirectoryEntry = Jsonified<SetupDirectoryEntry>;
+export type DirectoryHome = Jsonified<SetupDirectoryHome>;
+export type DirectoryPage = Jsonified<SetupDirectoryPage>;
+
+/** The integration step's first view (`GET /api/setup/directory`): popular, categories, the wall. */
+export const setupDirectoryHomeQuery = queryOptions({
+  queryKey: ["setup-directory", "home"] as const,
+  queryFn: () => api<DirectoryHome>("/setup/directory"),
+  staleTime: 5 * 60_000,
+});
+
+/** How many entries one page of a search asks for. */
+export const DIRECTORY_SEARCH_PAGE = 24;
+
+/**
+ * A search of the directory (`GET /api/setup/directory/search`), by words, a category or both, a
+ * page at a time: *Show all* asks for the next with the cursor the last one answered.
+ */
+export function setupDirectorySearchQuery(query: string, category: string | null) {
+  return infiniteQueryOptions({
+    queryKey: ["setup-directory", "search", query, category] as const,
+    queryFn: ({ pageParam }) => {
+      const params = new URLSearchParams({ q: query, limit: String(DIRECTORY_SEARCH_PAGE) });
+      if (category) params.set("category", category);
+      if (pageParam) params.set("cursor", pageParam);
+      return api<DirectoryPage>(`/setup/directory/search?${params}`);
+    },
+    initialPageParam: null as string | null,
+    getNextPageParam: (last) => last.nextCursor,
+    staleTime: 60_000,
+  });
 }
 
 export type SetupGoal = Jsonified<SetupGoalContext>;
