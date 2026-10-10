@@ -56,8 +56,17 @@ function richText(content: string): RichText[] {
     throw new Error(`A line may hold at most ${TEXT_LIMIT * TEXTS_PER_BLOCK} characters`);
   }
   const parts: RichText[] = [];
-  for (let start = 0; start < content.length; start += TEXT_LIMIT) {
-    parts.push({ type: "text", text: { content: content.slice(start, start + TEXT_LIMIT) } });
+  let start = 0;
+  while (start < content.length) {
+    let end = Math.min(start + TEXT_LIMIT, content.length);
+    // Never between the two halves of a surrogate pair (an emoji): cut before it instead.
+    const last = content.charCodeAt(end - 1);
+    if (end < content.length && last >= 0xd800 && last <= 0xdbff) end -= 1;
+    parts.push({ type: "text", text: { content: content.slice(start, end) } });
+    start = end;
+  }
+  if (parts.length > TEXTS_PER_BLOCK) {
+    throw new Error(`A line may hold at most ${TEXT_LIMIT * TEXTS_PER_BLOCK} characters`);
   }
   return parts;
 }
