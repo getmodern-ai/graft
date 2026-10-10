@@ -1,0 +1,45 @@
+{
+  "name": "list-events",
+  "description": "Lists the Outlook calendar's events and meetings in a time window, this week by default (now to seven days on); recurring meetings are expanded into occurrences. Calendar ids come from microsoft-outlook__list-calendars. Event ids feed microsoft-outlook__update-event, microsoft-outlook__delete-event and microsoft-outlook__respond-to-event.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "start": {
+        "type": "string",
+        "format": "date-time",
+        "description": "Start of the time window in ISO 8601 format. Defaults to the current time.",
+        "examples": ["2020-01-06T00:00:00Z"]
+      },
+      "end": {
+        "type": "string",
+        "format": "date-time",
+        "description": "End of the time window in ISO 8601 format. Defaults to seven days after start.",
+        "examples": ["2020-01-13T00:00:00Z"]
+      },
+      "calendarId": {
+        "type": "string",
+        "minLength": 1,
+        "description": "Optional calendar ID from microsoft-outlook__list-calendars. When omitted, uses the default calendar."
+      },
+      "top": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 100,
+        "default": 50,
+        "description": "Maximum number of events to return."
+      },
+      "timeZone": {
+        "type": "string",
+        "minLength": 1,
+        "default": "UTC",
+        "description": "IANA or Windows time zone name for returned event times."
+      }
+    },
+    "additionalProperties": false
+  },
+  "hosts": ["graph.microsoft.com"],
+  "annotations": {
+    "readOnly": true,
+    "destructive": false
+  }
+}

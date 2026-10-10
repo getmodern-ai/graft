@@ -33,7 +33,7 @@ const ids = (list: ReturnType<typeof setupVendorOptions>) =>
   list.map((option) => option.starter.id);
 
 describe("the starter integrations", () => {
-  it("are the eight, each a vendor slug and a host set the connection rules admit", () => {
+  it("are the nine, each a vendor slug and a host set the connection rules admit", () => {
     expect(STARTER_VENDOR_IDS).toEqual([
       "gmail",
       "google-calendar",
@@ -42,6 +42,7 @@ describe("the starter integrations", () => {
       "notion",
       "github",
       "hubspot",
+      "microsoft-outlook",
       "open-meteo",
     ]);
     for (const starter of STARTER_VENDORS) {
@@ -151,6 +152,7 @@ describe("setupVendorOptions", () => {
       "notion",
       "github",
       "hubspot",
+      "microsoft-outlook",
       "open-meteo",
     ]);
     expect(list.slice(0, -1).every((option) => option.connect === "link")).toBe(true);
@@ -182,6 +184,7 @@ describe("setupVendorOptions", () => {
       "google-drive:link",
       "slack:link",
       "notion:link",
+      "microsoft-outlook:link",
       "github:none",
       "open-meteo:keyless",
     ]);

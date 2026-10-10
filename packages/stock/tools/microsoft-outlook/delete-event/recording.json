@@ -1,0 +1,19 @@
+{
+  "format": 1,
+  "tool": "microsoft-outlook__delete-event",
+  "recordedAt": "2026-10-10T06:14:26.549Z",
+  "input": {
+    "eventId": "itfwh-enw-iyl-qhxfb-uk"
+  },
+  "exchanges": [
+    {
+      "kind": "write",
+      "method": "DELETE",
+      "url": "https://graph.microsoft.com/v1.0/me/events/itfwh-enw-iyl-qhxfb-uk"
+    }
+  ],
+  "result": {
+    "deleted": false,
+    "eventId": "itfwh-enw-iyl-qhxfb-uk"
+  }
+}

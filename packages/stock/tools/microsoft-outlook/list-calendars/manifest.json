@@ -1,0 +1,14 @@
+{
+  "name": "list-calendars",
+  "description": "Lists your Outlook calendars and their owners. Calendar IDs feed microsoft-outlook__list-events and microsoft-outlook__create-event; the default calendar is used when none is given.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {},
+    "additionalProperties": false
+  },
+  "hosts": ["graph.microsoft.com"],
+  "annotations": {
+    "readOnly": true,
+    "destructive": false
+  }
+}

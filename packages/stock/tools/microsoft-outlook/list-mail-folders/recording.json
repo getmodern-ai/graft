@@ -1,0 +1,174 @@
+{
+  "format": 1,
+  "tool": "microsoft-outlook__list-mail-folders",
+  "recordedAt": "2026-10-10T06:04:15.011Z",
+  "input": {},
+  "exchanges": [
+    {
+      "kind": "read",
+      "method": "GET",
+      "url": "https://graph.microsoft.com/v1.0/me/mailFolders?$top=100",
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json; odata.metadata=minimal; odata.streaming=true; IEEE754Compatible=false; charset=utf-8"
+        },
+        "body": {
+          "json": {
+            "@odata.context": "https://graph.microsoft.com/",
+            "value": [
+              {
+                "id": "XCLtWVHeDLW6WbYNJPKsOTNhXIHgXvYuIJOFEIAkUnSvZOOJIkrIdLtBKhMKdd9qFO0bdjpNNGcwq56Jsi2MejnsYqGSSY9DZCCQOTVORV==",
+                "displayName": "Wldnroy",
+                "parentFolderId": "BOXtKSQdKUU9GlDNPRRyHOCdDNFmLeVePADWJQFsXqWmQGPGLerMdMgLNhVLyx4oUF3dplmXKTary27Mbr2VnvgyNpLCBH1PLVMIVGKHAP==",
+                "childFolderCount": 0,
+                "unreadItemCount": 0,
+                "totalItemCount": 0,
+                "sizeInBytes": 0,
+                "wellKnownName": "ejiwaqf",
+                "isHidden": false
+              },
+              {
+                "id": "GKWkOPVtBHM5TwGULQLmRHDfMAQxNfFdAHJBJSMcRfQdAKUJKzoClGrOSiDOym4eQJ7epekAMTrll43Fns4KshcjZlBZFJ9EPTLVFwPGXN==",
+                "displayName": "Dcvqhzlfrxve Ygiwdfr",
+                "parentFolderId": "BOXtKSQdKUU9GlDNPRRyHOCdDNFmLeVePADWJQFsXqWmQGPGLerMdMgLNhVLyx4oUF3dplmXKTary27Mbr2VnvgyNpLCBH1PLVMIVGKHAP==",
+                "childFolderCount": 1,
+                "unreadItemCount": 0,
+                "totalItemCount": 0,
+                "sizeInBytes": 0,
+                "wellKnownName": "srqvggbijfiyiwlinax",
+                "isHidden": false
+              },
+              {
+                "id": "SPQrKCJpMLZ3ZoPPJTCyEABfQFHvQoUjUZRRSMKhBaQkMIJMXuhMqBxCKcNAjd5fBP6qckyJCOlbu90Ktm8ZplqqOdWIQY4BAAGJBiQUCW==",
+                "displayName": "Svdousz Qnvra",
+                "parentFolderId": "BOXtKSQdKUU9GlDNPRRyHOCdDNFmLeVePADWJQFsXqWmQGPGLerMdMgLNhVLyx4oUF3dplmXKTary27Mbr2VnvgyNpLCBH1PLVMIVGKHAP==",
+                "childFolderCount": 0,
+                "unreadItemCount": 0,
+                "totalItemCount": 0,
+                "sizeInBytes": 0,
+                "wellKnownName": "xkxmbjoiwteg",
+                "isHidden": false
+              },
+              {
+                "id": "PPAiPYPbEYT1VgPDRWVyAXVtADNgIsFtEZKGXWOwCxMsTSURZbzWfLdTOrDOeq9mKZ0olleFYCkne23Fmb8FvzxkTgIIIX1HQOPRMcSACV==",
+                "displayName": "Panqbf",
+                "parentFolderId": "BOXtKSQdKUU9GlDNPRRyHOCdDNFmLeVePADWJQFsXqWmQGPGLerMdMgLNhVLyx4oUF3dplmXKTary27Mbr2VnvgyNpLCBH1PLVMIVGKHAP==",
+                "childFolderCount": 0,
+                "unreadItemCount": 0,
+                "totalItemCount": 0,
+                "sizeInBytes": 0,
+                "wellKnownName": "ccpbni",
+                "isHidden": false
+              },
+              {
+                "id": "FUSrHOKhKBF7KxAOLMPeAHPkBAAcYwHnTZBBUANlCaXoANUIAytHmLtTHcWRcz3yCJ1leoeNNItib36Xaw7RwefrHnPBZE9CGLOKBLUVYV==",
+                "displayName": "Qwfwx",
+                "parentFolderId": "BOXtKSQdKUU9GlDNPRRyHOCdDNFmLeVePADWJQFsXqWmQGPGLerMdMgLNhVLyx4oUF3dplmXKTary27Mbr2VnvgyNpLCBH1PLVMIVGKHAP==",
+                "childFolderCount": 0,
+                "unreadItemCount": 0,
+                "totalItemCount": 0,
+                "sizeInBytes": 3626,
+                "wellKnownName": "yrofw",
+                "isHidden": false
+              },
+              {
+                "id": "XNCmMQNxWBB8EqRXSHQbQPUuPPUpPjHbRYSEUUFxUcUuZZJFGqhZqBgMBwFUba9zKH8jvicAXVoes10Uto1NckxgCwWTMH6TVCYPIHBHAL==",
+                "displayName": "Swsa Gjsyk",
+                "parentFolderId": "BOXtKSQdKUU9GlDNPRRyHOCdDNFmLeVePADWJQFsXqWmQGPGLerMdMgLNhVLyx4oUF3dplmXKTary27Mbr2VnvgyNpLCBH1PLVMIVGKHAP==",
+                "childFolderCount": 0,
+                "unreadItemCount": 0,
+                "totalItemCount": 0,
+                "sizeInBytes": 0,
+                "wellKnownName": "byypzoozc",
+                "isHidden": false
+              },
+              {
+                "id": "QZKvKHAeFSJ4VnYVITRwCFGrMRLkErNcMHBWDINcUiXcCNOVHabJyMyIUeSNjo9vIV0lvniSRHrhb16Fcs0XohbrCeJULO6MSAMHKoAQUO==",
+                "displayName": "Hxfist",
+                "parentFolderId": "BOXtKSQdKUU9GlDNPRRyHOCdDNFmLeVePADWJQFsXqWmQGPGLerMdMgLNhVLyx4oUF3dplmXKTary27Mbr2VnvgyNpLCBH1PLVMIVGKHAP==",
+                "childFolderCount": 0,
+                "unreadItemCount": 0,
+                "totalItemCount": 0,
+                "sizeInBytes": 0,
+                "wellKnownName": "xndztb",
+                "isHidden": false
+              },
+              {
+                "id": "OGGeJCQkEYE2QqKMSKBdOJCyYZNvPbPoKFCDKQImIaTyAZEVQlxQlMpVGfPJch9wXD9mlumWUDjwf75Rmo0KcjasBlZILD8DTHSEIAZVMG==",
+                "displayName": "Mccm Okkkz",
+                "parentFolderId": "BOXtKSQdKUU9GlDNPRRyHOCdDNFmLeVePADWJQFsXqWmQGPGLerMdMgLNhVLyx4oUF3dplmXKTary27Mbr2VnvgyNpLCBH1PLVMIVGKHAP==",
+                "childFolderCount": 0,
+                "unreadItemCount": 0,
+                "totalItemCount": 0,
+                "sizeInBytes": 0,
+                "wellKnownName": "chihuefkx",
+                "isHidden": false
+              }
+            ]
+          }
+        }
+      }
+    }
+  ],
+  "result": {
+    "folders": [
+      {
+        "id": "XCLtWVHeDLW6WbYNJPKsOTNhXIHgXvYuIJOFEIAkUnSvZOOJIkrIdLtBKhMKdd9qFO0bdjpNNGcwq56Jsi2MejnsYqGSSY9DZCCQOTVORV==",
+        "displayName": "Wldnroy",
+        "parentFolderId": "BOXtKSQdKUU9GlDNPRRyHOCdDNFmLeVePADWJQFsXqWmQGPGLerMdMgLNhVLyx4oUF3dplmXKTary27Mbr2VnvgyNpLCBH1PLVMIVGKHAP==",
+        "totalItemCount": 0,
+        "unreadItemCount": 0
+      },
+      {
+        "id": "GKWkOPVtBHM5TwGULQLmRHDfMAQxNfFdAHJBJSMcRfQdAKUJKzoClGrOSiDOym4eQJ7epekAMTrll43Fns4KshcjZlBZFJ9EPTLVFwPGXN==",
+        "displayName": "Dcvqhzlfrxve Ygiwdfr",
+        "parentFolderId": "BOXtKSQdKUU9GlDNPRRyHOCdDNFmLeVePADWJQFsXqWmQGPGLerMdMgLNhVLyx4oUF3dplmXKTary27Mbr2VnvgyNpLCBH1PLVMIVGKHAP==",
+        "totalItemCount": 0,
+        "unreadItemCount": 0
+      },
+      {
+        "id": "SPQrKCJpMLZ3ZoPPJTCyEABfQFHvQoUjUZRRSMKhBaQkMIJMXuhMqBxCKcNAjd5fBP6qckyJCOlbu90Ktm8ZplqqOdWIQY4BAAGJBiQUCW==",
+        "displayName": "Svdousz Qnvra",
+        "parentFolderId": "BOXtKSQdKUU9GlDNPRRyHOCdDNFmLeVePADWJQFsXqWmQGPGLerMdMgLNhVLyx4oUF3dplmXKTary27Mbr2VnvgyNpLCBH1PLVMIVGKHAP==",
+        "totalItemCount": 0,
+        "unreadItemCount": 0
+      },
+      {
+        "id": "PPAiPYPbEYT1VgPDRWVyAXVtADNgIsFtEZKGXWOwCxMsTSURZbzWfLdTOrDOeq9mKZ0olleFYCkne23Fmb8FvzxkTgIIIX1HQOPRMcSACV==",
+        "displayName": "Panqbf",
+        "parentFolderId": "BOXtKSQdKUU9GlDNPRRyHOCdDNFmLeVePADWJQFsXqWmQGPGLerMdMgLNhVLyx4oUF3dplmXKTary27Mbr2VnvgyNpLCBH1PLVMIVGKHAP==",
+        "totalItemCount": 0,
+        "unreadItemCount": 0
+      },
+      {
+        "id": "FUSrHOKhKBF7KxAOLMPeAHPkBAAcYwHnTZBBUANlCaXoANUIAytHmLtTHcWRcz3yCJ1leoeNNItib36Xaw7RwefrHnPBZE9CGLOKBLUVYV==",
+        "displayName": "Qwfwx",
+        "parentFolderId": "BOXtKSQdKUU9GlDNPRRyHOCdDNFmLeVePADWJQFsXqWmQGPGLerMdMgLNhVLyx4oUF3dplmXKTary27Mbr2VnvgyNpLCBH1PLVMIVGKHAP==",
+        "totalItemCount": 0,
+        "unreadItemCount": 0
+      },
+      {
+        "id": "XNCmMQNxWBB8EqRXSHQbQPUuPPUpPjHbRYSEUUFxUcUuZZJFGqhZqBgMBwFUba9zKH8jvicAXVoes10Uto1NckxgCwWTMH6TVCYPIHBHAL==",
+        "displayName": "Swsa Gjsyk",
+        "parentFolderId": "BOXtKSQdKUU9GlDNPRRyHOCdDNFmLeVePADWJQFsXqWmQGPGLerMdMgLNhVLyx4oUF3dplmXKTary27Mbr2VnvgyNpLCBH1PLVMIVGKHAP==",
+        "totalItemCount": 0,
+        "unreadItemCount": 0
+      },
+      {
+        "id": "QZKvKHAeFSJ4VnYVITRwCFGrMRLkErNcMHBWDINcUiXcCNOVHabJyMyIUeSNjo9vIV0lvniSRHrhb16Fcs0XohbrCeJULO6MSAMHKoAQUO==",
+        "displayName": "Hxfist",
+        "parentFolderId": "BOXtKSQdKUU9GlDNPRRyHOCdDNFmLeVePADWJQFsXqWmQGPGLerMdMgLNhVLyx4oUF3dplmXKTary27Mbr2VnvgyNpLCBH1PLVMIVGKHAP==",
+        "totalItemCount": 0,
+        "unreadItemCount": 0
+      },
+      {
+        "id": "OGGeJCQkEYE2QqKMSKBdOJCyYZNvPbPoKFCDKQImIaTyAZEVQlxQlMpVGfPJch9wXD9mlumWUDjwf75Rmo0KcjasBlZILD8DTHSEIAZVMG==",
+        "displayName": "Mccm Okkkz",
+        "parentFolderId": "BOXtKSQdKUU9GlDNPRRyHOCdDNFmLeVePADWJQFsXqWmQGPGLerMdMgLNhVLyx4oUF3dplmXKTary27Mbr2VnvgyNpLCBH1PLVMIVGKHAP==",
+        "totalItemCount": 0,
+        "unreadItemCount": 0
+      }
+    ]
+  }
+}

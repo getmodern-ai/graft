@@ -1,0 +1,19 @@
+{
+  "name": "list-mail-folders",
+  "description": "Lists the Outlook mailbox's mail folders with their item and unread counts. Folder ids feed microsoft-outlook__search-messages and microsoft-outlook__move-message, where the well-known names inbox, sentitems, drafts, deleteditems, archive and junkemail work too.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "includeHidden": {
+        "type": "boolean",
+        "description": "Include hidden mail folders. Defaults to false."
+      }
+    },
+    "additionalProperties": false
+  },
+  "hosts": ["graph.microsoft.com"],
+  "annotations": {
+    "readOnly": true,
+    "destructive": false
+  }
+}

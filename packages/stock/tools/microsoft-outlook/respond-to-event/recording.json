@@ -1,0 +1,32 @@
+{
+  "format": 1,
+  "tool": "microsoft-outlook__respond-to-event",
+  "recordedAt": "2026-10-10T06:14:41.851Z",
+  "input": {
+    "eventId": "ycfl-cfmka-pf",
+    "response": "tentative",
+    "comment": "Njrlp qbz ehb tcd nlqdkosyfz.",
+    "sendResponse": true
+  },
+  "exchanges": [
+    {
+      "kind": "write",
+      "method": "POST",
+      "url": "https://graph.microsoft.com/v1.0/me/events/ycfl-cfmka-pf/tentativelyAccept",
+      "body": {
+        "json": {
+          "comment": "Njrlp qbz ehb tcd nlqdkosyfz.",
+          "sendResponse": true
+        }
+      }
+    }
+  ],
+  "result": {
+    "responded": false,
+    "sent": {
+      "comment": "Njrlp qbz ehb tcd nlqdkosyfz.",
+      "sendResponse": true
+    },
+    "response": "tentative"
+  }
+}

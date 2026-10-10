@@ -1,0 +1,100 @@
+{
+  "name": "update-event",
+  "description": "Updates or changes an Outlook calendar event: its subject, text body, time, location, attendees or online call setting. The event id comes from microsoft-outlook__list-events. Outlook notifies attendees of changes; an attendee list given replaces the event's list.",
+  "inputSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "eventId": {
+        "type": "string",
+        "minLength": 1,
+        "description": "The event id microsoft-outlook__list-events answers."
+      },
+      "subject": {
+        "type": "string",
+        "description": "The event's new subject."
+      },
+      "body": {
+        "type": "string",
+        "description": "The event's new plain-text body."
+      },
+      "start": {
+        "type": "string",
+        "minLength": 1,
+        "description": "The new start date and time in Microsoft Graph dateTime format, for example 2025-01-15T09:00:00."
+      },
+      "end": {
+        "type": "string",
+        "minLength": 1,
+        "description": "The new end date and time in Microsoft Graph dateTime format, for example 2025-01-15T10:00:00."
+      },
+      "timeZone": {
+        "type": "string",
+        "minLength": 1,
+        "description": "The time zone used for supplied start and end values. Defaults to UTC."
+      },
+      "location": {
+        "type": "string",
+        "description": "The event's new location display name."
+      },
+      "attendees": {
+        "type": "array",
+        "description": "The complete replacement attendee list. Use an empty array to remove all attendees.",
+        "items": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "address": {
+              "type": "string",
+              "minLength": 1,
+              "description": "The attendee's email address."
+            },
+            "name": {
+              "type": "string",
+              "description": "The attendee's display name."
+            },
+            "type": {
+              "type": "string",
+              "enum": ["required", "optional", "resource"],
+              "description": "The attendee type. Defaults to required."
+            }
+          },
+          "required": ["address"]
+        }
+      },
+      "isOnlineMeeting": {
+        "type": "boolean",
+        "description": "Whether this event is an online meeting."
+      }
+    },
+    "required": ["eventId"],
+    "anyOf": [
+      {
+        "required": ["subject"]
+      },
+      {
+        "required": ["body"]
+      },
+      {
+        "required": ["start"]
+      },
+      {
+        "required": ["end"]
+      },
+      {
+        "required": ["location"]
+      },
+      {
+        "required": ["attendees"]
+      },
+      {
+        "required": ["isOnlineMeeting"]
+      }
+    ]
+  },
+  "hosts": ["graph.microsoft.com"],
+  "annotations": {
+    "readOnly": false,
+    "destructive": false
+  }
+}

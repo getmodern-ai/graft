@@ -1,0 +1,59 @@
+{
+  "name": "find-free-time",
+  "description": "Finds up to 20 free intervals in an Outlook calendar during requested working hours. Read-only. Each slot is { start, end, timeZone: \"UTC\" }; start and end are UTC date-times without an offset or milliseconds and can be passed directly to microsoft-outlook__create-event.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "start": {
+        "type": "string",
+        "format": "date-time",
+        "examples": ["2020-01-06T00:00:00Z"],
+        "description": "Start of the search window as an ISO 8601 date-time with a UTC offset."
+      },
+      "end": {
+        "type": "string",
+        "format": "date-time",
+        "examples": ["2020-01-08T00:00:00Z"],
+        "description": "End of the search window as an ISO 8601 date-time with a UTC offset."
+      },
+      "durationMinutes": {
+        "type": "integer",
+        "minimum": 15,
+        "maximum": 480,
+        "default": 30,
+        "description": "Minimum free interval length in minutes."
+      },
+      "workdayStartHour": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 24,
+        "default": 9,
+        "description": "Start hour of each workday in the specified fixed UTC offset."
+      },
+      "workdayEndHour": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 24,
+        "default": 17,
+        "description": "End hour of each workday in the specified fixed UTC offset."
+      },
+      "utcOffsetMinutes": {
+        "type": "integer",
+        "default": 0,
+        "description": "Fixed offset from UTC, in minutes, used to interpret working hours and weekdays."
+      },
+      "includeWeekends": {
+        "type": "boolean",
+        "default": false,
+        "description": "Whether Saturday and Sunday are included as working days."
+      }
+    },
+    "required": ["start", "end"],
+    "additionalProperties": false
+  },
+  "hosts": ["graph.microsoft.com"],
+  "annotations": {
+    "readOnly": true,
+    "destructive": false
+  }
+}
