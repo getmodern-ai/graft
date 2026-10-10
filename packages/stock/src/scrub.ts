@@ -559,7 +559,9 @@ function parseLinkHeader(value: string): LinkEntry[] | null {
     return value.slice(from, at);
   };
   while (true) {
-    skipSpace();
+    // A list may hold empty members (RFC 9110, section 5.6.1): `<…>; rel="next",` is one entry.
+    while (value[at] === " " || value[at] === "\t" || value[at] === ",") at += 1;
+    if (at >= value.length) return entries.length > 0 ? entries : null;
     if (value[at] !== "<") return null;
     const close = value.indexOf(">", at + 1);
     if (close === -1) return null;
@@ -595,9 +597,7 @@ function parseLinkHeader(value: string): LinkEntry[] | null {
       }
     }
     entries.push(entry);
-    if (at >= value.length) return entries;
-    if (value[at] !== ",") return null;
-    at += 1;
+    if (at < value.length && value[at] !== ",") return null;
   }
 }
 

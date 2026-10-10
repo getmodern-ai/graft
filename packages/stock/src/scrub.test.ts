@@ -270,6 +270,14 @@ describe("scrubRecording, after Greptile on #192", () => {
     expect(survivingValuesOf(raw, scrubbed, { source: "" })).toEqual([]);
   });
 
+  it("reads a link header with empty list members, keeping its safe rel", () => {
+    const scrubbed = scrubRecording(
+      withRead({}, { link: ' , <https://api.example/page/2>; rel="next",, ' }),
+      { seed: SEED },
+    );
+    expect(readOf(scrubbed, 0).response.headers.link).toBe('<https://api.example/>; rel="next"');
+  });
+
   it("reads a long hostile link header in linear time", () => {
     const link = `<>;${"\t;!=".repeat(20000)}`;
     const started = performance.now();
