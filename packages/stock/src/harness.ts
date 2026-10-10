@@ -238,18 +238,31 @@ function runRunner(args: {
 
 /**
  * The connection the run is minted for. Replay: the tool's declared hosts and nothing else, so a
- * call to an undeclared host is the proxy's `host_not_in_set`, and the `none` scheme, since the
- * vendor is the recording and the credential's header is not compared. Live: the scheme and the
- * credential the environment gave for the vendor, or `none` for a keyless starter.
+ * call to an undeclared host is the proxy's `host_not_in_set`, and the `none` scheme whatever the
+ * starter's, since the vendor is the recording and the credential's header is not compared. Live:
+ * the scheme and the credential the environment gave for the vendor, or `none` for a keyless
+ * starter; a keyed starter with none is a sentence. **The primary host is one the manifest
+ * declares** (Greptile on #187): the proxy admits the primary host's name beside `hosts`, so a
+ * starter's primary host the manifest omits would let an undeclared call pass in CI. The starter's
+ * is used where the manifest declares its name, else the manifest's first host. A live connection's
+ * own primary host (a test account that answers elsewhere) is the maintainer's to give, and is used
+ * as given.
  */
 function connectionFor(
   tool: StockWorkspaceTool,
   live: LiveConnection | null,
+  required: boolean,
 ): ProxyConnection | string {
   const starter = starterVendorFor(tool.vendor);
-  const primaryHost = live?.primaryHost ?? starter?.primaryHost ?? `https://${tool.hosts[0]}`;
-  const hosts = [...new Set([new URL(primaryHost).hostname, ...tool.hosts])];
-  if (live === null && starter && starter.scheme !== "none") {
+  const declared = new Set(tool.hosts);
+  const hostnameOf = (url: string) => new URL(url).hostname.toLowerCase();
+  const primaryHost =
+    live?.primaryHost ??
+    (starter && declared.has(hostnameOf(starter.primaryHost))
+      ? starter.primaryHost
+      : `https://${tool.hosts[0]}`);
+  const hosts = [...new Set([hostnameOf(primaryHost), ...tool.hosts])];
+  if (required && live === null && starter && starter.scheme !== "none") {
     return `there is no live connection for ${tool.vendor}; give it under GRAFT_STOCK_LIVE_CONNECTIONS`;
   }
   return {
@@ -275,7 +288,13 @@ export async function proveReplay(
   const previewed: ReplayReport["previewed"] = [];
   const live = mode.kind === "live";
   const liveConnection = live ? (mode.connections[tool.vendor] ?? null) : null;
-  const secrets = Object.values(liveConnection?.credential ?? {});
+  // Each credential value as the proxy may have put it on the wire too: a query parameter carries
+  // it percent-encoded, and a diagnostic quotes the query (Greptile on #187).
+  const secrets = Object.values(liveConnection?.credential ?? {}).flatMap((value) => [
+    value,
+    encodeURIComponent(value),
+    new URLSearchParams({ v: value }).toString().slice("v=".length),
+  ]);
   // A live sentence may carry a vendor's text; nothing in it may carry the credential.
   const finish = (): ReplayReport => ({
     problems: problems.map((problem) => redactText(problem, { secretValues: secrets }).text),
@@ -302,7 +321,7 @@ export async function proveReplay(
     return finish();
   }
 
-  const connection = connectionFor(tool, live ? liveConnection : null);
+  const connection = connectionFor(tool, live ? liveConnection : null, live);
   if (typeof connection === "string") {
     problems.push(say(connection));
     return finish();

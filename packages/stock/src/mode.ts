@@ -86,7 +86,10 @@ export function stockHarnessModeFrom(
     if (!isStringRecord(credential)) {
       return { error: `${where}.credential must map the scheme's fields to strings` };
     }
-    if (primaryHost !== undefined && typeof primaryHost !== "string") {
+    if (
+      primaryHost !== undefined &&
+      (typeof primaryHost !== "string" || !isHttpsUrl(primaryHost))
+    ) {
       return { error: `${where}.primaryHost must be a URL` };
     }
     connections[vendor] = {
@@ -97,4 +100,13 @@ export function stockHarnessModeFrom(
     };
   }
   return { kind: "live", tools, connections };
+}
+
+/** Whether a value parses as an `https:` URL, so the harness never meets one it cannot read. */
+function isHttpsUrl(value: string): boolean {
+  try {
+    return new URL(value).protocol === "https:";
+  } catch {
+    return false;
+  }
 }
