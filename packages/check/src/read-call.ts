@@ -1,4 +1,8 @@
-import { classifyRequest, type RequestToClassify } from "@graft/proxy/read-request";
+import {
+  classifyRequest,
+  isDestructiveRequest,
+  type RequestToClassify,
+} from "@graft/proxy/read-request";
 import ts from "typescript6";
 
 /**
@@ -117,9 +121,58 @@ export function isReadCall(
   method: string,
   declarations: Declarations,
 ): boolean {
+  return classifyRequest(requestOf(call, method, declarations)).read;
+}
+
+/**
+ * Whether the call is destructive (ADR 0008 as amended 2026-10-10, GRA-267): a `DELETE`, or a
+ * `POST` the reviewed table names (`@graft/proxy`'s `destructive-endpoints.ts`), judged by the
+ * proxy's `isDestructiveRequest` on the same request `isReadCall` builds. A relative path has no
+ * host, so it is matched as any entry's path under a base path: a module's `/refunds` on a
+ * Stripe connection is Stripe's `/v1/refunds`.
+ *
+ * Unlike a read, a destructive call is judged on a template's shape too, since erring here only
+ * asks more: each `${…}` stands for one segment the table's `*` matches, so
+ * `` `/charges/${input.charge}/refund` `` is destructive. A path built any other way the check
+ * cannot read matches nothing, and the call stays an ordinary write.
+ */
+export function isDestructiveCall(
+  call: ts.CallExpression,
+  method: string,
+  declarations: Declarations,
+): boolean {
+  return isDestructiveRequest(requestOf(call, method, declarations, true));
+}
+
+/** What a template's substitution stands for in a destructive call's path: one segment. */
+const SUBSTITUTION = "{}";
+
+/** A template's text with each substitution as `SUBSTITUTION`; null for anything else. */
+function templateShape(expression: ts.Expression | undefined): string | null {
+  if (expression === undefined) return null;
+  const expr = unwrap(expression);
+  if (!ts.isTemplateExpression(expr)) return null;
+  return (
+    expr.head.text + expr.templateSpans.map((span) => SUBSTITUTION + span.literal.text).join("")
+  );
+}
+
+/**
+ * The request as far as the source states it, in the classifier's shape. `shapes` admits a
+ * template's shape for the path (`templateShape`): for the destructive judgement alone, never a
+ * read's.
+ */
+function requestOf(
+  call: ts.CallExpression,
+  method: string,
+  declarations: Declarations,
+  shapes = false,
+): RequestToClassify {
   const init = call.arguments[1] === undefined ? null : unwrap(call.arguments[1]);
   const literalInit = init !== null && ts.isObjectLiteralExpression(init) ? init : null;
-  const rawPath = literalString(call.arguments[0], declarations);
+  const rawPath =
+    literalString(call.arguments[0], declarations) ??
+    (shapes ? templateShape(call.arguments[0]) : null);
   let path = "";
   let hasQuery = false;
   if (rawPath !== null && !rawPath.includes("#")) {
@@ -128,14 +181,13 @@ export function isReadCall(
     hasQuery = at !== -1;
   }
   const host = literalInit ? literalString(propertyValue(literalInit, "host"), declarations) : null;
-  const request: RequestToClassify = {
+  return {
     method,
     host: host === null ? null : host.toLowerCase(),
     path,
     hasQuery,
     body: literalInit ? staticBody(propertyValue(literalInit, "body"), declarations) : null,
   };
-  return classifyRequest(request).read;
 }
 
 /** A property's value in an object literal, by name; undefined when absent or not a plain assignment. */

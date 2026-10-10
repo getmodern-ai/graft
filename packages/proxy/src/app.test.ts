@@ -1658,6 +1658,7 @@ describe("the dry-run claim", () => {
         expect(body).toEqual({
           dryRun: true,
           intercepted: true,
+          destructive: method === "DELETE",
           request: {
             method,
             host: "api.vendor.example",
@@ -1924,6 +1925,53 @@ describe("the dry-run claim", () => {
 
       expect(res.status).toBe(202);
       expect(h.forwarded).toHaveLength(0);
+    });
+  });
+
+  /**
+   * GRA-267: the preview labels a write the person could not take back, by the classifier the
+   * check annotates `destructive` with, on the vendor URL as it would leave (the primary's base
+   * path included).
+   */
+  describe("a destructive POST is labelled in its preview", () => {
+    const STRIPE: ProxyConnection = {
+      ...CONNECTION,
+      primaryHost: "https://api.stripe.com/v1",
+      hosts: ["api.stripe.com"],
+    };
+    const post = (h: ReturnType<typeof harness>, path: string) =>
+      h.app.request(path, {
+        method: "POST",
+        headers: {
+          ...bearer(DRY),
+          "content-type": "application/x-www-form-urlencoded",
+        },
+        body: "charge=ch_1",
+      });
+
+    it("labels Stripe's refund destructive and still stops it at the preview", async () => {
+      const h = harness({}, STRIPE);
+      const res = await post(h, "/c/conn_1/refunds");
+
+      expect(res.status).toBe(202);
+      expect(res.headers.get("x-graft-dry-run")).toBe("intercepted");
+      expect(await preview(res)).toMatchObject({
+        destructive: true,
+        request: { method: "POST", host: "api.stripe.com", path: "/v1/refunds" },
+      });
+      expect(h.forwarded).toHaveLength(0);
+    });
+
+    it("labels an ordinary Stripe write, and the same path on another host, not destructive", async () => {
+      const stripe = harness({}, STRIPE);
+      expect(await preview(await post(stripe, "/c/conn_1/customers"))).toMatchObject({
+        destructive: false,
+      });
+      const other = harness();
+      expect(await preview(await post(other, "/c/conn_1/refunds"))).toMatchObject({
+        destructive: false,
+        request: { host: "api.vendor.example", path: "/v1/refunds" },
+      });
     });
   });
 

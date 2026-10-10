@@ -3043,6 +3043,110 @@ describe("publish_tool", () => {
     }, 30_000);
   });
 
+  /**
+   * A destructive POST (GRA-267; ADR 0008 as amended 2026-10-10): the reviewed destructive table
+   * is read by the check for the annotation and by the proxy for the preview's label, so Stripe's
+   * refund, a `POST`, publishes destructive and still asks under an integration's standing yes that
+   * left destructive tools out.
+   */
+  describe("a destructive POST", () => {
+    beforeAll(() => {
+      useRealCheck = true;
+    });
+    afterAll(() => {
+      useRealCheck = false;
+    });
+    const REFUND_MODULE = `export default async (_input, ctx) => {
+  const form = new URLSearchParams();
+  form.set("charge", "ch_1");
+  const res = await ctx.fetch("/refunds", {
+    method: "POST",
+    headers: { "content-type": "application/x-www-form-urlencoded" },
+    body: form,
+  });
+  if (res.status === 202) return { created: false, preview: await res.json() };
+  if (!res.ok) throw new Error(\`POST /refunds \${res.status}\`);
+  return await res.json();
+};
+`;
+
+    it("annotates a refund destructive, and it asks under an integration approval without destructive tools", async () => {
+      const a = await connect(TOKEN_A);
+      try {
+        const before = vendor.requests.length;
+        await a.call("write_file", { path: "refund-payment/index.ts", content: REFUND_MODULE });
+        const result = await a.call("publish_tool", {
+          vendor: "demo",
+          name: "refund-payment",
+          description: "Refunds a charge.",
+          inputSchema: { type: "object", properties: {} },
+          path: "refund-payment",
+          testInput: {},
+        });
+        expect(result.isError).toBeFalsy();
+        expect(body(result)).toMatchObject({
+          tool: "demo__refund-payment",
+          annotations: { readOnlyHint: false, destructiveHint: true },
+          dryRun: { dryRun: { passed: true } },
+        });
+        // The dry run stopped the refund at the preview: nothing reached the vendor.
+        expect(vendor.requests).toHaveLength(before);
+        expect(vendor.events.at(-1)).toMatchObject({
+          dryRun: true,
+          dryRunOutcome: "intercepted",
+        });
+        const tool = [...store.tools.values()].find((row) => row.name === "refund-payment");
+        expect(tool).toMatchObject({ readOnly: false, destructive: true });
+
+        store.vendorApprovals.set(`${AGENT_A} demo`, {
+          agentId: AGENT_A,
+          vendor: "demo",
+          includesDestructive: false,
+          grantedAt: new Date(),
+          owner: "person",
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        });
+        const asked = new Set(store.pendingActions.keys());
+        try {
+          const run = await a.call("demo__refund-payment", {});
+          expect(body(run)).toMatchObject({ error: "awaiting_approval" });
+          expect(vendor.requests).toHaveLength(before);
+
+          // The contrast: an ordinary write of the same integration, never asked about, runs.
+          await a.call("write_file", {
+            path: "create-customer/index.ts",
+            content: REFUND_MODULE.replaceAll("/refunds", "/customers"),
+          });
+          const plain = await a.call("publish_tool", {
+            vendor: "demo",
+            name: "create-customer",
+            description: "Creates a customer.",
+            inputSchema: { type: "object", properties: {} },
+            path: "create-customer",
+            testInput: {},
+          });
+          expect(body(plain)).toMatchObject({
+            annotations: { readOnlyHint: false, destructiveHint: false },
+          });
+          const ran = await a.call("demo__create-customer", {});
+          expect(body(ran)).not.toMatchObject({ error: "awaiting_approval" });
+          expect(vendor.requests.at(-1)).toMatchObject({
+            method: "POST",
+            url: "https://api.demo.example/v2/customers",
+          });
+        } finally {
+          store.vendorApprovals.delete(`${AGENT_A} demo`);
+          for (const id of store.pendingActions.keys()) {
+            if (!asked.has(id)) store.pendingActions.delete(id);
+          }
+        }
+      } finally {
+        await a.close();
+      }
+    }, 30_000);
+  });
+
   it("refuses a module outside the toolbox, a vendor with no connection in scope, and a bad definition, before writing anything", async () => {
     const a = await connect(TOKEN_A);
     try {
