@@ -33,11 +33,12 @@ const ids = (list: ReturnType<typeof setupVendorOptions>) =>
   list.map((option) => option.starter.id);
 
 describe("the starter integrations", () => {
-  it("are the eight, each a vendor slug and a host set the connection rules admit", () => {
+  it("are the nine, each a vendor slug and a host set the connection rules admit", () => {
     expect(STARTER_VENDOR_IDS).toEqual([
       "gmail",
       "google-calendar",
       "google-drive",
+      "google-sheets",
       "slack",
       "notion",
       "github",
@@ -91,8 +92,19 @@ describe("the starter integrations", () => {
     expect(STARTER_VENDORS.filter((starter) => starter.runInput).map((s) => s.id)).toEqual([
       "open-meteo",
     ]);
-    // A spreadsheet's rows need its id and a range, both looked up (GRA-217): Drive lists files.
-    expect(starterVendorOf("google-sheets")).toBeNull();
+    // A spreadsheet's rows need its id and a range, both looked up (GRA-217): Sheets' task lists
+    // the spreadsheets through Drive's search, on Drive's host (GRA-259).
+    expect(starterVendorOf("google-sheets")).toMatchObject({
+      vendor: "google-sheets",
+      primaryHost: "https://sheets.googleapis.com/v4",
+      hosts: ["sheets.googleapis.com", "www.googleapis.com"],
+      runInput: null,
+    });
+    // The stock tools connect through this proposal and four of them write (GRA-259), so the
+    // keyring's consent asks Google for read and write on spreadsheets, never the read-only scope.
+    const sheetsScopes = String(starterVendorOf("google-sheets")?.schemeConfig.scopes).split(" ");
+    expect(sheetsScopes).toContain("https://www.googleapis.com/auth/spreadsheets");
+    expect(sheetsScopes).not.toContain("https://www.googleapis.com/auth/spreadsheets.readonly");
     expect(starterVendorOf("google-drive")).toMatchObject({
       vendor: "google-drive",
       primaryHost: "https://www.googleapis.com/drive/v3",
@@ -156,6 +168,7 @@ describe("setupVendorOptions", () => {
       "gmail",
       "google-calendar",
       "google-drive",
+      "google-sheets",
       "slack",
       "notion",
       "github",
@@ -189,6 +202,7 @@ describe("setupVendorOptions", () => {
       "gmail:link",
       "google-calendar:link",
       "google-drive:link",
+      "google-sheets:link",
       "slack:link",
       "notion:link",
       "github:none",

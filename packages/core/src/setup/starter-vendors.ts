@@ -23,9 +23,10 @@ import type { ProviderDescription } from "../connection/provider";
  * `POST` as a write whatever it reads. That is why there is no Linear, whose API is GraphQL and
  * reads through `POST` alone. **And every task needs nothing the person has to look up** (GRA-217):
  * no id, no name, no link; a free-text value with an obvious default (Open-Meteo's city) is the one
- * input allowed, since a first run that fails is where a person leaves. That is why there is no
- * Google Sheets, whose rows need a spreadsheet's id and a range, and Google Drive's file list stands
- * in for it. Each entry's `hints` names its one endpoint and says the tool takes no input.
+ * input allowed, since a first run that fails is where a person leaves. That is why Google Sheets'
+ * task lists the spreadsheets through Drive's search rather than reading rows, which need a
+ * spreadsheet's id and a range (GRA-217; Sheets came back as a stock integration under GRA-259).
+ * Each entry's `hints` names its one endpoint and says the tool takes no input.
  *
  * `scheme` is **the keyring's path**, kept truthful (a pasted token's scheme, or the vendor's own
  * authorization-code endpoints) though `setupVendorOptions` never offers it: a link provider
@@ -197,6 +198,33 @@ export const STARTER_VENDORS = [
           "List the ten most recently modified Google Docs with Drive's files list endpoint, a GET, with `q=mimeType='application/vnd.google-apps.document'`, `orderBy=modifiedTime desc`, `pageSize=10` and `fields=files(name,modifiedTime,webViewLink)`, returning those three for each. The tool takes no input. Read only.",
       },
     ],
+  },
+  {
+    id: "google-sheets",
+    vendor: "google-sheets",
+    displayName: "Google Sheets",
+    primaryHost: "https://sheets.googleapis.com/v4",
+    // Sheets has no list of spreadsheets: finding one is Drive's search, scoped to the spreadsheet
+    // type, on Drive's host (GRA-259). So a Sheets connection reaches both.
+    hosts: ["sheets.googleapis.com", "www.googleapis.com"],
+    docsUrl: "https://developers.google.com/workspace/sheets/api/reference/rest",
+    scheme: "oauth_authorization_code",
+    // Read and write on spreadsheets, because this proposal is also the stock tools' `connect` and
+    // four of them write (append-rows, update-range, create-spreadsheet, add-tab); the person still
+    // approves each write. Drive's metadata scope is find-spreadsheets' search.
+    schemeConfig: {
+      ...GOOGLE_OAUTH,
+      scopes:
+        "https://www.googleapis.com/auth/spreadsheets https://www.googleapis.com/auth/drive.metadata.readonly",
+    },
+    // A spreadsheet's rows need its id and a range, and the first Sheets task failed on both
+    // (GRA-217): the list needs nothing looked up.
+    goal: "Show me my ten most recently edited spreadsheets",
+    hints:
+      "List the ten most recently modified spreadsheets with Drive's files list endpoint, a GET to `https://www.googleapis.com/drive/v3/files`, with `q=mimeType='application/vnd.google-apps.spreadsheet' and trashed=false`, `orderBy=modifiedTime desc`, `pageSize=10` and `fields=files(id,name,modifiedTime,webViewLink)`, returning those four for each. The tool takes no input. Read only.",
+    runInput: null,
+    outcome: "Your ten most recently edited spreadsheets, with when each changed and a link to it.",
+    moreTasks: [],
   },
   {
     id: "slack",

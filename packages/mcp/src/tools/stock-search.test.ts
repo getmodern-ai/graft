@@ -91,6 +91,19 @@ const CASES: [query: string, tool: string][] = [
   ["draft an email", "gmail__create-draft"],
   ["reply to an email", "gmail__reply-to-thread"],
   ["archive an email", "gmail__modify-labels"],
+  // Google Sheets' (GRA-259).
+  ["find a spreadsheet", "google-sheets__find-spreadsheets"],
+  ["list my spreadsheets", "google-sheets__find-spreadsheets"],
+  ["what tabs are in this spreadsheet", "google-sheets__list-tabs"],
+  ["read my spreadsheet", "google-sheets__read-rows"],
+  ["read the rows of a sheet", "google-sheets__read-rows"],
+  ["find rows", "google-sheets__find-rows"],
+  ["find rows where a column matches a value", "google-sheets__find-rows"],
+  ["add a row to the sheet", "google-sheets__append-rows"],
+  ["append rows to a spreadsheet", "google-sheets__append-rows"],
+  ["update cells in a sheet", "google-sheets__update-range"],
+  ["create a spreadsheet", "google-sheets__create-spreadsheet"],
+  ["add a tab to a spreadsheet", "google-sheets__add-tab"],
 ];
 
 let catalogue: (IndexedTool & { wire: string })[] = [];

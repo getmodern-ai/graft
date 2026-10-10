@@ -1,0 +1,26 @@
+{
+  "format": 1,
+  "tool": "google-sheets__append-rows",
+  "recordedAt": "2026-10-09T19:22:27.648Z",
+  "input": {
+    "spreadsheet": "https://docs.google.com/spreadsheets/d/1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms/edit",
+    "tab": "Onugl Psar",
+    "rows": [["Dzb", "Tjclle", "4. Lkydjl", "EP", "Qbhs", "Krmsu Ufnf"]]
+  },
+  "exchanges": [
+    {
+      "kind": "write",
+      "method": "POST",
+      "url": "https://sheets.googleapis.com/v4/spreadsheets/1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms/values/'Onugl%20Psar'!A1%3AZ:append",
+      "body": {
+        "json": {
+          "values": [["Dzb", "Tjclle", "4. Lkydjl", "EP", "Qbhs", "Krmsu Ufnf"]]
+        }
+      }
+    }
+  ],
+  "result": {
+    "updatedRange": null,
+    "rowsAppended": null
+  }
+}
