@@ -38,3 +38,7 @@ coverage
 # checkout links it in (ADR 0002: the commercial half is hidden by absence). The workspace glob picks
 # it up whenever it is present; git never does, so a linked checkout cannot commit it here.
 packages/cloud-backings/
+
+# Where the stock build command proves a tool before renaming it into place (`@graft/stock-build`'s
+# `build.ts`); removed when the command ends, and left only by a crash.
+packages/stock/tools/.build-*/

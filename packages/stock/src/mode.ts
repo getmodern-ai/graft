@@ -59,38 +59,51 @@ export function stockHarnessModeFrom(
   const live = env[LIVE_VARIABLE];
   if (live === undefined || live === "" || live === "0") return { kind: "replay", tools };
   if (live !== "1") return { error: `${LIVE_VARIABLE} is 1 or unset, not ${JSON.stringify(live)}` };
+  const read = liveConnectionsFrom(env);
+  if (!read.ok) return { error: read.error };
+  return { kind: "live", tools, connections: read.connections };
+}
 
+/**
+ * A maintainer's connections, keyed by vendor slug, off `GRAFT_STOCK_LIVE_CONNECTIONS`: what the
+ * live harness and the build command (GRA-246) call a keyed vendor over. Unset is none; a malformed
+ * value is a sentence that never repeats it, since it holds credentials.
+ */
+export function liveConnectionsFrom(
+  env: Readonly<Record<string, string | undefined>>,
+): { ok: true; connections: Record<string, LiveConnection> } | { ok: false; error: string } {
+  const fail = (error: string) => ({ ok: false as const, error });
   const raw = env[LIVE_CONNECTIONS_VARIABLE];
-  if (raw === undefined || raw.trim() === "") return { kind: "live", tools, connections: {} };
+  if (raw === undefined || raw.trim() === "") return { ok: true, connections: {} };
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw);
   } catch {
     // The value is a secret: the sentence never repeats it.
-    return { error: `${LIVE_CONNECTIONS_VARIABLE} is not JSON` };
+    return fail(`${LIVE_CONNECTIONS_VARIABLE} is not JSON`);
   }
   if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
-    return { error: `${LIVE_CONNECTIONS_VARIABLE} must be an object keyed by vendor` };
+    return fail(`${LIVE_CONNECTIONS_VARIABLE} must be an object keyed by vendor`);
   }
   const connections: Record<string, LiveConnection> = {};
   for (const [vendor, entry] of Object.entries(parsed)) {
     const where = `${LIVE_CONNECTIONS_VARIABLE}.${vendor}`;
-    if (typeof entry !== "object" || entry === null) return { error: `${where} must be an object` };
+    if (typeof entry !== "object" || entry === null) return fail(`${where} must be an object`);
     const { scheme, schemeConfig, credential, primaryHost } = entry as Record<string, unknown>;
     if (typeof scheme !== "string" || !isAuthScheme(scheme)) {
-      return { error: `${where}.scheme must be one of the proxy's schemes` };
+      return fail(`${where}.scheme must be one of the proxy's schemes`);
     }
     if (schemeConfig !== undefined && !isStringRecord(schemeConfig)) {
-      return { error: `${where}.schemeConfig must map names to strings` };
+      return fail(`${where}.schemeConfig must map names to strings`);
     }
     if (!isStringRecord(credential)) {
-      return { error: `${where}.credential must map the scheme's fields to strings` };
+      return fail(`${where}.credential must map the scheme's fields to strings`);
     }
     if (
       primaryHost !== undefined &&
       (typeof primaryHost !== "string" || !isHttpsUrl(primaryHost))
     ) {
-      return { error: `${where}.primaryHost must be a URL` };
+      return fail(`${where}.primaryHost must be a URL`);
     }
     connections[vendor] = {
       scheme,
@@ -99,7 +112,7 @@ export function stockHarnessModeFrom(
       ...(primaryHost ? { primaryHost } : {}),
     };
   }
-  return { kind: "live", tools, connections };
+  return { ok: true, connections };
 }
 
 /** Whether a value parses as an `https:` URL, so the harness never meets one it cannot read. */
