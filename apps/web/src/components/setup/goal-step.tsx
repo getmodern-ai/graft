@@ -1,20 +1,18 @@
+import { starterTasks, starterVendorOf } from "@graft/core/setup/starter-vendors";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 
 import { WarningIcon } from "@/components/icons";
 import { RetryNotice } from "@/components/retry-notice";
 import { DiscardJobDialog } from "@/components/setup/discard-job-dialog";
-import { GoalSuggestions } from "@/components/setup/goal-suggestions";
 import { SetupFooter } from "@/components/setup/setup-footer";
+import { SetupLogo } from "@/components/setup/setup-logo";
 import { SetupStepHeader } from "@/components/setup/setup-step-header";
+import { TaskPicker } from "@/components/setup/task-picker";
 import { useSetupMutation } from "@/components/setup/use-setup-mutation";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Field, FieldDescription, FieldLabel } from "@/components/ui/field";
-import { Item, ItemContent, ItemDescription, ItemTitle } from "@/components/ui/item";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Textarea } from "@/components/ui/textarea";
 import {
   buildSetup,
   nextSetup,
@@ -22,6 +20,7 @@ import {
   type SetupStateData,
   setupGoalDraftKey,
   setupGoalQuery,
+  setupGoalSuggestionsQuery,
 } from "@/lib/setup-queries";
 import { jobRunning } from "@/lib/setup-vendors";
 
@@ -37,11 +36,17 @@ import { jobRunning } from "@/lib/setup-vendors";
  */
 export function GoalStep({ state }: { state: SetupStateData }) {
   const goal = useQuery(setupGoalQuery);
+  const name = goal.data?.connection?.displayName ?? "the integration";
   return (
-    <div className="flex flex-col gap-6">
+    <div className="mx-auto flex w-full max-w-4xl flex-col gap-8">
       <SetupStepHeader
-        title="What should your first tool do?"
-        description="Say what the first tool should read. Graft's model authors it against the connection, and nothing is changed in the integration."
+        media={
+          goal.data?.starterId ? (
+            <SetupLogo starterId={goal.data.starterId} tile={false} className="size-9" />
+          ) : null
+        }
+        title={`What should your first tool do in ${name}?`}
+        description="Pick one read-only tool to build. It is connected already, so the build starts now."
       />
       {goal.isPending ? (
         <div className="flex flex-col gap-4" aria-busy="true">
@@ -58,21 +63,13 @@ export function GoalStep({ state }: { state: SetupStateData }) {
           />
         </p>
       ) : (
-        <GoalForm state={state} context={goal.data} agentName={state.agent?.name ?? "your agent"} />
+        <GoalForm state={state} context={goal.data} />
       )}
     </div>
   );
 }
 
-function GoalForm({
-  state,
-  context,
-  agentName,
-}: {
-  state: SetupStateData;
-  context: SetupGoal;
-  agentName: string;
-}) {
+function GoalForm({ state, context }: { state: SetupStateData; context: SetupGoal }) {
   const queryClient = useQueryClient();
   // Returned to with a job still held (GRA-215), the field shows the task that job was started
   // with; otherwise the task the person last pressed Build with, so *Change the task* comes back
@@ -80,13 +77,23 @@ function GoalForm({
   const held = context.job;
   const draftKey = setupGoalDraftKey(context.connection?.id ?? null);
   const [text, setText] = useState(
-    () => held?.goal ?? queryClient.getQueryData<string>(draftKey) ?? context.goal,
+    () =>
+      held?.goal ?? state.setup?.goal ?? queryClient.getQueryData<string>(draftKey) ?? context.goal,
   );
   const [confirming, setConfirming] = useState(false);
   const build = useSetupMutation(buildSetup);
   const next = useSetupMutation(nextSetup);
   const trimmed = text.trim();
   const available = context.build.available;
+  // A starter's own tasks; for another integration, the model's suggestions (GRA-209), if any.
+  const starter = context.starterId ? starterVendorOf(context.starterId) : null;
+  const suggestions = useQuery({
+    ...setupGoalSuggestionsQuery(context.connection?.id ?? ""),
+    enabled: !starter && context.connection !== null && available,
+  });
+  const tasks = starter
+    ? starterTasks(starter).map((task) => task.goal)
+    : (suggestions.data?.suggestions ?? []);
   // The held job's own task, unchanged: Continue returns to it rather than building again.
   const returning = held !== null && trimmed === held.goal;
   const busy = build.isPending || next.isPending;
@@ -113,43 +120,21 @@ function GoalForm({
           else start(false);
         }}
       >
-        {context.connection ? (
-          <Item variant="outline">
-            <ItemContent>
-              <ItemTitle>
-                {context.connection.displayName}
-                <Badge variant="outline">{context.connection.vendor}</Badge>
-              </ItemTitle>
-              <ItemDescription>Connected, and in {agentName}'s scope.</ItemDescription>
-            </ItemContent>
-          </Item>
-        ) : null}
-
         {context.build.available ? null : (
           <Alert variant="destructive">
             <WarningIcon />
-            <AlertTitle>Acquiring a tool needs a model</AlertTitle>
+            <AlertTitle>Building a tool needs a model</AlertTitle>
             <AlertDescription>{context.build.message}</AlertDescription>
           </Alert>
         )}
 
-        <GoalSuggestions onPick={setText} />
-
-        <Field>
-          <FieldLabel htmlFor="setup-goal">Task</FieldLabel>
-          <Textarea
-            id="setup-goal"
-            value={text}
-            rows={4}
-            placeholder="Describe one read the tool should make"
-            disabled={busy}
-            onChange={(event) => setText(event.target.value)}
-          />
-          <FieldDescription>
-            A sentence or two on what to read. Pressing Build gives {agentName} the build approval
-            for this connection, so it is not asked for later.
-          </FieldDescription>
-        </Field>
+        <TaskPicker
+          tasks={tasks}
+          value={text}
+          onChange={setText}
+          integrationName={context.connection?.displayName ?? "the integration"}
+          disabled={busy}
+        />
 
         <SetupFooter state={state} disabled={busy}>
           {returning ? (
@@ -158,7 +143,7 @@ function GoalForm({
             </Button>
           ) : (
             <Button type="submit" disabled={!available || !trimmed || busy}>
-              {build.isPending ? "Starting the job…" : "Build"}
+              {build.isPending ? "Starting the job…" : "Build this tool"}
             </Button>
           )}
         </SetupFooter>

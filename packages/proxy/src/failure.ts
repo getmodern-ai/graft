@@ -59,6 +59,16 @@ export type Refused = {
 export const REFUSAL_HEADER = "x-graft-refusal";
 
 /**
+ * The response header on **every** refusal the proxy makes, whether or not the vendor answered,
+ * carrying the refusal's `reason`: the proxy's answer, never a vendor's status (GRA-244, Greptile
+ * on #188). A body over the cap is refused 502 after the vendor answered 200, and its status is
+ * the proxy's limit, not the vendor's error. The runner reads it so a stock tool's failure signal
+ * never names a proxy status as the vendor's (`PROXY_REFUSED_HEADER` in `@graft/runner`'s
+ * `runner-source.ts`; the literal is pinned in `failure.test.ts`).
+ */
+export const PROXY_REFUSED_HEADER = "x-graft-refused";
+
+/**
  * The reasons a refusal can carry under `REFUSAL_HEADER`: the three `refuseUpstreamFailure`
  * makes. `upstream_unreachable` is also the word for an unusable status and an unreadable body,
  * but those came *after* a response and are not marked — the header, not the word, is the mark.

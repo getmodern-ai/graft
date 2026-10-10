@@ -100,7 +100,11 @@ function runRunner(args: {
  * The connection a dry run is minted for. With no live connection: the tool's declared hosts and
  * nothing else, so a call to an undeclared host is the proxy's `host_not_in_set`, and the `none`
  * scheme, since the vendor is the recording and the credential's header is not compared. With one:
- * its scheme and parameters, or a sentence when a keyed starter has none.
+ * its scheme and parameters, or a sentence when a keyed starter has none. **The primary host is one
+ * the manifest declares** (Greptile on #187): the proxy admits the primary host's name beside
+ * `hosts`, so a starter's primary host the manifest omits would let an undeclared call pass. The
+ * starter's is used where the manifest declares its name, else the manifest's first host; a live
+ * connection's own primary host (a test account that answers elsewhere) is used as given.
  */
 export function stockConnectionFor(
   tool: Pick<StockWorkspaceTool, "vendor" | "hosts">,
@@ -108,8 +112,14 @@ export function stockConnectionFor(
   required: boolean,
 ): ProxyConnection | string {
   const starter = starterVendorFor(tool.vendor);
-  const primaryHost = live?.primaryHost ?? starter?.primaryHost ?? `https://${tool.hosts[0]}`;
-  const hosts = [...new Set([new URL(primaryHost).hostname, ...tool.hosts])];
+  const declared = new Set(tool.hosts);
+  const hostnameOf = (url: string) => new URL(url).hostname.toLowerCase();
+  const primaryHost =
+    live?.primaryHost ??
+    (starter && declared.has(hostnameOf(starter.primaryHost))
+      ? starter.primaryHost
+      : `https://${tool.hosts[0]}`);
+  const hosts = [...new Set([hostnameOf(primaryHost), ...tool.hosts])];
   if (required && live === null && starter && starter.scheme !== "none") {
     return `there is no live connection for ${tool.vendor}; give it under GRAFT_STOCK_LIVE_CONNECTIONS`;
   }

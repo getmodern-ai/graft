@@ -235,6 +235,29 @@ describe("the harness", () => {
     ]);
   });
 
+  it("replays a keyed starter's tool with no credential: the vendor is the recording", async () => {
+    const keyed = { ...readTool, vendor: "github" };
+    const report = await proveReplay(keyed, { ...readRecording, tool: "github__list-items" });
+    expect(report.problems).toEqual([]);
+  });
+
+  it("fails a call to a starter's primary host the manifest does not declare", async () => {
+    // GitHub's starter names api.github.com; this manifest declares api.example.com alone.
+    const undeclared = fixture({
+      vendor: "github",
+      module: READ_MODULE.replace(`host: "${HOST}"`, 'host: "api.github.com"'),
+    });
+    const report = await proveReplay(undeclared, {
+      ...readRecording,
+      tool: "github__list-items",
+      exchanges: [{ ...firstRead, url: "https://api.github.com/v1/items?q=red" }],
+    });
+    expect(report.reachedVendor).toEqual([]);
+    expect(report.problems).toContainEqual(
+      expect.stringMatching(/^stock tool github__list-items: its dry run did not pass: .*403/),
+    );
+  });
+
   it("fails a recording made with another input, or holding a credential", async () => {
     expect(
       (await proveReplay(readTool, { ...readRecording, input: { q: "blue" } })).problems,

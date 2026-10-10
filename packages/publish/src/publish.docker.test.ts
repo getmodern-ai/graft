@@ -229,17 +229,17 @@ describe.skipIf(docker.reason !== undefined)("the publish against the Docker bac
 
     expect(result.ok, JSON.stringify(result)).toBe(true);
     if (!result.ok) return;
-    expect(result.version.path).toBe("tools/demo/pad/v1");
+    // The write's own directory (GRA-238): `tool_version.path` records it, whatever its name.
+    expect(result.version.path).toMatch(/^tools\/demo\/pad\/w-/);
+    const dir = result.version.path;
     expect(result.dependencies).toEqual(["left-pad"]);
 
     // The version carries its own node_modules and lockfile, and the row's hash is the lockfile's.
-    const lockfile = await store.read(PERSON, "tools/demo/pad/v1/package-lock.json");
+    const lockfile = await store.read(PERSON, `${dir}/package-lock.json`);
     expect(lockfile).toContain('"left-pad"');
     expect(result.version.lockfileHash).toBe(sha256Hex(lockfile));
-    expect(await store.exists(PERSON, "tools/demo/pad/v1/node_modules/left-pad/index.js")).toBe(
-      true,
-    );
-    expect(await store.list(PERSON, "tools/demo/pad/v1")).toEqual([
+    expect(await store.exists(PERSON, `${dir}/node_modules/left-pad/index.js`)).toBe(true);
+    expect(await store.list(PERSON, dir)).toEqual([
       "index.ts",
       "node_modules",
       "package-lock.json",
@@ -252,7 +252,7 @@ describe.skipIf(docker.reason !== undefined)("the publish against the Docker bac
     // Seeded by hand under a stand-in hash: this suite has no MCP deps to compute the real one.
     await handle.writeTree(await runnerFiles(), runnerSeedDir("test"));
     const modulePath = sandboxPath(result.version.path);
-    expect(modulePath).toBe("/tools/tools/demo/pad/v1");
+    expect(modulePath).toBe(`/tools/${dir}`);
     const output = await handle.exec(
       `printf '%s' '{"word":"x","width":3}' | node ${runnerPath("test")} ${modulePath}`,
       { timeoutSeconds: 60 },

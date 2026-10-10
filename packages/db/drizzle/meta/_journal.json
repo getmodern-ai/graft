@@ -96,8 +96,22 @@
     {
       "idx": 13,
       "version": "7",
-      "when": 1791534101859,
-      "tag": "0013_stock_catalogue",
+      "when": 1791534257992,
+      "tag": "0013_setup_plan",
+      "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1791589003334,
+      "tag": "0014_stock_catalogue",
+      "breakpoints": true
+    },
+    {
+      "idx": 15,
+      "version": "7",
+      "when": 1791596237006,
+      "tag": "0015_acquire_job_from_tool",
       "breakpoints": true
     }
   ]

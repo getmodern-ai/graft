@@ -15,6 +15,7 @@ import {
   moveSetupBuild,
   moveSetupConnect,
   moveSetupOn,
+  planSetup,
   type SetupBuildDeps,
   type SetupBuildMove,
   skipSetup,
@@ -58,6 +59,8 @@ function world(options: { agents?: AgentRow[]; work?: { connections: number; too
     step: "harness",
     harness: null,
     agentId: null,
+    starterId: null,
+    goal: null,
     pendingActionId: null,
     connectionId: null,
     acquireJobId: null,
@@ -987,5 +990,57 @@ describe("Build over a job the record still holds (GRA-215)", () => {
     const w = await onGoalHolding("failed");
     const { state } = await startSetupBuild(ctx, PRINCIPAL, input, w.deps);
     expect(state.setup).toMatchObject({ step: "building", acquireJobId: "job_2" });
+  });
+});
+
+describe("the plan, chosen before connecting (Setup v2)", () => {
+  async function onVendor() {
+    const w = world({});
+    await startSetup(ctx, PRINCIPAL, { harness: "claude" }, w.deps, w.agentDeps);
+    const plan = (move: Parameters<typeof planSetup>[2]) =>
+      planSetup(ctx, PRINCIPAL, move, w.deps, w.agentDeps);
+    return { ...w, plan };
+  }
+
+  it("saves the starter and the task on the vendor step, moving nothing", async () => {
+    const w = await onVendor();
+    await w.plan({ starterId: "gmail" });
+    const state = await w.plan({ goal: "  Show me my unread emails " });
+    expect(state.step).toBe("vendor");
+    expect(state.setup).toMatchObject({ starterId: "gmail", goal: "Show me my unread emails" });
+  });
+
+  it("clears the task when another starter is chosen, and both on the tool screen's Back", async () => {
+    const w = await onVendor();
+    await w.plan({ starterId: "gmail" });
+    await w.plan({ goal: "List my Gmail labels" });
+    expect((await w.plan({ starterId: "slack" })).setup).toMatchObject({
+      starterId: "slack",
+      goal: null,
+    });
+    await w.plan({ goal: "List the channels I am in" });
+    expect((await w.plan({ starterId: "slack" })).setup?.goal).toBe("List the channels I am in");
+    expect((await w.plan({ starterId: null })).setup).toMatchObject({
+      starterId: null,
+      goal: null,
+    });
+  });
+
+  it("refuses a task before a starter, an unknown starter, and a starter past the vendor step", async () => {
+    const w = await onVendor();
+    await expect(w.plan({ goal: "Anything" })).rejects.toMatchObject({
+      code: "CONFLICT",
+      details: { reason: "setup_step" },
+    });
+    await expect(w.plan({ starterId: "fax-machine" })).rejects.toMatchObject({
+      code: "NOT_FOUND",
+    });
+    await w.deps.saveSetup(fakeDb as never, PRINCIPAL.personId, {
+      step: "goal",
+      connectionId: "conn_1",
+    });
+    await expect(w.plan({ starterId: "gmail" })).rejects.toBeInstanceOf(ServiceError);
+    // A task for a connection the record already names is saved on the goal step.
+    expect((await w.plan({ goal: "List my calendars" })).setup?.goal).toBe("List my calendars");
   });
 });

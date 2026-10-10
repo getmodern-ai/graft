@@ -192,7 +192,13 @@ export async function proveReplay(
   const previewed: ReplayReport["previewed"] = [];
   const live = mode.kind === "live";
   const liveConnection = live ? (mode.connections[tool.vendor] ?? null) : null;
-  const secrets = Object.values(liveConnection?.credential ?? {});
+  // Each credential value as the proxy may have put it on the wire too: a query parameter carries
+  // it percent-encoded, and a diagnostic quotes the query (Greptile on #187).
+  const secrets = Object.values(liveConnection?.credential ?? {}).flatMap((value) => [
+    value,
+    encodeURIComponent(value),
+    new URLSearchParams({ v: value }).toString().slice("v=".length),
+  ]);
   // A live sentence may carry a vendor's text; nothing in it may carry the credential.
   const finish = (): ReplayReport => ({
     problems: problems.map((problem) => redactText(problem, { secretValues: secrets }).text),
