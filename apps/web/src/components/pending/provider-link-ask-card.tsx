@@ -21,7 +21,9 @@ import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
 import { agentKeys } from "@/lib/agent-queries";
 import { ApiError, api } from "@/lib/api";
+import { approvalKeys } from "@/lib/approval-queries";
 import { connectedSettledSentence, connectedToastDescription } from "@/lib/ask-answered-copy";
+import { connectionChoicesSent, connectionChoicesShown } from "@/lib/connection-choices";
 import { type Connection, connectionKeys } from "@/lib/connection-queries";
 import { openConsentPopup } from "@/lib/oauth-consent";
 import {
@@ -58,6 +60,8 @@ import { providerLabel } from "@/lib/provider-name";
  * until the return — and the server signs it into the link's state, so the return records it with
  * the connection it makes. The line for the integration's tools under it (GRA-239; the amendment
  * of 2026-10-09), on by default, rides the same state and is recorded on the same return.
+ * Setup's compact card draws the tools line too and not the build choice, and sends only what it
+ * draws (`lib/connection-choices.ts`, GRA-274).
  */
 export function ProviderLinkAskCard({
   ask,
@@ -78,10 +82,13 @@ export function ProviderLinkAskCard({
   const [approveBuild, setApproveBuild] = useState(true);
   const [allowVendor, setAllowVendor] = useState(true);
   const stop = useRef<AbortController | null>(null);
-  const provider = payload.provider;
+  const provider = providerLabel(payload.provider);
   const target = payload.providerTarget ?? null;
   const agentName = action.agent?.name ?? "the agent";
   const integrationName = integrationNameFor(payload.vendor, payload.displayName);
+  // What the link carries: a line the card does not draw is never sent as a yes (GRA-274).
+  const shown = connectionChoicesShown({ origin });
+  const sent = connectionChoicesSent(shown, { approveBuild, allowVendor });
 
   const settleAndRefresh = useCallback(
     (outcome: LinkOutcome, message: string, connectionId: string | null) => {
@@ -89,14 +96,15 @@ export function ProviderLinkAskCard({
       queryClient.invalidateQueries({ queryKey: pendingKeys.all });
       queryClient.invalidateQueries({ queryKey: connectionKeys.all });
       queryClient.invalidateQueries({ queryKey: agentKeys.all });
+      queryClient.invalidateQueries({ queryKey: approvalKeys.vendorsOfAgent(action.agentId) });
       if (outcome === "connected") {
         toast.success(`${payload.displayName} is connected through ${provider}`, {
           description: connectedToastDescription({
             origin,
             agentName,
-            approveBuild,
+            approveBuild: sent.approveBuild,
             provider,
-            ...(allowVendor ? { vendorTools: integrationName } : {}),
+            ...(sent.allowVendor ? { vendorTools: integrationName } : {}),
           }),
         });
         onAnswered?.();
@@ -105,11 +113,12 @@ export function ProviderLinkAskCard({
     },
     [
       queryClient,
+      action.agentId,
       payload.displayName,
       provider,
       agentName,
-      approveBuild,
-      allowVendor,
+      sent.approveBuild,
+      sent.allowVendor,
       integrationName,
       onAnswered,
       origin,
@@ -117,12 +126,12 @@ export function ProviderLinkAskCard({
   );
 
   const start = useMutation({
-    mutationFn: () => startProviderLink(action.id, { approveBuild, allowVendor }),
+    mutationFn: () => startProviderLink(action.id, sent),
     onSuccess: async (started) => {
       if ("fallback" in started) {
         // The provider could not start its sign-in and the ask is the keyring's form now
         // (GRA-147): re-read it, and this card gives way to the form in place.
-        toast.message(`${started.provider} could not start the sign-in`, {
+        toast.message(`${providerLabel(started.provider)} could not start the sign-in`, {
           description: `${payload.displayName} is connected on Graft's own page instead. The form is below.`,
         });
         await queryClient.invalidateQueries({ queryKey: pendingKeys.all });
@@ -175,6 +184,15 @@ export function ProviderLinkAskCard({
           footer: setupFooter,
         }}
       >
+        {shown.allowVendor ? (
+          <VendorToolsItem
+            id={`ask-${action.id}-allow-vendor`}
+            integrationName={integrationName}
+            checked={allowVendor}
+            onCheckedChange={setAllowVendor}
+            disabled={busy}
+          />
+        ) : null}
         {state.phase === "idle" ? null : (
           <LinkStatus state={state} provider={providerName} onCancel={cancel} />
         )}
@@ -216,7 +234,12 @@ export function ProviderLinkAskCard({
       pending={busy}
       onAnswer={(allow) => (allow ? start.mutate() : decline.mutate({ allow: false }))}
     >
-      <ProposalSource origin={origin} note={payload.note} docsUrl={payload.docsUrl} />
+      <ProposalSource
+        origin={origin}
+        agentName={action.agent?.name ?? null}
+        note={payload.note}
+        docsUrl={payload.docsUrl}
+      />
 
       <dl className="grid gap-x-6 gap-y-1 text-sm sm:grid-cols-[auto_1fr]">
         <dt className="text-muted-foreground">Primary host</dt>

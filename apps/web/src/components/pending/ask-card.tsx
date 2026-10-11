@@ -26,6 +26,7 @@ import {
   type PendingAnswer,
   pendingKeys,
 } from "@/lib/pending-action-queries";
+import { proposalDocsLabel, proposalSourceBadge } from "@/lib/proposal-source";
 import { cachedDirectoryLogo } from "@/lib/setup-queries";
 
 /**
@@ -219,15 +220,19 @@ export function Hosts({ hosts }: { hosts: readonly string[] }) {
 export type { AskOrigin } from "@/lib/ask-answered-copy";
 
 /**
- * Where a proposal came from: under `agent`, the provenance badge, the server's note and the page
- * the agent read; under `setup`, the vendor's documentation alone, since Graft wrote the entry.
+ * Where a proposal came from: under `agent`, the badge naming the agent that asked (its model or a
+ * ready-made tool may have written it, `lib/proposal-source.ts`), the server's note and the page
+ * the agent named; under `setup`, the vendor's documentation alone, since Graft wrote the entry.
  */
 export function ProposalSource({
   origin,
+  agentName,
   note,
   docsUrl,
 }: {
   origin: AskOrigin;
+  /** The agent that asked, by its name; null for a revoked agent's ask. */
+  agentName: string | null;
   note?: string | null;
   docsUrl?: string | null;
 }) {
@@ -235,7 +240,7 @@ export function ProposalSource({
   return (
     <figure className="flex flex-col gap-1.5">
       <figcaption className="flex flex-wrap items-center gap-2 text-muted-foreground text-xs">
-        <Badge variant="outline">proposed by the agent's model</Badge>
+        <Badge variant="outline">{proposalSourceBadge(agentName)}</Badge>
         {note}
       </figcaption>
       {docsUrl ? (
@@ -258,7 +263,7 @@ export function DocsLink({ href, origin }: { href: string; origin: AskOrigin }) 
       rel="noreferrer noopener"
       className="inline-flex items-center gap-1 text-xs underline underline-offset-4"
     >
-      {`${origin === "setup" ? "The integration's documentation" : "The documentation the agent read"}: ${href}`}
+      {`${proposalDocsLabel(origin)}: ${href}`}
       <OpenInNewIcon className="size-3" />
     </a>
   );

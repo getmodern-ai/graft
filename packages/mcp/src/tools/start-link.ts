@@ -1,5 +1,5 @@
 import { START_LINK_TOOL, type StartLinkResult } from "@graft/ask-card/shape";
-import { ServiceError } from "@graft/core";
+import { providerDisplayName, ServiceError } from "@graft/core";
 
 import { APP_ONLY_TOOL_META } from "../ask-card";
 import { isProviderLinkFallback, mintProviderLink, proposalOfLinkAsk } from "../provider-link";
@@ -126,7 +126,7 @@ export const startLink: MetaTool = {
       // console button lands on that form, so the refusal is the one the card answers with it.
       return toolRefusal(
         CARD_NOT_AVAILABLE,
-        `${started.provider} could not start its sign-in (${started.message}), so this connection is made on Graft's own page instead. ${CONSOLE_IS_THE_PLACE}`,
+        `${providerDisplayName(started.provider)} could not start its sign-in (${started.message}), so this connection is made on Graft's own page instead. ${CONSOLE_IS_THE_PLACE}`,
       );
     }
     const result: StartLinkResult = {
