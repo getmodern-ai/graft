@@ -1758,6 +1758,28 @@ describe("the input schema", () => {
     ]);
   });
 
+  it("finds one whose required list and default sit either side of an allOf (Greptile on #216)", () => {
+    const split = {
+      type: "object",
+      required: ["q"],
+      allOf: [{ properties: { q: { type: "string", default: "red" } } }],
+    };
+    expect(requiredWithDefault(split).map((found) => found.path)).toEqual(["q"]);
+    const inverse = {
+      type: "object",
+      properties: { q: { type: "string", default: "red" } },
+      allOf: [{ required: ["q"] }],
+    };
+    expect(requiredWithDefault(inverse).map((found) => found.path)).toEqual(["q"]);
+    const both = {
+      type: "object",
+      properties: { q: { type: "string", default: "red" } },
+      required: ["q"],
+      allOf: [{ properties: { q: { type: "string", default: "red" } }, required: ["q"] }],
+    };
+    expect(requiredWithDefault(both).map((found) => found.path)).toEqual(["q"]);
+  });
+
   it("passes the same schema with the defaulted fields optional and applied in the module", () => {
     const result = check(
       {

@@ -30,17 +30,32 @@ export function requiredWithDefault(schema: unknown): RequiredDefault[] {
   return found;
 }
 
-function walk(node: unknown, path: string, depth: number, found: RequiredDefault[]): void {
+function walk(
+  node: unknown,
+  path: string,
+  depth: number,
+  found: RequiredDefault[],
+  inherited: readonly string[] = [],
+): void {
   const schema = objectOrNull(node);
   if (!schema || depth > MAX_DEPTH) return;
+  // What this object requires: its own list, what an enclosing schema required of the same object
+  // (a branch of `allOf`, `anyOf` or `oneOf` is the same instance), and each `allOf` branch's own
+  // list, since every branch applies. So `required` and the `default` on either side of an
+  // `allOf` still meet (Greptile on #216).
+  const required = new Set<string>(inherited);
+  for (const field of stringsOf(schema.required)) required.add(field);
+  const allOf = Array.isArray(schema.allOf) ? schema.allOf : [];
+  for (const branch of allOf) {
+    for (const field of stringsOf(objectOrNull(branch)?.required)) required.add(field);
+  }
   const properties = objectOrNull(schema.properties);
   if (properties) {
-    const required = Array.isArray(schema.required) ? schema.required : [];
     for (const field of required) {
-      if (typeof field !== "string") continue;
       const property = objectOrNull(properties[field]);
-      if (property && "default" in property) {
-        found.push({ path: join(path, field), field, default: property.default });
+      const fieldPath = join(path, field);
+      if (property && "default" in property && !found.some((f) => f.path === fieldPath)) {
+        found.push({ path: fieldPath, field, default: property.default });
       }
     }
     for (const [field, child] of Object.entries(properties)) {
@@ -61,8 +76,14 @@ function walk(node: unknown, path: string, depth: number, found: RequiredDefault
   for (const key of ["anyOf", "oneOf", "allOf"] as const) {
     const branches = schema[key];
     if (!Array.isArray(branches)) continue;
-    for (const branch of branches) walk(branch, path, depth + 1, found);
+    for (const branch of branches) walk(branch, path, depth + 1, found, [...required]);
   }
+}
+
+function stringsOf(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === "string")
+    : [];
 }
 
 function join(path: string, field: string): string {

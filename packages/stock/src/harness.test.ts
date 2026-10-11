@@ -306,6 +306,20 @@ describe("the harness over required inputs", () => {
     }
   });
 
+  it("does not read an || evaluated as a test as a fallback (Greptile on #216)", () => {
+    const top = "export default async (input: Input, ctx: Context) => {";
+    for (const extra of [
+      "  if (input.q || input.other) void 0;",
+      '  if ((input.q || "") && ctx) void 0;',
+      '  if (!(input.q || "red")) void 0;',
+      "  while (input.q || false) break;",
+      "  void (input.q || input.other ? 1 : 2);",
+    ]) {
+      const tool = fixture({ module: READ_MODULE.replace(top, `${top}\n${extra}`) });
+      expect(proveOptionalDefaults(tool)).toEqual([]);
+    }
+  });
+
   it("does not read a comment, a string or a shadowing parameter as a fallback (Greptile on #216)", () => {
     const top = "export default async (input: Input, ctx: Context) => {";
     for (const extra of [

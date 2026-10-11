@@ -5,7 +5,9 @@ import ts from "typescript6";
  * syntax tree (the check's own TypeScript, as `string-literals.ts` parses): the left operand of a
  * `??` or `||` that is a read of the input parameter (`input.limit ?? 10`, `input?.limit || 10`,
  * `input["limit"] ?? 10`), and a destructuring default taken off it (`({ limit = 10 }: Input)`, or
- * `const { limit = 10 } = input`). A comment, a string, and a scope that binds the input's name
+ * `const { limit = 10 } = input`). An `||` read as a test (`if (input.a || input.b)`, a loop's or a
+ * conditional's condition, under `!` or `&&`) is no fallback, since it makes neither field optional
+ * (Greptile on #216). A comment, a string, and a scope that binds the input's name
  * again (a nested function's parameter, a block's own `const input`, a loop or `catch` variable)
  * read nothing.
  *
@@ -42,7 +44,7 @@ export function inputFallbacksOf(
     if (
       ts.isBinaryExpression(node) &&
       (node.operatorToken.kind === ts.SyntaxKind.QuestionQuestionToken ||
-        node.operatorToken.kind === ts.SyntaxKind.BarBarToken)
+        (node.operatorToken.kind === ts.SyntaxKind.BarBarToken && !isBooleanTest(node)))
     ) {
       const field = fieldRead(unwrap(node.left), isInput);
       if (field !== null) found.add(field);
@@ -121,6 +123,43 @@ function collectBindingDefaults(pattern: ts.ObjectBindingPattern, found: Set<str
     const key = element.propertyName ?? element.name;
     if (ts.isIdentifier(key) || ts.isStringLiteralLike(key)) found.add(key.text);
   }
+}
+
+/**
+ * Is this `||` evaluated for its truth alone: climbing through parentheses and the `||`, `&&` and
+ * `!` around it, does it end in the condition of an `if`, a loop or a `?:`, or pass a `&&` or a `!`
+ * on the way? A test makes no field optional, so it is not counted as a fallback.
+ */
+function isBooleanTest(node: ts.BinaryExpression): boolean {
+  let child: ts.Node = node;
+  let parent = node.parent;
+  while (parent) {
+    if (ts.isParenthesizedExpression(parent)) {
+      child = parent;
+      parent = parent.parent;
+      continue;
+    }
+    if (ts.isPrefixUnaryExpression(parent) && parent.operator === ts.SyntaxKind.ExclamationToken) {
+      return true;
+    }
+    if (ts.isBinaryExpression(parent)) {
+      const operator = parent.operatorToken.kind;
+      if (operator === ts.SyntaxKind.AmpersandAmpersandToken) return true;
+      if (operator === ts.SyntaxKind.BarBarToken) {
+        child = parent;
+        parent = parent.parent;
+        continue;
+      }
+      return false;
+    }
+    if (ts.isIfStatement(parent) || ts.isWhileStatement(parent) || ts.isDoStatement(parent)) {
+      return parent.expression === child;
+    }
+    if (ts.isForStatement(parent)) return parent.condition === child;
+    if (ts.isConditionalExpression(parent)) return parent.condition === child;
+    return false;
+  }
+  return false;
 }
 
 /** Through parentheses, `as`, `satisfies`, `!` and a type assertion, to the expression inside. */
