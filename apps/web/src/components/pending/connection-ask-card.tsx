@@ -37,6 +37,7 @@ import {
 } from "@/lib/connection-form";
 import { connectionKeys, submitConnectionProposal } from "@/lib/connection-queries";
 import { type Ask, isOpen, pendingKeys } from "@/lib/pending-action-queries";
+import { providerLabel as providerName } from "@/lib/provider-name";
 
 /**
  * An agent's proposal for a connection (GRA-28; ADR 0006): the form opens pre-filled with everything
@@ -235,7 +236,9 @@ export function ConnectionAskCard({
           <span className="text-muted-foreground">{widens ? "widen" : "connect"}</span>
           <span>{payload.displayName}</span>
           <Badge variant="outline">{payload.vendor}</Badge>
-          {provider === KEYRING_PROVIDER ? null : <Badge variant="outline">via {provider}</Badge>}
+          {provider === KEYRING_PROVIDER ? null : (
+            <Badge variant="outline">via {providerName(provider)}</Badge>
+          )}
           {oauth ? <Badge variant="outline">OAuth consent</Badge> : null}
         </>
       }
@@ -261,7 +264,12 @@ export function ConnectionAskCard({
       pending={busy}
       onAnswer={(allow) => (allow ? submit() : decline.mutate({ allow: false }))}
     >
-      <ProposalSource origin={origin} note={payload.note} docsUrl={payload.docsUrl} />
+      <ProposalSource
+        origin={origin}
+        agentName={action.agent?.name ?? null}
+        note={payload.note}
+        docsUrl={payload.docsUrl}
+      />
 
       {open && widens ? (
         // A widening (GRA-167): the row is the person's already, so nothing here is editable —

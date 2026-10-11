@@ -198,7 +198,7 @@ async function until(predicate: () => boolean, ticks = 200) {
 const status = (root: HTMLElement) => root.querySelector("[role=status]") as HTMLElement | null;
 
 describe("a build approval", () => {
-  it("draws the agent, the connection and its hosts, the reads-only sentence, and Allow and Deny", () => {
+  it("draws the agent, the connection and its hosts, the reads-only sentence, and Allow and Decline", () => {
     const root = renderAsk(BUILD, handlers(), document);
     expect(root.dataset).toMatchObject({ kind: "build", answerable: "true" });
     expect(root.querySelector("h1")?.textContent).toBe(titleOf(BUILD));
@@ -208,7 +208,7 @@ describe("a build approval", () => {
     expect(root.textContent).toContain(
       "Reads only, every write previewed, until the first real use, which asks you once.",
     );
-    expect(buttons(root)).toEqual(["Deny", "Allow"]);
+    expect(buttons(root)).toEqual(["Decline", "Allow"]);
     expect(root.querySelector("input[type=checkbox]")).toBeNull();
   });
 
@@ -228,10 +228,10 @@ describe("a build approval", () => {
     expect((status as HTMLElement).dataset.tone).toBe("answered");
   });
 
-  it("sends { allow: false } on Deny", async () => {
+  it("sends { allow: false } on Decline", async () => {
     const h = handlers();
     const root = renderAsk(BUILD, h, document);
-    [...root.querySelectorAll("button")].find((b) => b.textContent === "Deny")?.click();
+    [...root.querySelectorAll("button")].find((b) => b.textContent === "Decline")?.click();
     await flush();
     expect(h.answer).toHaveBeenCalledWith({ allow: false });
   });
@@ -283,7 +283,7 @@ describe("a build approval", () => {
 });
 
 describe("a tool's first-use approval (GRA-116)", () => {
-  it("asks to allow the run, quotes the description as the model's words, names the tool and what it does, and offers Deny and Allow", () => {
+  it("asks to allow the run, quotes the description as the model's words, names the tool and what it does, and offers Decline and Allow", () => {
     const root = renderAsk(TOOL, handlers(), document);
     expect(root.dataset).toMatchObject({ kind: "tool", answerable: "true" });
     expect(root.querySelector("h1")?.textContent).toBe("Allow Claude to run demo__create-order?");
@@ -295,7 +295,7 @@ describe("a tool's first-use approval (GRA-116)", () => {
     expect(root.textContent).toContain("Demo Orders");
     expect(root.textContent).toContain("api.demo.example");
     expect(root.querySelector("input[type=checkbox]")).toBeNull();
-    expect(buttons(root)).toEqual(["Deny", "Allow"]);
+    expect(buttons(root)).toEqual(["Decline", "Allow"]);
   });
 
   it("marks the description with where the tool came from, as the server wrote it (GRA-245)", () => {
@@ -343,7 +343,7 @@ describe("a tool's first-use approval (GRA-116)", () => {
     expect(everyCall.textContent).toContain("ask every time, so a yes is for this call alone");
   });
 
-  it("sends { allow: true } on Allow and { allow: false } on Deny, never the setting", async () => {
+  it("sends { allow: true } on Allow and { allow: false } on Decline, never the setting", async () => {
     const h = handlers({ answer: { ok: true, sentence: "Allowed. Claude may run it." } });
     const root = renderAsk(TOOL, h, document);
     [...root.querySelectorAll("button")].find((b) => b.textContent === "Allow")?.click();
@@ -353,7 +353,7 @@ describe("a tool's first-use approval (GRA-116)", () => {
 
     const again = handlers();
     const second = renderAsk(TOOL, again, document);
-    [...second.querySelectorAll("button")].find((b) => b.textContent === "Deny")?.click();
+    [...second.querySelectorAll("button")].find((b) => b.textContent === "Decline")?.click();
     await flush();
     expect(again.answer).toHaveBeenCalledWith({ allow: false });
   });
@@ -369,7 +369,11 @@ describe("a tool's first-use approval (GRA-116)", () => {
 describe("a tool's ask offering the whole integration", () => {
   it("draws the server's offer beside Allow and the destructive tick, off by default", () => {
     const root = renderAsk(TOOL_OFFER, handlers(), document);
-    expect(buttons(root)).toEqual(["Deny", "Allow every Demo Orders tool for this agent", "Allow"]);
+    expect(buttons(root)).toEqual([
+      "Decline",
+      "Allow every Demo Orders tool for this agent",
+      "Allow",
+    ]);
     const tick = root.querySelector<HTMLInputElement>("input[name=includesDestructive]");
     expect(tick?.checked).toBe(false);
     expect(root.textContent).toContain("Include destructive tools");
@@ -470,7 +474,7 @@ describe("a widening: a keyless connection the person holds, asked to reach anot
     const root = renderAsk(WIDEN, handlers(), document);
     expect(root.dataset).toMatchObject({ kind: "connection", answerable: "true" });
     expect(root.querySelector("h1")?.textContent).toBe(
-      "Also reach customer-api.open-meteo.com with Open-Meteo (open-meteo)?",
+      "Also reach customer-api.open-meteo.com with Open-Meteo?",
     );
     expect(root.querySelector(".ask-description")?.textContent).toContain(
       "no new connection is made",
@@ -492,7 +496,7 @@ describe("a scope ask: a connection the person holds that this agent was not giv
   it("asks to let the agent use the connection, names the provider and hosts, says nothing is entered, and offers a checked build choice with Decline and Allow", () => {
     const root = renderAsk(SCOPE, handlers(), document);
     expect(root.dataset).toMatchObject({ kind: "scope", answerable: "true" });
-    expect(root.querySelector("h1")?.textContent).toBe("Let Claude use Gmail (gmail)?");
+    expect(root.querySelector("h1")?.textContent).toBe("Let Claude use Gmail?");
     expect(root.textContent).toContain("via broker");
     expect(root.textContent).toContain("made for another of your agents");
     expect(root.textContent).toContain("nothing entered");
@@ -650,7 +654,7 @@ describe("a connection a link provider covers", () => {
   it("asks to connect through the provider, names it, offers a checked build choice, Decline and Connect through broker", () => {
     const root = renderAsk(LINK, handlers(), document);
     expect(root.dataset).toMatchObject({ kind: "connection", answerable: "false" });
-    expect(root.querySelector("h1")?.textContent).toBe("Connect Gmail (gmail) through broker?");
+    expect(root.querySelector("h1")?.textContent).toBe("Connect Gmail through broker?");
     expect(root.textContent).toContain("sign in to Gmail on broker's page");
     expect(root.textContent).toContain("nothing is typed here");
     const box = root.querySelector("input[type=checkbox]") as HTMLInputElement;
@@ -745,7 +749,41 @@ describe("a connection a link provider covers", () => {
   });
 });
 
+describe("the integration's name (GRA-273)", () => {
+  const LINEAR: AskCard = {
+    ...KEYLESS,
+    vendor: "linear",
+    integrationName: "Linear",
+    displayName: "Linear",
+  };
+
+  it("draws the integration's name, never the slug, and names it once where the two agree", () => {
+    const facts = factsOf(LINEAR);
+    expect(facts.find((fact) => fact.label === "Integration")?.value).toBe("Linear");
+    expect(facts.find((fact) => fact.label === "Connection")?.value).toBe("Linear");
+    expect(titleOf(LINEAR)).toBe("Connect Linear?");
+    expect(renderAsk(LINEAR, handlers(), document).textContent).not.toContain("linear");
+  });
+
+  it("puts the integration beside a connection named otherwise", () => {
+    expect(titleOf({ ...LINEAR, displayName: "Work tracker" })).toBe(
+      "Connect Work tracker (Linear)?",
+    );
+  });
+
+  it("falls back to the slug on a card written before the name rode on it", () => {
+    const { integrationName: _, ...older } = LINEAR;
+    expect(factsOf(older).find((fact) => fact.label === "Integration")?.value).toBe("linear");
+  });
+});
+
 describe("reading the wire", () => {
+  it("reads the integration's name when the server wrote one", () => {
+    expect(readAskCard({ card: { ...BUILD, integrationName: "Demo" } })?.integrationName).toBe(
+      "Demo",
+    );
+  });
+
   it("reads the card off structuredContent and nothing off a result that is not an ask", () => {
     expect(readAskCard({ reason: "awaiting_approval", card: BUILD })).toEqual(BUILD);
     expect(readAskCard({ status: "connected", connectionId: "c" })).toBeNull();
@@ -910,7 +948,7 @@ describe("the Setup offer", () => {
   it("renders an ask through the same entry, unchanged", () => {
     const root = renderCard(BUILD, handlers(), document);
     expect(root.dataset.kind).toBe("build");
-    expect(buttons(root)).toEqual(["Deny", "Allow"]);
+    expect(buttons(root)).toEqual(["Decline", "Allow"]);
   });
 
   it("is read off the wire as the Setup card, and never as an ask", () => {

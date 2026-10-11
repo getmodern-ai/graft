@@ -10,6 +10,8 @@
 
 import { vendorToolsSentence } from "@graft/core/approval/vendor-approval.rules";
 
+import { providerLabel } from "./provider-name";
+
 export type AskOrigin = "agent" | "setup";
 
 /** Setup's next step after a connection is made, said the one way. */
@@ -31,13 +33,14 @@ export function connectedToastDescription(input: {
   vendorTools?: string;
 }): string {
   const scope = `In ${input.agentName}'s scope${buildClause(input.approveBuild)}`;
-  const token = input.provider ? `the account's token stays with ${input.provider}` : null;
+  const provider = input.provider ? providerLabel(input.provider) : null;
+  const token = provider ? `the account's token stays with ${provider}` : null;
   const tools = input.vendorTools ? ` ${vendorToolsSentence(input.vendorTools)}` : "";
   if (input.origin === "setup") {
     return `${scope}${token ? `, and ${token}` : ""}.${tools} ${SETUP_MOVES_ON}`;
   }
   return token
-    ? `${scope}; its waiting call answers connected. The account's token stays with ${input.provider}.${tools}`
+    ? `${scope}; its waiting call answers connected. The account's token stays with ${provider}.${tools}`
     : `${scope}; its waiting call answers connected. Other agents get it when you add it to theirs.${tools}`;
 }
 
@@ -47,7 +50,8 @@ export function connectedSettledSentence(input: {
   widens?: boolean;
   provider?: string;
 }): string {
-  const { origin, widens, provider } = input;
+  const { origin, widens } = input;
+  const provider = input.provider ? providerLabel(input.provider) : null;
   if (widens) {
     return origin === "setup"
       ? "Confirmed. The connection now reaches the added hosts; nothing new was made."

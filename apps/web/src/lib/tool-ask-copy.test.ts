@@ -44,9 +44,9 @@ describe("integrationNameOfVendor", () => {
 });
 
 describe("toolAskSettledSentence", () => {
-  it("says a no holds", () => {
+  it("says a decline holds until changed", () => {
     expect(toolAskSettledSentence({ allow: false }, "HubSpot")).toBe(
-      "Declined. The no holds for this agent until withdrawn on its page.",
+      "Declined. This agent will not run the tool, and that answer holds until you change it on the agent's page.",
     );
   });
 
@@ -72,7 +72,7 @@ describe("toolAskSettledSentence", () => {
 
   it("ignores the integration beside a no", () => {
     expect(toolAskSettledSentence({ allow: false, allowVendor: true }, "HubSpot")).toBe(
-      "Declined. The no holds for this agent until withdrawn on its page.",
+      "Declined. This agent will not run the tool, and that answer holds until you change it on the agent's page.",
     );
   });
 });
