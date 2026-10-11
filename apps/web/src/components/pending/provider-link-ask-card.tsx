@@ -113,6 +113,7 @@ export function ProviderLinkAskCard({
     },
     [
       queryClient,
+      action.agentId,
       payload.displayName,
       provider,
       agentName,

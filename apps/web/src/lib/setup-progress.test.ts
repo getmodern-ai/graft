@@ -16,14 +16,14 @@ import {
 } from "./setup-progress";
 
 describe("setupConnectedLine", () => {
-  it("says what the agent was granted, never read-only (GRA-274)", () => {
+  it("names the integration approval the agent holds, never read-only (GRA-274)", () => {
     expect(setupConnectedLine("Gmail", undefined)).toBe("Connected");
-    expect(setupConnectedLine("Gmail", null)).toBe("Connected · a tool that writes asks you first");
+    expect(setupConnectedLine("Gmail", null)).toBe("Connected");
     expect(setupConnectedLine("Gmail", { includesDestructive: false })).toBe(
-      "Connected · every Gmail tool runs without asking, except one that deletes or overwrites",
+      "Connected · Gmail allowed for this agent, destructive tools excluded",
     );
     expect(setupConnectedLine("Gmail", { includesDestructive: true })).toBe(
-      "Connected · every Gmail tool runs without asking",
+      "Connected · Gmail allowed for this agent, destructive tools included",
     );
   });
 });
