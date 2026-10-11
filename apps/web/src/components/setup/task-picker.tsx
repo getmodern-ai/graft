@@ -18,12 +18,15 @@ export function TaskPicker({
   onChange,
   integrationName,
   disabled,
+  onPickCard,
 }: {
   tasks: readonly string[];
   value: string;
   onChange: (task: string) => void;
   integrationName: string;
   disabled?: boolean;
+  /** A card tapped, beside `onChange`: the step's way on where a tap is the choice (a phone). */
+  onPickCard?: (task: string) => void;
 }) {
   const fromCards = tasks.includes(value);
   const [described, setDescribed] = useState(fromCards ? "" : value);
@@ -90,6 +93,7 @@ export function TaskPicker({
         options={tasks.map((task) => ({ value: task, label: task }))}
         value={fromCards ? value : null}
         onChange={onChange}
+        onPick={onPickCard}
         disabled={disabled}
       />
       {describeRow}

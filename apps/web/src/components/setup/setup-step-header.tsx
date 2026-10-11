@@ -25,15 +25,20 @@ export function SetupStepHeader({
   return (
     <header className="flex flex-col items-center gap-2 text-center">
       {eyebrow ? (
-        <p className="font-medium text-muted-foreground text-xs uppercase">{eyebrow}</p>
+        // The compact stepper above says the same on a phone (GRA-267).
+        <p className="hidden font-medium text-muted-foreground text-xs uppercase md:block">
+          {eyebrow}
+        </p>
       ) : null}
-      <div className="flex items-center justify-center gap-3">
+      <div className="flex flex-col items-center justify-center gap-2 md:flex-row md:gap-3">
         {media}
-        <h1 className="text-balance font-heading font-medium text-3xl tracking-tight md:text-4xl">
+        <h1 className="text-balance font-heading font-medium text-2xl tracking-tight md:text-4xl">
           {title}
         </h1>
       </div>
-      <p className="max-w-2xl text-balance text-lg text-muted-foreground">{description}</p>
+      <p className="max-w-2xl text-balance text-base text-muted-foreground md:text-lg">
+        {description}
+      </p>
     </header>
   );
 }

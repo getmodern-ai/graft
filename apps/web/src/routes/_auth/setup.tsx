@@ -9,6 +9,7 @@ import { CheckCircleIcon, InfoIcon } from "@/components/icons";
 import { Loader } from "@/components/loader";
 import { RetryNotice } from "@/components/retry-notice";
 import { useSetupBack } from "@/components/setup/setup-footer";
+import { SetupOnPhone } from "@/components/setup/setup-on-phone";
 import { SetupStepView } from "@/components/setup/setup-step";
 import { SetupEyebrowContext } from "@/components/setup/setup-step-header";
 import { SetupStepper, SetupStepperCompact } from "@/components/setup/setup-stepper";
@@ -167,6 +168,11 @@ function SetupRoute() {
                 <AlertTitle>{SETUP_FROM_CARD.title}</AlertTitle>
                 <AlertDescription>{SETUP_FROM_CARD.message}</AlertDescription>
               </Alert>
+            ) : null}
+            {/* Not on a held directory entry's tool screen: the link resumes the record, which holds
+                no such entry, so it would open on the directory (Greptile on #211). */}
+            {state && ["harness", "vendor", "goal"].includes(step) && !holdsApp ? (
+              <SetupOnPhone />
             ) : null}
             {state ? (
               <SetupStepView

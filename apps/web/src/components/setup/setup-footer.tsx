@@ -40,10 +40,15 @@ export function SetupFooter({
 }) {
   const back = useSetupBack();
   const target = backTargetOf(state);
+  // On a phone Back is a small text link at the start of the bar, never a button beside the
+  // primary: two people on Android on 2026-10-10 took the outlined Back for the way on while the
+  // primary was pale (GRA-267).
+  const backLink = "h-8 px-2 text-muted-foreground md:h-9 md:border md:px-3 md:text-foreground";
   const backButton = !showBack ? null : onBack ? (
     <Button
       type="button"
-      variant="outline"
+      variant="ghost"
+      className={backLink}
       disabled={disabled || onBack.pending}
       onClick={onBack.run}
     >
@@ -53,7 +58,8 @@ export function SetupFooter({
   ) : target ? (
     <Button
       type="button"
-      variant="outline"
+      variant="ghost"
+      className={backLink}
       disabled={disabled || back.isPending}
       onClick={() => back.mutate(target)}
     >
@@ -64,15 +70,15 @@ export function SetupFooter({
   return (
     <>
       {/* Holds the bar's height at the end of the step, so nothing scrolls under it for good. */}
-      <div aria-hidden="true" className="h-20 shrink-0" />
+      <div aria-hidden="true" className="h-16 shrink-0 md:h-20" />
       <div className="fixed inset-x-0 bottom-0 z-20 border-t bg-background">
-        <div className="flex min-h-20 flex-wrap items-center justify-between gap-3 px-4 py-4 md:px-8">
-          <div className="flex min-w-0 items-center gap-2 text-muted-foreground text-sm">
+        <div className="flex min-h-16 flex-col gap-2 px-4 py-3 md:min-h-20 md:flex-row md:items-center md:justify-between md:gap-3 md:px-8 md:py-4">
+          <div className="hidden min-w-0 items-center gap-2 text-muted-foreground text-sm md:flex">
             {summary}
           </div>
-          <div className="flex flex-wrap items-center justify-end gap-2">
-            {backButton}
-            {children}
+          <div className="flex items-center justify-between gap-2 md:justify-end">
+            {backButton ?? <span />}
+            <div className="flex flex-wrap items-center justify-end gap-2">{children}</div>
           </div>
         </div>
       </div>

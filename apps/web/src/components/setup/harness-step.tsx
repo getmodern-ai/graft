@@ -22,6 +22,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { useIsMobile } from "@/hooks/use-mobile";
 import { readScopeMode, SCOPE_MODE_ITEMS } from "@/lib/scope-mode";
 import { agentToAdopt } from "@/lib/setup-page";
 import { nextSetup, type SetupStateData, startSetup } from "@/lib/setup-queries";
@@ -148,22 +149,24 @@ function ChooseHarness({ state }: { state: SetupStateData }) {
   const start = useSetupMutation(startSetup);
 
   const defaultName = harness ? setupHarnessOf(harness).agentName : "";
+  const isMobile = useIsMobile();
+  const begin = (chosen: SetupHarness) =>
+    start.mutate({
+      harness: chosen,
+      agent: {
+        ...(name.trim() ? { name: name.trim() } : {}),
+        workingSetCap: Number(cap),
+        idleWindowDays: Number(idleDays),
+        scopeMode,
+      },
+    });
 
   return (
     <form
       className="flex flex-col gap-6"
       onSubmit={(event) => {
         event.preventDefault();
-        if (!harness) return;
-        start.mutate({
-          harness,
-          agent: {
-            ...(name.trim() ? { name: name.trim() } : {}),
-            workingSetCap: Number(cap),
-            idleWindowDays: Number(idleDays),
-            scopeMode,
-          },
-        });
+        if (harness) begin(harness);
       }}
     >
       <SetupStepHeader
@@ -181,6 +184,8 @@ function ChooseHarness({ state }: { state: SetupStateData }) {
         }))}
         value={harness}
         onChange={setHarness}
+        // A tap is the choice on a phone, with the defaults (GRA-267).
+        onPick={isMobile ? begin : undefined}
         disabled={start.isPending}
       />
 
@@ -280,6 +285,7 @@ function ChooseHarness({ state }: { state: SetupStateData }) {
  */
 function ChooseAgent({ state }: { state: SetupStateData }) {
   const agents = state.activeAgents;
+  const isMobile = useIsMobile();
   const [agentId, setAgentId] = useState<string | null>(null);
   const start = useSetupMutation(startSetup);
 
@@ -310,6 +316,7 @@ function ChooseAgent({ state }: { state: SetupStateData }) {
         }))}
         value={agentId}
         onChange={setAgentId}
+        onPick={isMobile ? (chosen) => start.mutate({ agentId: chosen }) : undefined}
         disabled={start.isPending}
       />
       <SetupFooter state={state} disabled={start.isPending}>

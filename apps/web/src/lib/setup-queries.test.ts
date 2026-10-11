@@ -2,6 +2,7 @@ import { QueryClient } from "@tanstack/react-query";
 import { describe, expect, it } from "vitest";
 
 import {
+  cachedDirectoryLogo,
   installSetupState,
   type SetupStateData,
   setupGoalDraftKey,
@@ -51,5 +52,35 @@ describe("setupGoalDraftKey", () => {
     expect(queryClient.getQueryData(setupGoalDraftKey("conn_gmail"))).toBe(
       "Show me my unread emails",
     );
+  });
+});
+
+describe("cachedDirectoryLogo", () => {
+  const entry = (slug: string, logoUrl: string | null) => ({ slug, logoUrl });
+
+  it("finds a logo in the home view's popular entries or in any page of a search", () => {
+    const client = new QueryClient();
+    client.setQueryData(["setup-directory", "home"], {
+      popular: [entry("notion", "https://logos.example/notion.png")],
+    });
+    client.setQueryData(["setup-directory", "search", "lin", null], {
+      pages: [
+        { entries: [entry("jira", null)] },
+        { entries: [entry("linear", "https://logos.example/linear.png")] },
+      ],
+      pageParams: [null, "24"],
+    });
+    expect(cachedDirectoryLogo(client, "notion")).toBe("https://logos.example/notion.png");
+    expect(cachedDirectoryLogo(client, "linear")).toBe("https://logos.example/linear.png");
+  });
+
+  it("answers null for an entry with no logo, or one the page never read", () => {
+    const client = new QueryClient();
+    client.setQueryData(["setup-directory", "search", "jira", null], {
+      pages: [{ entries: [entry("jira", null)] }],
+      pageParams: [null],
+    });
+    expect(cachedDirectoryLogo(client, "jira")).toBeNull();
+    expect(cachedDirectoryLogo(client, "airtable")).toBeNull();
   });
 });
