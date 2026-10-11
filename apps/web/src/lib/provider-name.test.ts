@@ -8,4 +8,8 @@ describe("providerLabel", () => {
     expect(providerLabel("keyring")).toBe("Keyring");
     expect(providerLabel("")).toBe("");
   });
+
+  it("reads a hyphen as a space", () => {
+    expect(providerLabel("some-broker")).toBe("Some broker");
+  });
 });

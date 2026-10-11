@@ -12,7 +12,21 @@ import {
   SETUP_STAGE_EXPLANATION,
   SETUP_STAGE_LABEL,
   type SetupBuildStage,
+  setupConnectedLine,
 } from "./setup-progress";
+
+describe("setupConnectedLine", () => {
+  it("names the integration approval the agent holds, never read-only (GRA-274)", () => {
+    expect(setupConnectedLine("Gmail", undefined)).toBe("Connected");
+    expect(setupConnectedLine("Gmail", null)).toBe("Connected");
+    expect(setupConnectedLine("Gmail", { includesDestructive: false })).toBe(
+      "Connected · Gmail allowed for this agent, destructive tools excluded",
+    );
+    expect(setupConnectedLine("Gmail", { includesDestructive: true })).toBe(
+      "Connected · Gmail allowed for this agent, destructive tools included",
+    );
+  });
+});
 
 /**
  * The lines below are the shapes `@graft/mcp`'s `acquire/job.ts` writes (and Setup's first line

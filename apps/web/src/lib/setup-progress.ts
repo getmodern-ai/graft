@@ -247,3 +247,21 @@ export function progressPart(card: Pick<ProgressCard, "kind" | "label">): number
       return 0;
   }
 }
+
+/**
+ * The building step's line under the integration's name (GRA-274): the integration-wide approval
+ * the agent holds, read from its integration approvals, never a claim the record does not hold.
+ * The tool Setup builds is read-only, but the connection is not, and the line for the
+ * integration's tools on the connect card may have allowed the integration. It names the approval
+ * and promises nothing per tool, since a tool's own answer (`askEveryCall`, a deny) still stands
+ * (Greptile on #214). No approval, or a read not yet answered (`undefined`), says only Connected.
+ */
+export function setupConnectedLine(
+  integrationName: string,
+  approval: { includesDestructive: boolean } | null | undefined,
+): string {
+  if (!approval) return "Connected";
+  return `Connected · ${integrationName} allowed for this agent, destructive tools ${
+    approval.includesDestructive ? "included" : "excluded"
+  }`;
+}

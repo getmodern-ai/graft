@@ -16,8 +16,8 @@ import {
  * with a document and no host (`render.test.ts`), and `main.ts` is only the wiring to the host.
  *
  * Six shapes, in Cando's card anatomy (ADR 0017) and the console's voice. Four answer in place:
- * the **build approval** (Allow or Deny); the **tool's first-use approval** (GRA-116: the tool's
- * description in the model's words, its hints, Allow or Deny — the ask-every-call setting stays on
+ * the **build approval** (Allow or Decline); the **tool's first-use approval** (GRA-116: the tool's
+ * description in the model's words, its hints, Allow or Decline — the ask-every-call setting stays on
  * the console's page, and the card says when it is on — and, where the server offers it, *Allow
  * every <integration> tool for this agent* beside Allow with a destructive tick off by default,
  * GRA-237); the **connection confirmation** for a
@@ -132,9 +132,22 @@ export function takesSecret(card: AskCard): boolean {
   );
 }
 
+/** The integration's name as the person reads it: the server's, else the slug (an older card). */
+export function integrationOf(card: AskCard): string {
+  return card.integrationName ?? card.vendor;
+}
+
+/** The connection named in a title, with its integration beside it when the two names differ. */
+function connectionWords(card: AskCard): string {
+  const integration = integrationOf(card);
+  return integration.toLowerCase() === card.displayName.toLowerCase()
+    ? card.displayName
+    : `${card.displayName} (${integration})`;
+}
+
 /** The title question, as the console's cards phrase it. */
 export function titleOf(card: AskCard): string {
-  const what = `${card.displayName} (${card.vendor})`;
+  const what = connectionWords(card);
   switch (card.kind) {
     case "build":
       return `Let ${card.agentName} build tools against ${what}?`;
@@ -197,7 +210,7 @@ export function toolHintsLabel(tool: NonNullable<AskCard["tool"]>): string {
 export function factsOf(card: AskCard): Array<{ label: string; value: string; mono?: boolean }> {
   const facts: Array<{ label: string; value: string; mono?: boolean }> = [
     { label: "Agent", value: card.agentName },
-    { label: "Integration", value: card.vendor },
+    { label: "Integration", value: integrationOf(card) },
     { label: "Connection", value: card.displayName },
   ];
   if (card.kind === "tool" && card.toolName) {
@@ -323,7 +336,7 @@ export function renderAsk(card: AskCard, handlers: CardHandlers, doc: Document):
         doc,
         "p",
         "ask-note",
-        "This proposal was written by the agent's model from the documentation it read. Check the hosts before confirming.",
+        "The agent proposed this connection, from documentation it read or from a ready-made tool's details. Check the hosts before confirming.",
       ),
     );
   }
@@ -572,7 +585,7 @@ export function renderAsk(card: AskCard, handlers: CardHandlers, doc: Document):
     choice.append(box, words);
     actions.before(choice);
 
-    const deny = button(doc, "Deny", "secondary", () => void submit({ allow: false }));
+    const deny = button(doc, "Decline", "secondary", () => void submit({ allow: false }));
     const every = button(doc, offer.label, "secondary", () => {
       box.disabled = true;
       void submit({ allow: true, allowVendor: true, includesDestructive: box.checked });
@@ -587,7 +600,7 @@ export function renderAsk(card: AskCard, handlers: CardHandlers, doc: Document):
   }
 
   if (card.kind === "build" || card.kind === "tool") {
-    const deny = button(doc, "Deny", "secondary", () => void submit({ allow: false }));
+    const deny = button(doc, "Decline", "secondary", () => void submit({ allow: false }));
     const allow = button(doc, "Allow", "primary", () => void submit({ allow: true }));
     buttons.push(deny, allow);
     actions.append(deny, allow);

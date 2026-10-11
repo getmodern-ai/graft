@@ -115,13 +115,48 @@ export async function setupDirectoryHome(
   directory: IntegrationDirectory,
 ): Promise<SetupDirectoryHome> {
   const home = await directory.home();
+  const popular = home.popular.slice(0, DIRECTORY_POPULAR_COUNT);
   return {
     total: home.total,
     categories: home.categories,
-    popular: home.popular.slice(0, DIRECTORY_POPULAR_COUNT).map(withStarter),
-    wall: home.wall.filter((mark) => mark.logoUrl).slice(0, DIRECTORY_WALL_COUNT),
+    popular: popular.map(withStarter),
+    wall: distinctMarks(
+      home.wall.filter((mark) => mark.logoUrl),
+      popular,
+    ).slice(0, DIRECTORY_WALL_COUNT),
     source: directory.name,
   };
+}
+
+const markName = (name: string) => name.trim().toLowerCase().replace(/\s+/g, " ");
+
+/**
+ * The logo wall without a mark drawn twice (GRA-274): a catalogue can list one app under several
+ * slugs (an app and its admin or bot variant, "Zoom" and "Zoom Admin", "Discord" and "Discord
+ * Bot"), each with the same mark, and the wall showed Zoom and Discord twice. A mark is left out
+ * when its slug, its logo or its name is one already shown, under *Popular* or earlier on the
+ * wall, or when one name is the other's followed by a further word. Order is kept.
+ */
+export function distinctMarks<M extends { slug: string; name: string; logoUrl: string | null }>(
+  marks: readonly M[],
+  shown: readonly { slug: string; name: string; logoUrl: string | null }[] = [],
+): M[] {
+  const slugs = new Set(shown.map((mark) => mark.slug));
+  const logos = new Set(shown.flatMap((mark) => (mark.logoUrl ? [mark.logoUrl] : [])));
+  const names = shown.map((mark) => markName(mark.name));
+  const kept: M[] = [];
+  for (const mark of marks) {
+    const name = markName(mark.name);
+    const variant = names.some(
+      (other) => other === name || name.startsWith(`${other} `) || other.startsWith(`${name} `),
+    );
+    if (slugs.has(mark.slug) || (mark.logoUrl && logos.has(mark.logoUrl)) || variant) continue;
+    kept.push(mark);
+    slugs.add(mark.slug);
+    if (mark.logoUrl) logos.add(mark.logoUrl);
+    names.push(name);
+  }
+  return kept;
 }
 
 /** A search, as the console reads it (`GET /api/setup/directory/search`). */

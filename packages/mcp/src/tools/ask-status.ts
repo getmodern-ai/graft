@@ -1,10 +1,12 @@
 import { ASK_STATUS_TOOL, type AskStatusResult, type AskStatusState } from "@graft/ask-card/shape";
+import { providerDisplayName } from "@graft/core";
 import type { PendingActionRow } from "@graft/db/repo/pending-action";
 
 import { ASK_EXPIRED_MESSAGE } from "../ask-answer";
 import { APP_ONLY_TOOL_META } from "../ask-card";
 import { CONNECTION_ASK_KIND, CREDENTIAL_ASK_KIND, SCOPE_ASK_KIND } from "../connection-request";
 import { toolRefusal, toolResult } from "../result";
+import { connectionWords, toolAskAnsweredSentence } from "./ask-sentence";
 import { admitCardCall, readPendingActionId } from "./card-gate";
 import type { MetaTool } from "./meta";
 
@@ -60,14 +62,15 @@ export function askStateSentence(
   const name = (key: string, fallback: string) =>
     typeof payload[key] === "string" ? String(payload[key]) : fallback;
   const vendor = name("vendor", "");
-  const what = (display: string) => (vendor ? `${display} (${vendor})` : display);
+  const what = (display: string) => connectionWords(display, vendor);
   switch (row.kind) {
     case CONNECTION_ASK_KIND: {
       const display = what(name("displayName", "The connection"));
       if (state === "declined")
         return `Declined. Nothing was connected; ${agentName} will be told.`;
       if (payload.providerConnect === "link") {
-        const provider = name("provider", "the provider");
+        const named = name("provider", "");
+        const provider = named ? providerDisplayName(named) : "the provider";
         return `Connected through ${provider}. ${display} is in ${agentName}'s scope; the account's token stays with ${provider}, and nothing was stored in Graft.`;
       }
       return `Connected. ${display} is in ${agentName}'s scope; the credential is stored and never shown again.`;
@@ -89,13 +92,12 @@ export function askStateSentence(
         : `Allowed. ${agentName} may build tools against ${display}: reads only, every write previewed, until the first real use, which asks you once.`;
     }
     case "tool": {
-      const tool = name("toolName", "the tool");
-      if (state === "declined") {
-        return `Denied. The no holds for ${agentName} until withdrawn on its page in the console.`;
-      }
-      return row.answer?.askEveryCall === true
-        ? `Allowed for this call. ${tool} asks again next time; turn that off on the agent's page in the console.`
-        : `Allowed. ${agentName} may run ${tool}; the answer holds for its next calls until withdrawn on its page in the console.`;
+      return toolAskAnsweredSentence({
+        agentName,
+        tool: name("toolName", "the tool"),
+        allow: state !== "declined",
+        askEveryCall: row.answer?.askEveryCall === true,
+      });
     }
     default:
       return state === "declined" ? "Declined." : "Answered.";

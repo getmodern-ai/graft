@@ -9,6 +9,7 @@ import {
   answerPendingAction,
   integrationNameFor,
   KEYRING_PROVIDER,
+  providerDisplayName,
   vendorApprovalSentence,
   vendorToolsSentence,
 } from "@graft/core";
@@ -25,6 +26,7 @@ import {
 } from "../connection-request";
 import type { SessionContext } from "../context";
 import { isPlainObject, toolRefusal, toolResult } from "../result";
+import { connectionWords, toolAskAnsweredSentence } from "./ask-sentence";
 import {
   admitCardCall,
   CARD_NOT_AVAILABLE,
@@ -190,7 +192,10 @@ async function answerBuildAsk(
       agent: deps.agent,
     },
   );
-  const what = `${String(row.payload.connectionName ?? "the connection")} (${String(row.payload.vendor ?? "")})`;
+  const what = connectionWords(
+    String(row.payload.connectionName ?? "the connection"),
+    String(row.payload.vendor ?? ""),
+  );
   const result: AnswerAskResult = {
     answered: true,
     sentence: answer.allow
@@ -237,11 +242,12 @@ async function answerToolAsk(
     },
   );
   const tool = String(row.payload.toolName ?? "the tool");
-  const allowed = !answer.allow
-    ? `Denied. The no holds for ${agentName} until withdrawn on its page in the console.`
-    : recorded.approval?.askEveryCall
-      ? `Allowed for this call. ${tool} asks again next time; turn that off on the agent's page in the console.`
-      : `Allowed. ${agentName} may run ${tool}; the answer holds for its next calls until withdrawn on its page in the console.`;
+  const allowed = toolAskAnsweredSentence({
+    agentName,
+    tool,
+    allow: answer.allow,
+    askEveryCall: recorded.approval?.askEveryCall === true,
+  });
   const integration = recorded.vendorApproval
     ? vendorApprovalSentence(
         typeof row.payload.integrationName === "string"
@@ -295,7 +301,10 @@ async function answerScopeAsk(
       agent: deps.agent,
     },
   );
-  const what = `${String(row.payload.displayName ?? "the connection")} (${String(row.payload.vendor ?? "")})`;
+  const what = connectionWords(
+    String(row.payload.displayName ?? "the connection"),
+    String(row.payload.vendor ?? ""),
+  );
   if (!answer.allow) {
     const result: AnswerAskResult = {
       answered: true,
@@ -356,12 +365,12 @@ async function answerConnectionAsk(
       CARD_NOT_AVAILABLE,
       `This connection is not confirmed here: ${
         payload.providerConnect === "link"
-          ? `the person signs in at the vendor on ${payload.provider}'s page, which the card opens through start_link, and the sign-in's return makes the connection`
+          ? `the person signs in at the vendor on ${providerDisplayName(payload.provider)}'s page, which the card opens through start_link, and the sign-in's return makes the connection`
           : "its credential is entered in the console, never through a card or a chat"
       }. ${CONSOLE_IS_THE_PLACE}`,
     );
   }
-  const what = `${payload.displayName} (${payload.vendor})`;
+  const what = connectionWords(payload.displayName, payload.vendor);
   const confirmed = await confirmConnectionAsk(
     ctx,
     principal,
@@ -408,7 +417,7 @@ async function answerConnectionAsk(
           }; nothing was entered and no new connection was made.`
         : `Connected. ${what} is in ${agentName}'s scope${
             confirmed.buildApproval ? ", and it may build tools against it" : ""
-          }; nothing was entered, since the vendor takes no credential.`
+          }; nothing was entered, since the integration takes no credential.`
     }${tools}`,
   };
   return toolResult(result);

@@ -8,6 +8,7 @@ import {
   describeProviders,
   KEYRING_PROVIDER,
   keyringProvider,
+  providerDisplayName,
   providerFor,
   providerLinkOf,
   providerListProblem,
@@ -225,5 +226,15 @@ describe("the provider list", () => {
     ]);
     expect(providerLinkOf(provider)?.scheme).toBe("relay");
     expect(providerLinkOf(keyringProvider)).toBeNull();
+  });
+});
+
+describe("providerDisplayName (GRA-273)", () => {
+  it("draws a provider's name capitalised, its hyphens as spaces", () => {
+    expect(providerDisplayName("broker")).toBe("Broker");
+    expect(providerDisplayName("gateway")).toBe("Gateway");
+    expect(providerDisplayName("some-broker")).toBe("Some broker");
+    expect(providerDisplayName("Broker")).toBe("Broker");
+    expect(providerDisplayName("")).toBe("");
   });
 });

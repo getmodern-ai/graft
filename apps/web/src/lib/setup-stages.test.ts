@@ -33,7 +33,12 @@ describe("setupEyebrow", () => {
   it("names the stage and its place, or the completion", () => {
     expect(setupEyebrow("connect", "gmail")).toBe("Step 4 of 4 · Connect & build");
     expect(setupEyebrow("vendor", null)).toBe("Step 2 of 4 · Integration");
-    expect(setupEyebrow("finish", "gmail")).toBe("Setup complete");
+    expect(setupEyebrow("completed", "gmail")).toBe("Setup complete");
+  });
+
+  it("claims no completion before Finish Setup is pressed (GRA-274)", () => {
+    expect(setupEyebrow("result", "gmail")).toBe("Last step · Finish");
+    expect(setupEyebrow("finish", "gmail")).toBe("Last step · Finish");
   });
 });
 

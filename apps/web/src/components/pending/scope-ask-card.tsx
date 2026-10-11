@@ -21,6 +21,7 @@ import {
   type PendingAnswer,
   pendingKeys,
 } from "@/lib/pending-action-queries";
+import { providerLabel as providerName } from "@/lib/provider-name";
 
 /**
  * An agent's ask to use a connection the person already holds (GRA-104; ADR 0006, ADR 0007). The
@@ -79,7 +80,9 @@ export function ScopeAskCard({
           <span className="text-muted-foreground">use</span>
           <span>{payload.displayName}</span>
           <Badge variant="outline">{payload.vendor}</Badge>
-          {provider === KEYRING_PROVIDER ? null : <Badge variant="outline">via {provider}</Badge>}
+          {provider === KEYRING_PROVIDER ? null : (
+            <Badge variant="outline">via {providerName(provider)}</Badge>
+          )}
         </>
       }
       where={

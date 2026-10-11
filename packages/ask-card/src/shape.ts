@@ -129,7 +129,13 @@ export type AskCard = {
   kind: PendingAskKind;
   /** The agent that asked, by the name the person gave it. */
   agentName: string;
+  /** The vendor slug: an identifier, never drawn. */
   vendor: string;
+  /**
+   * The integration as the person reads it (`@graft/core`'s `integrationNameFor`), never the slug
+   * (GRA-273). Optional on the wire so a card written before it still renders, on the slug.
+   */
+  integrationName?: string;
   /** The connection's display name, or the proposal's. */
   displayName: string;
   primaryHost: string | null;
@@ -144,7 +150,11 @@ export type AskCard = {
   /** The handoff URL, exactly as the result's `url`: what the console button opens. */
   url: string;
   answerable: boolean;
-  /** For a connection or scope ask a provider other than the keyring covers (ADR 0019): the provider's name. */
+  /**
+   * For a connection or scope ask a provider other than the keyring covers (ADR 0019): the
+   * provider's name as a person reads it (`@graft/core`'s `providerDisplayName`, GRA-273), or
+   * `keyring`, which is never drawn.
+   */
   provider?: string;
   /** How the provider connects, when the ask names one: a link provider's ask is a button, never a form. */
   providerConnect?: "form" | "link";
@@ -276,6 +286,7 @@ export function readAskCard(structuredContent: unknown): AskCard | null {
     kind: card.kind as PendingAskKind,
     agentName: card.agentName,
     vendor: card.vendor,
+    ...(typeof card.integrationName === "string" ? { integrationName: card.integrationName } : {}),
     displayName: card.displayName,
     primaryHost: typeof card.primaryHost === "string" ? card.primaryHost : null,
     hosts: card.hosts,
