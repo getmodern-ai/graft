@@ -38,7 +38,8 @@ import {
  * gets, what a click sends, what replaces the buttons afterwards — and, for the asks that send
  * the person elsewhere (GRA-117, GRA-118), what is opened and how the card settles once
  * `ask_status` says the page did its work. The host wiring is `main.ts`, which has nothing of its
- * own to test; the built page is `bundle.test.ts`.
+ * own to test; what a result does to the frame's size is `card-view.test.ts`; the built page is
+ * `bundle.test.ts`.
  */
 
 const BUILD: AskCard = {
