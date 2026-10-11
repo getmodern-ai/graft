@@ -1,0 +1,27 @@
+{
+  "name": "list-my-issues",
+  "description": "Lists the Linear issues assigned to the connected user, most recently updated first: the open ones, or completed and canceled ones too with includeCompleted. Each issue's id, identifier (like ENG-123), title, priority, url and last update, with its state, team and project. The identifier is what linear__get-issue, linear__update-issue and linear__comment-on-issue take.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "includeCompleted": {
+        "type": "boolean",
+        "default": false,
+        "description": "Include completed and canceled issues."
+      },
+      "first": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 50,
+        "default": 25,
+        "description": "Maximum number of issues to return."
+      }
+    },
+    "additionalProperties": false
+  },
+  "hosts": ["api.linear.app"],
+  "annotations": {
+    "readOnly": true,
+    "destructive": false
+  }
+}

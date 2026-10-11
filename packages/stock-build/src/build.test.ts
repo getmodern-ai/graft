@@ -320,7 +320,7 @@ describe("buildStockTool", () => {
     expect(noConnection).toMatchObject({ ok: false, failure: "connection_missing" });
     expect((noConnection as { message: string }).message).toContain("GRAFT_STOCK_LIVE_CONNECTIONS");
 
-    const notStarter = await buildStockTool(options([], { vendor: "linear" }).options);
+    const notStarter = await buildStockTool(options([], { vendor: "jira" }).options);
     expect(notStarter).toMatchObject({ ok: false, failure: "not_a_starter" });
 
     const noSuchTool = await buildStockTool(options([], { from: "nothing" }).options);

@@ -45,6 +45,24 @@ describe("parseRecording", () => {
     expect(parseRecording(JSON.stringify(search), "notion/search/recording.json")).toEqual(search);
   });
 
+  it("reads a GraphQL query as a read, with the body the module sent (GRA-260)", () => {
+    const graphql: StockRecording = {
+      ...RECORDING,
+      exchanges: [
+        {
+          kind: "read",
+          method: "POST",
+          url: "https://api.example.com/graphql",
+          body: { json: { query: "query Items($first: Int) { items(first: $first) { id } }" } },
+          response: { status: 200, headers: {}, body: { json: { data: { items: [] } } } },
+        },
+      ],
+    };
+    expect(parseRecording(JSON.stringify(graphql), "demo/list-items/recording.json")).toEqual(
+      graphql,
+    );
+  });
+
   it("refuses with a sentence naming the file and the first thing wrong", () => {
     const where = "demo/list-items/recording.json";
     expect(() => parseRecording("nope", where)).toThrow(
@@ -55,6 +73,26 @@ describe("parseRecording", () => {
         JSON.stringify({
           ...RECORDING,
           exchanges: [{ ...RECORDING.exchanges[0], method: "POST" }],
+        }),
+        where,
+      ),
+    ).toThrow(
+      `${where} exchange 1 is a read, so it is a GET or HEAD or a request the proxy's classifier calls a read`,
+    );
+    // A GraphQL mutation is a write whatever the recording calls it, and a query is a read.
+    const graphql = (query: string) => ({ json: { query } });
+    expect(() =>
+      parseRecording(
+        JSON.stringify({
+          ...RECORDING,
+          exchanges: [
+            {
+              ...RECORDING.exchanges[0],
+              method: "POST",
+              url: "https://api.example.com/graphql",
+              body: graphql("mutation { archive(id: 1) { ok } }"),
+            },
+          ],
         }),
         where,
       ),
@@ -83,6 +121,15 @@ describe("parseRecording", () => {
       parseRecording(
         JSON.stringify({
           ...RECORDING,
+          exchanges: [{ ...RECORDING.exchanges[0], body: { a: 1 } }],
+        }),
+        where,
+      ),
+    ).toThrow(`${where} exchange 1's body must carry exactly one of json, text or base64`);
+    expect(() =>
+      parseRecording(
+        JSON.stringify({
+          ...RECORDING,
           exchanges: [{ kind: "write", method: "POST", url: "/v1/notes" }],
         }),
         where,
@@ -99,6 +146,43 @@ describe("parseRecording", () => {
         where,
       ),
     ).toThrow(`${where} exchange 1's body must carry exactly one of json, text or base64`);
+  });
+});
+
+describe("a read POST (GRA-260, GRA-270)", () => {
+  const search = (over: Record<string, unknown>) =>
+    JSON.stringify({
+      ...RECORDING,
+      tool: "apollo__search-contacts",
+      exchanges: [
+        {
+          kind: "read",
+          method: "POST",
+          url: "https://api.apollo.io/api/v1/contacts/search",
+          body: { json: { per_page: 2 } },
+          response: { status: 200, headers: {}, body: { json: { contacts: [] } } },
+          ...over,
+        },
+      ],
+    });
+
+  it("is a read where the reviewed table admits it, with the body the module sent", () => {
+    const parsed = parseRecording(search({}), "apollo/search-contacts/recording.json");
+    expect(parsed.exchanges[0]).toMatchObject({
+      kind: "read",
+      method: "POST",
+      body: { json: { per_page: 2 } },
+    });
+  });
+
+  it("is refused as a read off the table, and its body is held to the body rule", () => {
+    const where = "apollo/search-contacts/recording.json";
+    expect(() =>
+      parseRecording(search({ url: "https://api.apollo.io/api/v1/contacts" }), where),
+    ).toThrow(`${where} exchange 1 is a read, so it is a GET or HEAD`);
+    expect(() => parseRecording(search({ body: { per_page: 2 } }), where)).toThrow(
+      `${where} exchange 1's body must carry exactly one of json, text or base64`,
+    );
   });
 });
 

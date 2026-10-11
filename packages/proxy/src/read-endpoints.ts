@@ -60,6 +60,13 @@ export const READ_ENDPOINTS: readonly ReadEndpoint[] = [
       "Apollo Search for Contacts (docs.apollo.io/reference/search-for-contacts): writes nothing.",
   },
   {
+    host: "api.apollo.io",
+    method: "POST",
+    path: "/api/v1/emailer_campaigns/search",
+    reason:
+      "Apollo Search for Sequences (docs.apollo.io/reference/search-for-sequences): lists the team's sequences by name, writes nothing and bills no credits.",
+  },
+  {
     host: "api.notion.com",
     method: "POST",
     path: "/v1/search",

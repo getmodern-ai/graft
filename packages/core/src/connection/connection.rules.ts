@@ -280,11 +280,10 @@ export function validateSchemeConfig(
   }
   if (scheme === "api_key_header") {
     const headerName = String(config.headerName);
+    // A bare key in `Authorization`, with no prefix, is admitted: it is how Linear takes a personal
+    // API key, and Linear refuses the same key as a `Bearer` token (GRA-269).
     if (!HEADER_NAME.test(headerName)) {
       return "The header name is letters, digits and hyphens, like x-api-key";
-    }
-    if (headerName.toLowerCase() === "authorization" && config.prefix === undefined) {
-      return "An API key in the Authorization header needs a prefix such as Bearer or Token — or use the bearer scheme";
     }
   }
   if (scheme === "oauth2_client_credentials" || scheme === "oauth_authorization_code") {

@@ -470,3 +470,55 @@ export const SCHEMES: Record<AuthScheme, SchemePlugin> = {
     },
   },
 };
+
+/**
+ * The names among `names` whose caller value the scheme replaces: `apply` run over a request that
+ * carries each name with a probe value, with a stand-in credential whose every field is a probe
+ * too, so nothing is decrypted or derived. A header `apply` only supplies when the caller left it
+ * out (Unleashed's `accept` and `content-type`) is not among them, which `headerNames`, the names
+ * that leave either way, cannot say. A configuration `apply` refuses answers `headerNames`' list,
+ * or none where that refuses too: the call is refused at run time whatever its headers. Lower case,
+ * in the given order. `acquire`'s proof reads refuse a header on it (GRA-271; Greptile on #210).
+ */
+export function schemeReplacedHeaderNames(
+  scheme: AuthScheme,
+  config: SchemeConfig,
+  names: Iterable<string>,
+): string[] {
+  const probe = "graft-probe";
+  const given = [...new Set([...names].map((name) => name.toLowerCase()))];
+  const target: SchemeTarget = {
+    url: new URL("https://scheme-probe.invalid/"),
+    headers: new Headers(),
+  };
+  for (const name of given) {
+    try {
+      target.headers.set(name, probe);
+    } catch {
+      // Not a header name: the outgoing policy's judgement refuses it before this one is asked.
+    }
+  }
+  const credential: CredentialFields = new Proxy(
+    {},
+    { get: (_, key) => (typeof key === "string" ? "graft-probe-credential" : undefined) },
+  );
+  try {
+    SCHEMES[scheme].apply(target, credential, config);
+  } catch {
+    let listed: readonly string[] = [];
+    try {
+      listed = SCHEMES[scheme].headerNames(config);
+    } catch {
+      listed = [];
+    }
+    const set = new Set(listed.map((name) => name.toLowerCase()));
+    return given.filter((name) => set.has(name));
+  }
+  return given.filter((name) => {
+    try {
+      return target.headers.get(name) !== probe;
+    } catch {
+      return false;
+    }
+  });
+}

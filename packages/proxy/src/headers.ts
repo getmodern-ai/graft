@@ -96,6 +96,36 @@ export function forwardableRequestHeaders(inbound: Headers): Headers {
 }
 
 /**
+ * The names among `names` that would not reach the vendor as the caller set them under the
+ * outgoing policy: dropped by `forwardableRequestHeaders`, or replaced by it (`accept-encoding`).
+ * Answered by running the policy itself over a probe value per name, so there is no second list
+ * to keep in step. `acquire`'s proof reads refuse a header on it (GRA-271), since a read proven
+ * with a header the proxy strips proves nothing about the header. Lower case, in the given order.
+ */
+export function unforwardedRequestHeaderNames(names: Iterable<string>): string[] {
+  const probe = "graft-probe";
+  const inbound = new Headers();
+  const given: string[] = [];
+  for (const name of names) {
+    const lower = name.toLowerCase();
+    given.push(lower);
+    try {
+      inbound.set(lower, probe);
+    } catch {
+      // Not a header name at all, so it cannot reach the vendor either: `get` below throws too.
+    }
+  }
+  const forwarded = forwardableRequestHeaders(inbound);
+  return [...new Set(given)].filter((name) => {
+    try {
+      return forwarded.get(name) !== probe;
+    } catch {
+      return true;
+    }
+  });
+}
+
+/**
  * The response-header namespace that is the proxy's alone. Every `x-graft-*` header the caller
  * reads off an answer — `x-graft-dry-run`, `x-graft-redacted`, `x-graft-refusal` — is a statement
  * *by the proxy* about what it did, and the runner and the acquire job act on those statements

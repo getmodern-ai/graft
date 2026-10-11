@@ -530,6 +530,171 @@ describe("recordStockProof", () => {
     expect((recorded.recording.result as { first: string }).first).not.toBe("graft");
   });
 
+  it("records a search the reviewed table admits as a read, its body over the scrubbed input (GRA-270)", async () => {
+    const SEARCH = `export default async (input: Input, ctx: Context) => {
+  const res = await ctx.fetch("/api/v1/contacts/search", {
+    host: "api.apollo.io",
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ q_keywords: input.query, per_page: 2 }),
+  });
+  if (!res.ok) throw new Error(\`POST /api/v1/contacts/search \${res.status}\`);
+  const body = (await res.json()) as { contacts: { id: string; name: string }[] };
+  return { names: body.contacts.map((contact) => contact.name) };
+};
+`;
+    const search: StockWorkspaceTool = {
+      ...tool,
+      vendor: "apollo",
+      name: "search-contacts",
+      inputSchema: {
+        type: "object",
+        properties: { query: { type: "string" } },
+        required: ["query"],
+        additionalProperties: false,
+      },
+      hosts: ["api.apollo.io"],
+      testInput: { query: "Acme Holdings" },
+      annotations: { readOnly: true, destructive: false },
+      files: [{ path: "index.ts", content: SEARCH }],
+    };
+    const seen: UpstreamRequest[] = [];
+    const recorded = await recordStockProof(search, {
+      connection: {
+        scheme: "api_key_header",
+        schemeConfig: { headerName: "x-api-key" },
+        credential: { apiKey: TOKEN },
+      },
+      upstreamFetch: async (request) => {
+        seen.push(request);
+        return Response.json({
+          contacts: [
+            { id: "66e9e215ece19801b219997f", name: "Alice Liddell" },
+            { id: "66e9e215ece19801b2199980", name: "Bruce Wayne" },
+          ],
+        });
+      },
+    });
+    if (!recorded.ok) throw new Error(recorded.problems.join("\n"));
+    const { recording } = recorded;
+
+    // The search reached the vendor once, as a read, and is recorded as one with its body.
+    expect(seen.map((request) => request.method)).toEqual(["POST"]);
+    const [read] = recording.exchanges;
+    expect(read).toMatchObject({
+      kind: "read",
+      method: "POST",
+      url: "https://api.apollo.io/api/v1/contacts/search",
+      response: { status: 200 },
+    });
+    // The body is the second run's, over the scrubbed input: the query is the placeholder.
+    const query = recording.input.query as string;
+    expect(query).not.toBe("Acme Holdings");
+    expect(read).toMatchObject({ body: { json: { q_keywords: query, per_page: 2 } } });
+    const text = JSON.stringify(recording);
+    for (const planted of ["Acme Holdings", "Alice Liddell", "Bruce Wayne", TOKEN]) {
+      expect(text).not.toContain(planted);
+    }
+
+    const replay = await proveReplay({ ...search, testInput: recording.input }, recording);
+    expect(replay.problems).toEqual([]);
+    expect(replay.reachedVendor).toMatchObject([{ method: "POST" }]);
+  });
+
+  it("records a GraphQL query as a read with its body, scrubbed, and replays it by the body (GRA-260)", async () => {
+    const GRAPHQL = `const VIEWER = "query Viewer { viewer { id name } }";
+const ISSUES = "query Issues($assignee: ID!, $first: Int!) { issues(filter: { assignee: { id: { eq: $assignee } } }, first: $first) { nodes { title } } }";
+const COMMENT = "mutation Comment($body: String!) { commentCreate(input: { body: $body }) { success } }";
+
+export default async (input: Input, ctx: Context) => {
+  const post = (body: unknown) =>
+    ctx.fetch("/graphql", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  const me = (await (await post({ query: VIEWER })).json()) as {
+    data: { viewer: { id: string; name: string } };
+  };
+  const res = await post({
+    query: ISSUES,
+    variables: { assignee: me.data.viewer.id, first: input.first },
+  });
+  const issues = (await res.json()) as { data: { issues: { nodes: { title: string }[] } } };
+  const titles = issues.data.issues.nodes.map((node) => node.title);
+  const noted = await post({ query: COMMENT, variables: { body: titles[0] ?? "none" } });
+  return { who: me.data.viewer.name, titles, noted: noted.status };
+};
+`;
+    const graphqlTool: StockWorkspaceTool = {
+      ...tool,
+      name: "graphql-issues",
+      inputSchema: {
+        type: "object",
+        properties: { first: { type: "integer", minimum: 1, maximum: 50 } },
+        required: ["first"],
+        additionalProperties: false,
+      },
+      testInput: { first: 5 },
+      files: [{ path: "index.ts", content: GRAPHQL }],
+    };
+    const seen: { method: string; body: unknown }[] = [];
+    const recorded = await recordStockProof(graphqlTool, {
+      connection: { scheme: "bearer", schemeConfig: {}, credential: { token: TOKEN } },
+      upstreamFetch: async (request: UpstreamRequest) => {
+        const body = JSON.parse(new TextDecoder().decode(request.body ?? new Uint8Array()));
+        seen.push({ method: request.method, body });
+        if (String(body.query).startsWith("query Viewer")) {
+          return Response.json({ data: { viewer: { id: "usr-7f3a9c21", name: "Alice Liddell" } } });
+        }
+        return Response.json({
+          data: { issues: { nodes: [{ title: "Acme secret merger plans" }] } },
+        });
+      },
+    });
+    if (!recorded.ok) throw new Error(recorded.problems.join("\n"));
+    const { recording } = recorded;
+
+    // The two queries reached the vendor; the mutation stopped at the preview.
+    expect(seen.map((request) => request.method)).toEqual(["POST", "POST"]);
+    expect(recording.exchanges.map((exchange) => `${exchange.kind} ${exchange.method}`)).toEqual([
+      "read POST",
+      "read POST",
+      "write POST",
+    ]);
+    const text = JSON.stringify(recording);
+    for (const planted of ["usr-7f3a9c21", "Alice Liddell", "Acme secret merger plans"]) {
+      expect(text).not.toContain(planted);
+    }
+    // The second query names the scrubbed viewer's id, as the module computed it over the scrub.
+    const [viewer, issues] = recording.exchanges;
+    const scrubbedId = (
+      viewer as { response: { body: { json: { data: { viewer: { id: string } } } } } }
+    ).response.body.json.data.viewer.id;
+    expect(issues).toMatchObject({
+      body: { json: { variables: { assignee: scrubbedId, first: 5 } } },
+    });
+
+    const replay = await proveReplay(graphqlTool, recording);
+    expect(replay.problems).toEqual([]);
+    expect(replay.reachedVendor.map((request) => request.method)).toEqual(["POST", "POST"]);
+
+    // A replay whose module asks another query than the recording's is refused by the body.
+    const changed = await proveReplay(
+      {
+        ...graphqlTool,
+        files: [
+          {
+            path: "index.ts",
+            content: GRAPHQL.replace("viewer { id name }", "viewer { id name email }"),
+          },
+        ],
+      },
+      recording,
+    );
+    expect(changed.problems.join("\n")).toContain("its read 1 disagrees with the recording");
+  });
+
   it("refuses a keyed starter with no connection", async () => {
     const recorded = await recordStockProof(tool, { connection: null });
     expect(recorded).toEqual({

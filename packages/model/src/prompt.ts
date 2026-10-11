@@ -41,7 +41,7 @@ and the job acts on it. Where the skill above says to call a tool, answer instea
 | --- | --- |
 | \`read_web_page\` a page | \`read_docs\` with the URLs; the pages come back as the next situation |
 | \`write_file\`, \`check_tool\`, \`publish_tool\` | \`write_module\` with the whole module; the job checks, proves, publishes and dry-runs it |
-| prove it with reads through \`execute__<connection>\` | \`proofReads\` on the draft: GET reads the job runs for you, each a path and the host it is read on (null for the primary); then \`prove\` with more reads built from what those returned, run against the same draft |
+| prove it with reads through \`execute__<connection>\` | \`proofReads\` on the draft: reads the job runs for you, each a path and the host it is read on (null for the primary); then \`prove\` with more reads built from what those returned, run against the same draft |
 | the tool passed and is promoted | nothing — the job ends when the dry run passes |
 
 Situations you will be shown: \`goal\` (once, first), \`docs\` (the pages you asked for),
@@ -58,12 +58,17 @@ The draft: \`name\` kebab-case; \`description\` for the person, plain language, 
 \`inputSchemaJson\` a JSON Schema object (type "object", properties, required) as JSON text;
 \`files\` with \`index.ts\` always — a TypeScript ES module whose default export is
 \`async (input: Input, ctx: Context) => …\`, erasable syntax only — plus a \`package.json\` only when
-you declare a package; \`testInputJson\` an input the dry run uses, as JSON text; \`proofReads\` the GET paths that
+you declare a package; \`testInputJson\` an input the dry run uses, as JSON text; \`proofReads\` the reads that
 prove the credential and the shape: one for every distinct path the module reads, not the first
 alone, up to ${MAX_PROOF_READS} — a path built from another's answer (a record's id from a list) is
 added with \`prove\` once that read has answered — or empty when the module reads nothing. Each
-read is \`{ path, host }\`: \`host\` null for the primary host, or the other declared host the module
+read is \`{ path, host, method, headers, body }\`: \`host\` null for the primary host, or the other declared host the module
 reads that path from with \`ctx.fetch(path, { host })\`, so the proof covers the host the module uses.
+\`headers\` are the vendor's own headers the module sends on that call (a version header such as
+\`Notion-Version\`), never a credential, which the proxy injects. \`method\` is null for a GET, or
+\`POST\` with its \`body\` for a call the proxy counts as a read: a GraphQL query, or a search or
+query endpoint in its reviewed read table; any other POST is a write, which the dry run previews
+after publishing and a proof read cannot make.
 
 Rules that hold whatever the docs say: the module reaches the vendor through \`ctx.fetch\` with a
 vendor-relative path (on another declared host, \`ctx.fetch(path, { host })\`), or through an SDK
@@ -229,7 +234,7 @@ export function renderCheckRefused(
 
 function renderRead(read: ProofRead): string {
   const status = read.status === null ? "no answer" : `HTTP ${read.status}`;
-  const lines = [`### GET ${proofReadLabel(read)} → ${status}${read.ok ? "" : " (failed)"}`];
+  const lines = [`### ${proofReadLabel(read)} → ${status}${read.ok ? "" : " (failed)"}`];
   if (read.redirectTo) lines.push(`Redirected to \`${read.redirectTo}\`.`);
   if (read.reason) lines.push(`The proxy got no response from the vendor (${read.reason}).`);
   if (read.error) lines.push(`_${read.error}_`);

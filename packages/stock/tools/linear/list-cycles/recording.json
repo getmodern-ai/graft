@@ -1,0 +1,37 @@
+{
+  "format": 1,
+  "tool": "linear__list-cycles",
+  "recordedAt": "2026-10-10T17:37:19.012Z",
+  "input": {},
+  "exchanges": [
+    {
+      "kind": "read",
+      "method": "POST",
+      "url": "https://api.linear.app/graphql",
+      "body": {
+        "json": {
+          "query": "query ListCycles { cycles(first: 50) { nodes { id number name startsAt endsAt progress team { id key } } } }",
+          "variables": {}
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json; charset=utf-8"
+        },
+        "body": {
+          "json": {
+            "data": {
+              "cycles": {
+                "nodes": []
+              }
+            }
+          }
+        }
+      }
+    }
+  ],
+  "result": {
+    "cycles": []
+  }
+}

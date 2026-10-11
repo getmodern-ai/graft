@@ -1,0 +1,14 @@
+{
+  "name": "list-email-accounts",
+  "description": "Lists the email accounts (mailboxes) linked to your Apollo team, which a sequence sends from. Spends no Apollo credits. Answers each one's id, its address, its user, its type, and whether it is active and the default.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {},
+    "additionalProperties": false
+  },
+  "hosts": ["api.apollo.io"],
+  "annotations": {
+    "readOnly": true,
+    "destructive": false
+  }
+}
