@@ -75,6 +75,16 @@ function defaultExportFunction(source: ts.SourceFile): ExportedFunction | null {
       if (ts.isArrowFunction(inner) || ts.isFunctionExpression(inner)) return inner;
       if (ts.isIdentifier(inner)) return localFunction(source, inner.text);
     }
+    // `export { run as default }`, the form `module-check.core.ts`'s `analyseDefaultExport` follows.
+    if (
+      ts.isExportDeclaration(statement) &&
+      !statement.moduleSpecifier &&
+      statement.exportClause &&
+      ts.isNamedExports(statement.exportClause)
+    ) {
+      const asDefault = statement.exportClause.elements.find((e) => e.name.text === "default");
+      if (asDefault) return localFunction(source, (asDefault.propertyName ?? asDefault.name).text);
+    }
   }
   return null;
 }

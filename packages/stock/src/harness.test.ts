@@ -318,6 +318,20 @@ describe("the harness over required inputs", () => {
     }
   });
 
+  it("follows every form of the default export (Greptile on #216)", () => {
+    const body = READ_MODULE.replace("input.q", 'input.q ?? "red"').replace(
+      "export default async (input: Input, ctx: Context) => {",
+      "",
+    );
+    for (const module of [
+      `const run = async (input: Input, ctx: Context) => {${body}\nexport { run as default };\n`,
+      `const run = async (input: Input, ctx: Context) => {${body}\nexport default run;\n`,
+      `export default async function run(input: Input, ctx: Context) {${body.replace(/};\n$/, "}\n")}`,
+    ]) {
+      expect(proveOptionalDefaults(fixture({ module }))).toHaveLength(1);
+    }
+  });
+
   it("reads a destructuring default as a fallback", () => {
     for (const module of [
       READ_MODULE.replace("(input: Input,", '({ q = "red" }: Input,').replace("input.q", "q"),
