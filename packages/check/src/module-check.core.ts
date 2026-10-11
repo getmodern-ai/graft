@@ -4,6 +4,7 @@ import { posix } from "node:path";
 import ts from "typescript6";
 
 import { type ToolAnnotations, UNKNOWN_ANNOTATIONS } from "./annotations.ts";
+import { requiredWithDefault } from "./input-schema.ts";
 import { declarationsOf, isDestructiveCall, isReadCall, stringifyTampered } from "./read-call.ts";
 
 /**
@@ -89,6 +90,7 @@ export const REFUSAL_RULES = [
   "entry-missing",
   "budget",
   "check-failed",
+  "schema-required-default",
 ] as const;
 
 export const ADVICE_RULES = [
@@ -351,6 +353,9 @@ const OPTIONS: ts.CompilerOptions = {
 
 /* -------------------------------------- the check -------------------------------------- */
 
+/** The `file` a diagnostic about the input schema names: it is no file of the module's. */
+export const INPUT_SCHEMA_FILE = "inputSchema";
+
 /**
  * The whole check, synchronously, in whichever thread calls it. `module-check.ts` calls it from a
  * worker so a pathological module cannot hold the server; the tests call it directly.
@@ -373,6 +378,15 @@ export function checkModuleSync(input: ModuleCheckInput): ModuleCheckResult {
 
   const schema = objectOrNull(input.inputSchema);
   const declaredFields = schema ? Object.keys(propertiesOf(schema)) : [];
+  // A rule over the schema, not the code: the validator refuses a call that omits a required
+  // field before its default could apply, and nothing fills a default in (`input-schema.ts`).
+  for (const found of requiredWithDefault(schema)) {
+    const fallback = `input.${found.path.replaceAll("[]", "[i]")} ?? ${JSON.stringify(found.default)}`;
+    bag.plain("schema-required-default", INPUT_SCHEMA_FILE, {
+      message: `The input schema lists ${found.path} as required and gives it a default of ${JSON.stringify(found.default)}, so a call that leaves it out is refused before the default can apply; nothing fills a default in for the module.`,
+      hint: `Drop ${found.field} from required, and apply the default where the module reads it: ${fallback}.`,
+    });
+  }
   const entryIsTs = TS_EXTENSIONS.some((ext) => entryRel.endsWith(ext));
   const exported = analyseDefaultExport(entrySource);
   const exportPos = exported?.pos ?? 0;

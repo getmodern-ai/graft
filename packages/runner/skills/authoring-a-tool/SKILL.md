@@ -444,7 +444,9 @@ passes.
 Write the description for the person. The approval shows it as your words, marked as written by the
 agent's model, so say what the tool does and what it needs in plain language: *Creates an order in
 Demo Orders for one item and a quantity.* The input schema is `type: "object"` with `properties`
-and `required`; every call, the agent's included, is validated against it.
+and `required`; every call, the agent's included, is validated against it. Nothing fills a
+`default` in, so a field with one stays out of `required` and the module applies it
+(`input.limit ?? 10`); the check refuses a required field that carries a default.
 
 ## The first write
 

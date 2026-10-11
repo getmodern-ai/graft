@@ -7,6 +7,7 @@ import { describe, expect, it } from "vitest";
 import {
   jsonTextNotes,
   proveCheck,
+  proveOptionalDefaults,
   proveReplay,
   proveTestInput,
   readStockRecording,
@@ -51,6 +52,10 @@ describe(`every stock tool (${mode.kind})`, () => {
 
       it("takes its test input", () => {
         expect(proveTestInput(tool)).toEqual([]);
+      });
+
+      it("requires no input it defaults or falls back on", () => {
+        expect(proveOptionalDefaults(tool)).toEqual([]);
       });
 
       it("replays its recording: the recorded reads, writes stopped at the preview, the recorded result", async () => {
@@ -240,6 +245,76 @@ describe("the harness over a read POST (GRA-270)", () => {
     expect(report.problems[0]).toBe(
       `stock tool demo__search-contacts: its read 1 disagrees with the recording: it made POST ${SEARCH_HOST}/api/v1/contacts/search, the recording holds POST ${SEARCH_HOST}/api/v1/contacts/search`,
     );
+  });
+});
+
+describe("the harness over required inputs", () => {
+  it("passes a tool whose required inputs it cannot do without", () => {
+    expect(proveOptionalDefaults(readTool)).toEqual([]);
+  });
+
+  it("fails a required input with a default, as gmail__search-messages had", () => {
+    const tool = fixture({
+      module: READ_MODULE,
+      inputSchema: {
+        type: "object",
+        properties: { q: { type: "string", default: "in:inbox" } },
+        required: ["q"],
+      },
+    });
+    expect(proveOptionalDefaults(tool)).toEqual([
+      'stock tool demo__list-items: its input schema requires q and gives it a default of "in:inbox"; drop it from required and apply the default in the module',
+    ]);
+  });
+
+  it("fails a required input the module falls back on", () => {
+    for (const read of [
+      'input.q ?? "red"',
+      'input?.q || "red"',
+      'input["q"] ?? "red"',
+      '(() => input.q ?? "red")()',
+    ]) {
+      const tool = fixture({
+        module: READ_MODULE.replace("encodeURIComponent(input.q)", `encodeURIComponent(${read})`),
+      });
+      expect(proveOptionalDefaults(tool)).toEqual([
+        "stock tool demo__list-items: its input schema requires q, but the module falls back when it is absent; drop it from required, and declare the fallback as its default",
+      ]);
+    }
+    const assigned = fixture({
+      module: READ_MODULE.replace(
+        "export default async (input: Input, ctx: Context) => {",
+        'export default async (input: Input, ctx: Context) => {\n  const q = input.q ?? "red";',
+      ),
+    });
+    expect(proveOptionalDefaults(assigned)).toHaveLength(1);
+  });
+
+  it("does not read a comparison as a fallback", () => {
+    for (const read of [
+      'id === input.q || "red"',
+      'id !== input.q || "red"',
+      'n > input.q || "red"',
+    ]) {
+      const tool = fixture({
+        module: READ_MODULE.replace(
+          "encodeURIComponent(input.q)",
+          `encodeURIComponent(String((id: string, n: string) => ${read}))`,
+        ),
+      });
+      expect(proveOptionalDefaults(tool)).toEqual([]);
+    }
+  });
+
+  it("names nothing for a tool with no required list", () => {
+    const tool = fixture({
+      module: READ_MODULE.replace(
+        "encodeURIComponent(input.q)",
+        'encodeURIComponent(input.q ?? "red")',
+      ),
+      inputSchema: { type: "object", properties: { q: { type: "string", default: "red" } } },
+    });
+    expect(proveOptionalDefaults(tool)).toEqual([]);
   });
 });
 

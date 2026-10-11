@@ -1,3 +1,5 @@
+import { readFile } from "node:fs/promises";
+
 import { describe, expect, it } from "vitest";
 
 /**
@@ -373,5 +375,22 @@ describe("gmail__get-thread", () => {
     expect(result.attachments).toContainEqual(
       expect.objectContaining({ attachmentId: "att_1", filename: "" }),
     );
+  });
+});
+
+describe("gmail__search-messages", () => {
+  it("takes no input, searching the inbox for ten messages (GRA-279)", async () => {
+    const manifestUrl = new URL("../tools/gmail/search-messages/manifest.json", import.meta.url);
+    const manifest = JSON.parse(await readFile(manifestUrl, "utf8")) as {
+      inputSchema: { required?: string[] };
+    };
+    expect(manifest.inputSchema.required ?? []).toEqual([]);
+
+    const search = await gmailTool("search-messages");
+    const { ctx, calls } = fakeGmail(() => ({ messages: [], resultSizeEstimate: 0 }));
+    expect(await search({}, ctx)).toEqual({ messages: [], resultSizeEstimate: 0 });
+    expect(calls.map((call) => call.path)).toEqual([
+      "/users/me/messages?q=in%3Ainbox&maxResults=10",
+    ]);
   });
 });

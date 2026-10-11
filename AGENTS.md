@@ -779,7 +779,7 @@ only through `redactRecording`) and, before that, **scrubs of every vendor value
 second dry run over the scrubbed answers that the recorded requests and result are taken from, then
 `survivingValuesOf` as the last check; no opt-out, and `test-input.json` is the scrubbed input),
 formats it with the repository's Biome, proves it with the
-harness's three proofs as CI will, and only then writes `tools/<vendor>/<name>/`. `--from` hands the
+harness's four proofs as CI will, and only then writes `tools/<vendor>/<name>/`. `--from` hands the
 model the current module through the opening context's hints (past `acquire`'s 4,000 characters)
 and writes under the current name in its place; without it an existing tool is refused. A failure
 writes nothing and prints the job's failure and last diagnostics, redacted by the credential's

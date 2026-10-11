@@ -1,6 +1,7 @@
 /* biome-ignore-all lint/suspicious/noTemplateCurlyInString: the fixtures are module source text, and a template placeholder inside a plain string is exactly what a module holds. */
 import { describe, expect, it } from "vitest";
 
+import { requiredWithDefault } from "./input-schema";
 import {
   checkModule,
   dependenciesOf,
@@ -1662,6 +1663,82 @@ describe("advice", () => {
     );
     expect(noSchema.refusals).toEqual([]);
     expect(noSchema.advice.map((a) => a.rule)).toEqual(["no-input-schema"]);
+  });
+});
+
+describe("the input schema", () => {
+  // The stock gmail__search-messages listed query and maxResults as required with defaults and
+  // refused `{}` in production: nothing fills a default in, so the validator refused first.
+  const SEARCH = {
+    type: "object",
+    properties: {
+      query: { type: "string", default: "in:inbox" },
+      maxResults: { type: "integer", default: 10 },
+    },
+    required: ["query", "maxResults"],
+  };
+  const READS_BOTH =
+    "export default async (input: Input, ctx: Context) => ({ ok: (await ctx.fetch(`/m?q=${input.query}&n=${input.maxResults}`)).ok });";
+
+  it("refuses a required property that carries a default, saying how to fix it", () => {
+    const result = check({ "index.ts": READS_BOTH }, { schema: SEARCH });
+    expect(result.refusals).toEqual([
+      {
+        rule: "schema-required-default",
+        file: "inputSchema",
+        line: 1,
+        column: 1,
+        text: "",
+        message:
+          'The input schema lists query as required and gives it a default of "in:inbox", so a call that leaves it out is refused before the default can apply; nothing fills a default in for the module.',
+        hint: 'Drop query from required, and apply the default where the module reads it: input.query ?? "in:inbox".',
+      },
+      expect.objectContaining({
+        rule: "schema-required-default",
+        hint: "Drop maxResults from required, and apply the default where the module reads it: input.maxResults ?? 10.",
+      }),
+    ]);
+  });
+
+  it("finds one nested in an object, an array's items and a branch", () => {
+    const nested = {
+      type: "object",
+      properties: {
+        filter: {
+          type: "object",
+          properties: { limit: { type: "integer", default: 5 } },
+          required: ["limit"],
+        },
+        rows: {
+          type: "array",
+          items: {
+            anyOf: [
+              {
+                type: "object",
+                properties: { kind: { type: "string", default: "text" } },
+                required: ["kind"],
+              },
+            ],
+          },
+        },
+      },
+    };
+    expect(requiredWithDefault(nested).map((found) => found.path)).toEqual([
+      "filter.limit",
+      "rows[].kind",
+    ]);
+  });
+
+  it("passes the same schema with the defaulted fields optional and applied in the module", () => {
+    const result = check(
+      {
+        "index.ts":
+          'export default async (input: Input, ctx: Context) => ({ ok: (await ctx.fetch(`/m?q=${input.query ?? "in:inbox"}&n=${input.maxResults ?? 10}`)).ok });',
+      },
+      { schema: { ...SEARCH, required: [] } },
+    );
+    expect(result.refusals).toEqual([]);
+    expect(requiredWithDefault({ ...SEARCH, required: [] })).toEqual([]);
   });
 });
 

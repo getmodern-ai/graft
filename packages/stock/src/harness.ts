@@ -2,6 +2,7 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 
+import { requiredWithDefault } from "@graft/check";
 import { redactText } from "@graft/core";
 import {
   createUpstreamFetch,
@@ -37,19 +38,20 @@ import { STOCK_DIR, type StockWorkspaceTool } from "./workspace";
 
 /**
  * The stock harness (ADR 0025; GRA-240): what proves a stock tool on every pull request, with no
- * secret and no vendor reached. Three proofs, each answering the sentences of what failed, every one
+ * secret and no vendor reached. Four proofs, each answering the sentences of what failed, every one
  * opening `stock tool <vendor>__<name>:` so a red run names the tool and the cause:
  *
  *  - `proveCheck`: the check passes the module against its own schema, and the annotations it
  *    derives are the ones the manifest declares;
  *  - `proveTestInput`: the input schema compiles and the test input is valid input;
+ *  - `proveOptionalDefaults`: no input the tool defaults or falls back on is required;
  *  - `proveReplay`: the module runs, as a dry run, by the real runner through the real proxy, whose
  *    vendor is the recording (`RECORDING.md`). Each read must be a recorded read not yet made (the
  *    first such, in the order the module issued them, so parallel reads replay); its
  *    writes stop at the proxy's preview, never reach the vendor, and must be the recording's; and its
  *    result must be the recording's. In live mode (`mode.ts`) the reads go to the vendor instead.
  *
- * `harness.test.ts` runs the three over every tool in the workspace.
+ * `harness.test.ts` runs the four over every tool in the workspace.
  */
 
 export type ProofProblems = string[];
@@ -92,6 +94,46 @@ export function proveTestInput(tool: StockWorkspaceTool): ProofProblems {
   return verdict.valid
     ? []
     : [say(`its test input fails its input schema: ${verdict.errorMessage ?? "invalid"}`)];
+}
+
+/**
+ * No input the tool can do without is required: a property with a `default`, or one the module
+ * falls back on (`input.x ?? …`, `input.x || …`), is optional in the schema. A run validates without
+ * filling defaults in (`@graft/mcp`'s `schema.ts`), so a required one refuses the call that omits it
+ * before the default could apply; the stock `gmail__search-messages` refused `{}` that way. The first
+ * half is the check's own refusal (`@graft/check`'s `requiredWithDefault`); the second reads the
+ * module's text, so it is best effort and catches the plain shapes only.
+ */
+export function proveOptionalDefaults(tool: StockWorkspaceTool): ProofProblems {
+  const say = sayer(tool);
+  const problems: ProofProblems = requiredWithDefault(tool.inputSchema).map((found) =>
+    say(
+      `its input schema requires ${found.path} and gives it a default of ${JSON.stringify(found.default)}; drop it from required and apply the default in the module`,
+    ),
+  );
+  const required = tool.inputSchema.required;
+  if (!Array.isArray(required)) return problems;
+  const source = tool.files
+    .filter((file) => /\.(?:ts|mjs)$/.test(file.path))
+    .map((file) => file.content)
+    .join("\n");
+  for (const field of required) {
+    if (typeof field !== "string") continue;
+    const name = field.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    // The read must be the left operand itself: `id === input.channel || …` is a comparison, not a
+    // fallback (slack__post-message).
+    const fallback = new RegExp(
+      `(?<!(?:[=!]=|[^=][<>]|[<>]=)\\s*)\\binput(?:\\??\\.(?:${name})|\\??\\.?\\[\\s*["'](?:${name})["']\\s*\\])\\s*(?:\\?\\?|\\|\\|)`,
+    );
+    if (fallback.test(source)) {
+      problems.push(
+        say(
+          `its input schema requires ${field}, but the module falls back when it is absent; drop it from required, and declare the fallback as its default`,
+        ),
+      );
+    }
+  }
+  return problems;
 }
 
 /** The tool's recording off the workspace, or a sentence saying why there is none to replay. */
