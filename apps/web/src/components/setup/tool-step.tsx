@@ -12,6 +12,7 @@ import { TaskPicker } from "@/components/setup/task-picker";
 import { useSetupMutation } from "@/components/setup/use-setup-mutation";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import { useIsMobile } from "@/hooks/use-mobile";
 import { ApiError } from "@/lib/api";
 import {
   chooseSetupStarter,
@@ -53,10 +54,11 @@ export function ToolStep({
   // A build the record still holds while it runs (GRA-215): the server refuses `job_running`, and
   // the person is asked before it is left behind (Greptile on #201).
   const [confirming, setConfirming] = useState(false);
-  const submit = (discardJob: boolean) =>
+  const isMobile = useIsMobile();
+  const submit = (discardJob: boolean, goal = trimmed) =>
     choose.mutate(
       {
-        goal: trimmed,
+        goal,
         ...(app ? { slug: app.slug } : {}),
         ...(discardJob ? { discardJob: true } : {}),
       },
@@ -114,6 +116,8 @@ export function ToolStep({
           onChange={setTask}
           integrationName={name}
           disabled={busy}
+          // A tapped task builds at once on a phone (GRA-267), where a model can build it.
+          onPickCard={isMobile && available ? (picked) => submit(false, picked) : undefined}
         />
         <SetupFooter
           state={state}

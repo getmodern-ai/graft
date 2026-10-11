@@ -9,6 +9,7 @@ import { CheckCircleIcon, InfoIcon } from "@/components/icons";
 import { Loader } from "@/components/loader";
 import { RetryNotice } from "@/components/retry-notice";
 import { useSetupBack } from "@/components/setup/setup-footer";
+import { SetupOnPhone } from "@/components/setup/setup-on-phone";
 import { SetupStepView } from "@/components/setup/setup-step";
 import { SetupEyebrowContext } from "@/components/setup/setup-step-header";
 import { SetupStepper, SetupStepperCompact } from "@/components/setup/setup-stepper";
@@ -168,6 +169,7 @@ function SetupRoute() {
                 <AlertDescription>{SETUP_FROM_CARD.message}</AlertDescription>
               </Alert>
             ) : null}
+            {state && ["harness", "vendor", "goal"].includes(step) ? <SetupOnPhone /> : null}
             {state ? (
               <SetupStepView
                 state={state}

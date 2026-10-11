@@ -70,7 +70,7 @@ export function SetupChoice<T extends string>({
             className={cn(
               "relative flex cursor-pointer gap-3 rounded-lg border bg-card p-4 text-left transition-colors hover:bg-muted/50",
               layout === "row" ? "items-center" : "flex-col items-start",
-              variant === "task" ? "min-h-24 items-start" : null,
+              variant === "task" ? "items-start md:min-h-24" : null,
               option.dashed ? "border-dashed bg-muted/50" : null,
               "has-disabled:cursor-not-allowed has-disabled:opacity-50",
               "has-checked:border-primary has-checked:bg-primary/5",

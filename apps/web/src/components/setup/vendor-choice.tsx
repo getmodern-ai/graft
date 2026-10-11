@@ -13,6 +13,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
+import { useIsMobile } from "@/hooks/use-mobile";
 import { pendingKeys } from "@/lib/pending-action-queries";
 import {
   chooseSetupStarter,
@@ -97,17 +98,18 @@ export function VendorChoice({
       },
     );
 
-  const go = (discardJob: boolean) => {
-    if (!picked) return;
-    if (picked === ANOTHER_VENDOR) {
+  const isMobile = useIsMobile();
+  const go = (discardJob: boolean, chosen = picked) => {
+    if (!chosen) return;
+    if (chosen === ANOTHER_VENDOR) {
       setDiscard(discardJob);
       setConfirming(false);
       if (madeConnectionId) handOff(madeConnectionId);
       else setFormOpen(true);
-    } else if (picked.starterId) {
-      choose.mutate({ starterId: picked.starterId });
+    } else if (chosen.starterId) {
+      choose.mutate({ starterId: chosen.starterId });
     } else {
-      onChooseApp(picked);
+      onChooseApp(chosen);
     }
   };
 
@@ -202,7 +204,8 @@ export function VendorChoice({
             </span>
           </div>
           {home.data && home.data.categories.length > 0 && !query ? (
-            <div className="flex flex-wrap items-center gap-1">
+            // One scrolling row on a phone, so the cards are on the first screen (GRA-267).
+            <div className="-mx-4 flex items-center gap-1 overflow-x-auto px-4 md:mx-0 md:flex-wrap md:overflow-visible md:px-0">
               <Chip active={category === null} onClick={() => setCategory(null)}>
                 All
               </Chip>
@@ -248,13 +251,21 @@ export function VendorChoice({
               layout="stack"
               options={options}
               value={chosenValue}
-              onChange={(value) =>
-                setPicked(
+              onChange={(value) => {
+                const chosen =
                   value === ANOTHER_VENDOR
                     ? ANOTHER_VENDOR
-                    : (entries.find((entry) => entry.slug === value) ?? null),
-                )
-              }
+                    : (entries.find((entry) => entry.slug === value) ?? null);
+                setPicked(chosen);
+                // A tap is the choice on a phone (GRA-267); a held job still asks first.
+                if (
+                  isMobile &&
+                  chosen &&
+                  !(chosen === ANOTHER_VENDOR && choiceLeavesJob(ANOTHER_VENDOR, held))
+                ) {
+                  go(false, chosen);
+                }
+              }}
               disabled={busy}
             />
           )}
@@ -354,7 +365,7 @@ function Chip({
       variant="outline"
       size="sm"
       aria-pressed={active}
-      className={cn("rounded-full", active ? "border-primary bg-primary/5" : null)}
+      className={cn("shrink-0 rounded-full", active ? "border-primary bg-primary/5" : null)}
       onClick={onClick}
     >
       {children}
@@ -372,7 +383,7 @@ function LogoWall({ home }: { home: DirectoryHome }) {
   const rows = [home.wall.slice(0, half), home.wall.slice(half)];
   const more = home.total - home.popular.length - home.wall.length;
   return (
-    <div className="flex flex-col items-center gap-3">
+    <div className="hidden flex-col items-center gap-3 md:flex">
       <div className="relative flex w-full flex-col items-center gap-3 overflow-hidden">
         {rows.map((row, index) => (
           <ul key={index === 0 ? "first" : "second"} className="flex gap-3">

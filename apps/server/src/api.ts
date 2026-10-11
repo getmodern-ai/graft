@@ -866,8 +866,13 @@ export function createApi(options: ApiOptions): Hono {
   } = options.deps;
   const { handoff } = options;
 
-  const principalOf = async (headers: Headers) =>
-    requirePerson(await options.auth.getSession(headers));
+  // Every signed-in request names its person on the wide event, by id alone (GRA-267: a person's
+  // walk through Setup could be read back only from the database and the load balancer's log).
+  const principalOf = async (headers: Headers) => {
+    const principal = requirePerson(await options.auth.getSession(headers));
+    useLogger().set({ personId: principal.personId });
+    return principal;
+  };
 
   /** What `beginConsent` needs; a harness that bound no `oauth` cannot start one and is told so. */
   const oauthOptions = () => {
@@ -1197,6 +1202,8 @@ export function createApi(options: ApiOptions): Hono {
     await principalOf(c.req.raw.headers);
     const query = c.req.query("q") ?? "";
     const category = c.req.query("category");
+    // An integration's name or a category, what the directory is asked for (GRA-267).
+    useLogger().set({ directory: { query: query.slice(0, 100), category: category ?? null } });
     const cursor = c.req.query("cursor");
     const limit = Number.parseInt(c.req.query("limit") ?? "", 10);
     return c.json(
@@ -1212,12 +1219,15 @@ export function createApi(options: ApiOptions): Hono {
   api.post("/setup/starter", async (c) => {
     const principal = await principalOf(c.req.raw.headers);
     const body = await parseBody(c.req.raw, setupStarterBody);
+    useLogger().set({ setup: { starterId: body.starterId } });
     return c.json(await planSetup(ctx, principal, body, setupDeps, agentDeps));
   });
 
   api.post("/setup/task", async (c) => {
     const principal = await principalOf(c.req.raw.headers);
     const body = await parseBody(c.req.raw, setupTaskBody);
+    // Which integration the task is for, never the task's words (the person's own sentence).
+    useLogger().set({ setup: { slug: body.slug ?? null, taskLength: body.goal.length } });
     if (body.slug) {
       const entry = await setupDirectory().get(body.slug);
       if (!entry) throw new ServiceError("NOT_FOUND", "The directory has no such integration");
