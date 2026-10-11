@@ -142,6 +142,10 @@ export function VendorChoice({
       dashed: true,
     },
   ];
+  const entryFor = (value: string): DirectoryEntry | typeof ANOTHER_VENDOR | null =>
+    value === ANOTHER_VENDOR
+      ? ANOTHER_VENDOR
+      : (entries.find((entry) => entry.slug === value) ?? null);
   const chosenValue = picked === ANOTHER_VENDOR ? ANOTHER_VENDOR : (picked?.slug ?? null);
   const held = goal.data
     ? { starterId: goal.data.starterId, jobStatus: goal.data.job?.status ?? null }
@@ -251,21 +255,21 @@ export function VendorChoice({
               layout="stack"
               options={options}
               value={chosenValue}
-              onChange={(value) => {
-                const chosen =
-                  value === ANOTHER_VENDOR
-                    ? ANOTHER_VENDOR
-                    : (entries.find((entry) => entry.slug === value) ?? null);
-                setPicked(chosen);
-                // A tap is the choice on a phone (GRA-267); a held job still asks first.
-                if (
-                  isMobile &&
-                  chosen &&
-                  !(chosen === ANOTHER_VENDOR && choiceLeavesJob(ANOTHER_VENDOR, held))
-                ) {
-                  go(false, chosen);
-                }
-              }}
+              onChange={(value) => setPicked(entryFor(value))}
+              // A tap is the choice on a phone (GRA-267); a held job still asks first.
+              onPick={
+                isMobile
+                  ? (value) => {
+                      const chosen = entryFor(value);
+                      if (
+                        chosen &&
+                        !(chosen === ANOTHER_VENDOR && choiceLeavesJob(ANOTHER_VENDOR, held))
+                      ) {
+                        go(false, chosen);
+                      }
+                    }
+                  : undefined
+              }
               disabled={busy}
             />
           )}

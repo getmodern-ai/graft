@@ -169,7 +169,11 @@ function SetupRoute() {
                 <AlertDescription>{SETUP_FROM_CARD.message}</AlertDescription>
               </Alert>
             ) : null}
-            {state && ["harness", "vendor", "goal"].includes(step) ? <SetupOnPhone /> : null}
+            {/* Not on a held directory entry's tool screen: the link resumes the record, which holds
+                no such entry, so it would open on the directory (Greptile on #211). */}
+            {state && ["harness", "vendor", "goal"].includes(step) && !holdsApp ? (
+              <SetupOnPhone />
+            ) : null}
             {state ? (
               <SetupStepView
                 state={state}

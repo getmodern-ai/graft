@@ -92,10 +92,8 @@ export function TaskPicker({
         variant="task"
         options={tasks.map((task) => ({ value: task, label: task }))}
         value={fromCards ? value : null}
-        onChange={(task) => {
-          onChange(task);
-          onPickCard?.(task);
-        }}
+        onChange={onChange}
+        onPick={onPickCard}
         disabled={disabled}
       />
       {describeRow}

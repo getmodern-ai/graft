@@ -183,11 +183,9 @@ function ChooseHarness({ state }: { state: SetupStateData }) {
           media: <SetupLogo harness={entry.id} />,
         }))}
         value={harness}
-        onChange={(chosen) => {
-          setHarness(chosen);
-          // A tap is the choice on a phone, with the defaults (GRA-267).
-          if (isMobile) begin(chosen);
-        }}
+        onChange={setHarness}
+        // A tap is the choice on a phone, with the defaults (GRA-267).
+        onPick={isMobile ? begin : undefined}
         disabled={start.isPending}
       />
 
@@ -317,10 +315,8 @@ function ChooseAgent({ state }: { state: SetupStateData }) {
           aside: <StatusChip chip={agentStatusChip(agent)} />,
         }))}
         value={agentId}
-        onChange={(chosen) => {
-          setAgentId(chosen);
-          if (isMobile) start.mutate({ agentId: chosen });
-        }}
+        onChange={setAgentId}
+        onPick={isMobile ? (chosen) => start.mutate({ agentId: chosen }) : undefined}
         disabled={start.isPending}
       />
       <SetupFooter state={state} disabled={start.isPending}>

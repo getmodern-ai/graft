@@ -1,4 +1,5 @@
 import type * as React from "react";
+import { useRef } from "react";
 
 import { CheckCircleIcon } from "@/components/icons";
 import { cn } from "@/lib/utils";
@@ -36,6 +37,7 @@ export function SetupChoice<T extends string>({
   className,
   layout = "row",
   variant = "radio",
+  onPick,
 }: {
   name: string;
   legend: string;
@@ -50,7 +52,14 @@ export function SetupChoice<T extends string>({
    * radio, and a check in the primary colour on the chosen one.
    */
   variant?: "radio" | "task";
+  /**
+   * A choice made by a tap or a click, beside `onChange` (GRA-267): where a tap is the way on (a
+   * phone), the step moves on here. Never on arrow keys, which only browse the options (Greptile on
+   * #211).
+   */
+  onPick?: (value: T) => void;
 }) {
+  const pointer = useRef(false);
   return (
     <fieldset
       className={cn(
@@ -83,7 +92,17 @@ export function SetupChoice<T extends string>({
               name={name}
               value={option.value}
               checked={checked}
-              onChange={() => onChange(option.value)}
+              onPointerDown={() => {
+                pointer.current = true;
+              }}
+              onKeyDown={() => {
+                pointer.current = false;
+              }}
+              onChange={() => {
+                onChange(option.value);
+                if (pointer.current) onPick?.(option.value);
+                pointer.current = false;
+              }}
               className="absolute inset-0 z-10 m-0 cursor-pointer appearance-none rounded-lg opacity-0 disabled:cursor-not-allowed"
             />
             {option.media}
