@@ -306,6 +306,30 @@ describe("the harness over required inputs", () => {
     }
   });
 
+  it("does not read a comment, a string or a shadowing parameter as a fallback (Greptile on #216)", () => {
+    const top = "export default async (input: Input, ctx: Context) => {";
+    for (const extra of [
+      '  // Never input.q ?? "red": q is required.',
+      '  const note = "input.q ?? red";',
+      '  const pick = (input: { q?: string }) => input.q ?? "red";',
+    ]) {
+      const tool = fixture({ module: READ_MODULE.replace(top, `${top}\n${extra}`) });
+      expect(proveOptionalDefaults(tool)).toEqual([]);
+    }
+  });
+
+  it("reads a destructuring default as a fallback", () => {
+    for (const module of [
+      READ_MODULE.replace("(input: Input,", '({ q = "red" }: Input,').replace("input.q", "q"),
+      READ_MODULE.replace(
+        "export default async (input: Input, ctx: Context) => {",
+        'export default async (input: Input, ctx: Context) => {\n  const { q = "red" } = input;',
+      ),
+    ]) {
+      expect(proveOptionalDefaults(fixture({ module }))).toHaveLength(1);
+    }
+  });
+
   it("names nothing for a tool with no required list", () => {
     const tool = fixture({
       module: READ_MODULE.replace(

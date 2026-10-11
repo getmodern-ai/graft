@@ -1729,6 +1729,35 @@ describe("the input schema", () => {
     ]);
   });
 
+  it("finds one in a dictionary's values, and hints at the read by key", () => {
+    const dictionary = {
+      type: "object",
+      properties: {
+        byName: {
+          type: "object",
+          additionalProperties: {
+            type: "object",
+            properties: { limit: { type: "integer", default: 5 } },
+            required: ["limit"],
+          },
+        },
+      },
+    };
+    expect(requiredWithDefault(dictionary).map((found) => found.path)).toEqual([
+      "byName.<key>.limit",
+    ]);
+    const result = check(
+      { "index.ts": "export default async (input: Input, ctx: Context) => ({ n: input.byName });" },
+      { schema: dictionary },
+    );
+    expect(result.refusals).toEqual([
+      expect.objectContaining({
+        rule: "schema-required-default",
+        hint: "Drop limit from required, and apply the default where the module reads it: input.byName[key].limit ?? 5.",
+      }),
+    ]);
+  });
+
   it("passes the same schema with the defaulted fields optional and applied in the module", () => {
     const result = check(
       {

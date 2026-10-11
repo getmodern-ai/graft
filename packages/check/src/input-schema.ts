@@ -5,7 +5,7 @@
 
 /** A property the schema both lists in `required` and gives a `default`. */
 export type RequiredDefault = {
-  /** Dotted from the input's root: `query`, `filter.limit`, `items[].kind`. */
+  /** Dotted from the input's root: `query`, `filter.limit`, `items[].kind`, `byName.<key>.limit`. */
   path: string;
   /** The property's own name, the last segment of `path`. */
   field: string;
@@ -16,7 +16,8 @@ const MAX_DEPTH = 8;
 
 /**
  * Every property listed in `required` that also carries a `default`, at any depth the schema
- * nests objects (properties, array items, and the branches of `anyOf`, `oneOf` and `allOf`).
+ * nests objects (properties, a dictionary's `additionalProperties` and `patternProperties`, array
+ * items, and the branches of `anyOf`, `oneOf` and `allOf`).
  *
  * Such a property contradicts itself: the validator refuses a call that leaves it out before the
  * default could apply, and nothing fills a default in for the module either (`@graft/mcp`'s
@@ -45,6 +46,12 @@ function walk(node: unknown, path: string, depth: number, found: RequiredDefault
     for (const [field, child] of Object.entries(properties)) {
       walk(child, join(path, field), depth + 1, found);
     }
+  }
+  // A dictionary's values: `{ "<key>": … }` stands for any key.
+  walk(schema.additionalProperties, join(path, "<key>"), depth + 1, found);
+  const patterns = objectOrNull(schema.patternProperties);
+  for (const child of Object.values(patterns ?? {})) {
+    walk(child, join(path, "<key>"), depth + 1, found);
   }
   if (Array.isArray(schema.items)) {
     for (const item of schema.items) walk(item, `${path}[]`, depth + 1, found);

@@ -2,7 +2,8 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 
-import { requiredWithDefault } from "@graft/check";
+import { readModuleSources, requiredWithDefault } from "@graft/check";
+import { inputFallbacksOf } from "@graft/check/input-fallbacks";
 import { redactText } from "@graft/core";
 import {
   createUpstreamFetch,
@@ -102,7 +103,8 @@ export function proveTestInput(tool: StockWorkspaceTool): ProofProblems {
  * filling defaults in (`@graft/mcp`'s `schema.ts`), so a required one refuses the call that omits it
  * before the default could apply; the stock `gmail__search-messages` refused `{}` that way. The first
  * half is the check's own refusal (`@graft/check`'s `requiredWithDefault`); the second reads the
- * module's text, so it is best effort and catches the plain shapes only.
+ * default export's syntax tree (`inputFallbacksOf`), so a comment or a string never counts, and a
+ * fallback taken inside a helper is not seen.
  */
 export function proveOptionalDefaults(tool: StockWorkspaceTool): ProofProblems {
   const say = sayer(tool);
@@ -113,19 +115,11 @@ export function proveOptionalDefaults(tool: StockWorkspaceTool): ProofProblems {
   );
   const required = tool.inputSchema.required;
   if (!Array.isArray(required)) return problems;
-  const source = tool.files
-    .filter((file) => /\.(?:ts|mjs)$/.test(file.path))
-    .map((file) => file.content)
-    .join("\n");
+  const { files, entry } = readModuleSources(tool.files);
+  const fallbacks = new Set(entry === null ? [] : inputFallbacksOf(files, entry));
   for (const field of required) {
     if (typeof field !== "string") continue;
-    const name = field.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    // The read must be the left operand itself: `id === input.channel || …` is a comparison, not a
-    // fallback (slack__post-message).
-    const fallback = new RegExp(
-      `(?<!(?:[=!]=|[^=][<>]|[<>]=)\\s*)\\binput(?:\\??\\.(?:${name})|\\??\\.?\\[\\s*["'](?:${name})["']\\s*\\])\\s*(?:\\?\\?|\\|\\|)`,
-    );
-    if (fallback.test(source)) {
+    if (fallbacks.has(field)) {
       problems.push(
         say(
           `its input schema requires ${field}, but the module falls back when it is absent; drop it from required, and declare the fallback as its default`,

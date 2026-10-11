@@ -381,7 +381,7 @@ export function checkModuleSync(input: ModuleCheckInput): ModuleCheckResult {
   // A rule over the schema, not the code: the validator refuses a call that omits a required
   // field before its default could apply, and nothing fills a default in (`input-schema.ts`).
   for (const found of requiredWithDefault(schema)) {
-    const fallback = `input.${found.path.replaceAll("[]", "[i]")} ?? ${JSON.stringify(found.default)}`;
+    const fallback = `input.${found.path.replaceAll("[]", "[i]").replaceAll(".<key>", "[key]")} ?? ${JSON.stringify(found.default)}`;
     bag.plain("schema-required-default", INPUT_SCHEMA_FILE, {
       message: `The input schema lists ${found.path} as required and gives it a default of ${JSON.stringify(found.default)}, so a call that leaves it out is refused before the default can apply; nothing fills a default in for the module.`,
       hint: `Drop ${found.field} from required, and apply the default where the module reads it: ${fallback}.`,
