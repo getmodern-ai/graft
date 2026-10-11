@@ -23,6 +23,7 @@ import {
 } from "@/lib/setup-progress";
 import {
   acquireJobQuery,
+  cachedDirectoryLogo,
   chooseSetupTask,
   continueSetupBuild,
   nextSetup,
@@ -116,7 +117,14 @@ function BuildingJob({
         </p>
       ) : (
         <SetupAppCard
-          media={<SetupLogo starterId={goal.data?.starterId} tile={false} className="size-8" />}
+          media={
+            <SetupLogo
+              starterId={goal.data?.starterId}
+              url={connection ? cachedDirectoryLogo(queryClient, connection.vendor) : null}
+              tile={false}
+              className="size-8"
+            />
+          }
           name={connection?.displayName ?? "Your integration"}
           chip={<Badge variant="success">Connected</Badge>}
           subline="Connected · read-only"
