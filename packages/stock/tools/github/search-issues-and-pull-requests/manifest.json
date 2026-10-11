@@ -1,0 +1,46 @@
+{
+  "name": "search-issues-and-pull-requests",
+  "description": "Searches GitHub issues and pull requests across every repository you can see, with GitHub's search syntax (is:open, is:pr, author:@me, repo:owner/name, label:bug). Each hit carries its repository as owner/repo and its number, which github__get-issue and github__get-pull-request take. Needs no id.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "q": {
+        "type": "string",
+        "minLength": 1,
+        "description": "The search, in GitHub's search syntax (GitHub's own q parameter), e.g. is:open is:pr author:@me.",
+        "examples": ["is:open involves:@me", "is:open is:pr author:@me"]
+      },
+      "sort": {
+        "type": "string",
+        "enum": ["comments", "created", "updated"],
+        "description": "Sort results by comments, creation time, or update time. Omit for best match."
+      },
+      "order": {
+        "type": "string",
+        "enum": ["asc", "desc"],
+        "default": "desc",
+        "description": "Sort direction."
+      },
+      "perPage": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 100,
+        "default": 30,
+        "description": "Number of results per page."
+      },
+      "page": {
+        "type": "integer",
+        "minimum": 1,
+        "default": 1,
+        "description": "Page number."
+      }
+    },
+    "required": ["q"],
+    "additionalProperties": false
+  },
+  "hosts": ["api.github.com"],
+  "annotations": {
+    "readOnly": true,
+    "destructive": false
+  }
+}

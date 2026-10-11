@@ -1,0 +1,46 @@
+{
+  "name": "query-database",
+  "description": "Lists the rows, or entries, of a Notion database, one page at a time, with Notion's own filter and sorts, and answers each row's id, url, last_edited_time and properties as plain values keyed by property name: title and text as text, select and status by name, people by name, relations by id, dates as start or { start, end }; a row whose relation Notion cut short names it in incompleteRelations. The dataSourceId is the id notion__search-pages-and-databases answers for a result of object data_source. A row's id is what notion__get-page, notion__update-page-properties and notion__add-comment take. nextCursor, or null at the end, is the startCursor of the next page.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "dataSourceId": {
+        "type": "string",
+        "minLength": 1,
+        "description": "The Notion data source ID to query."
+      },
+      "filter": {
+        "type": "object",
+        "description": "A Notion data source filter object.",
+        "additionalProperties": true
+      },
+      "sorts": {
+        "type": "array",
+        "description": "Notion sort objects applied in order.",
+        "items": {
+          "type": "object",
+          "additionalProperties": true
+        }
+      },
+      "pageSize": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 100,
+        "default": 20,
+        "description": "Maximum rows to return. Defaults to 20."
+      },
+      "startCursor": {
+        "type": "string",
+        "minLength": 1,
+        "description": "Opaque next cursor from an earlier query."
+      }
+    },
+    "required": ["dataSourceId"],
+    "additionalProperties": false
+  },
+  "hosts": ["api.notion.com"],
+  "annotations": {
+    "readOnly": false,
+    "destructive": false
+  }
+}

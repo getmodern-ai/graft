@@ -1,0 +1,60 @@
+{
+  "format": 1,
+  "tool": "hubspot__find-contact",
+  "recordedAt": "2026-10-09T19:20:31.761Z",
+  "input": {
+    "query": "unvmnwbvmpq@example.com"
+  },
+  "exchanges": [
+    {
+      "kind": "read",
+      "method": "GET",
+      "url": "https://api.hubapi.com/crm/v3/objects/contacts/unvmnwbvmpq%40example.com?idProperty=email&properties=firstname,lastname,email,company,jobtitle,phone,lifecyclestage,hubspot_owner_id",
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json;charset=utf-8"
+        },
+        "body": {
+          "json": {
+            "id": "817079693821",
+            "properties": {
+              "company": "Jmmsmhht",
+              "createdate": "2024-07-04T09:08:18.437Z",
+              "email": "unvmnwbvmpq@example.com",
+              "firstname": "Ezuwgo",
+              "hs_object_id": "817079693821",
+              "hubspot_owner_id": "050558577",
+              "jobtitle": "Cwyz yj Xvqdta",
+              "lastmodifieddate": "2010-04-18T11:43:27.456Z",
+              "lastname": "Npjgrxqhbg",
+              "lifecyclestage": "ghrarwhdwrdjnviino",
+              "phone": null
+            },
+            "createdAt": "2024-07-04T09:08:18.437Z",
+            "updatedAt": "2010-04-18T11:43:27.456Z",
+            "archived": false,
+            "url": "https://app-ap1.hubspot.com/"
+          }
+        }
+      }
+    }
+  ],
+  "result": {
+    "matches": [
+      {
+        "id": "817079693821",
+        "firstName": "Ezuwgo",
+        "lastName": "Npjgrxqhbg",
+        "email": "unvmnwbvmpq@example.com",
+        "company": "Jmmsmhht",
+        "jobTitle": "Cwyz yj Xvqdta",
+        "phone": null,
+        "lifecycleStage": "ghrarwhdwrdjnviino",
+        "ownerId": "050558577"
+      }
+    ],
+    "scanned": 1,
+    "complete": true
+  }
+}

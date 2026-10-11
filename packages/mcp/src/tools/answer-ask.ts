@@ -5,7 +5,13 @@ import {
   type AnswerAskRefusalReason,
   type AnswerAskResult,
 } from "@graft/ask-card/shape";
-import { answerPendingAction, KEYRING_PROVIDER } from "@graft/core";
+import {
+  answerPendingAction,
+  integrationNameFor,
+  KEYRING_PROVIDER,
+  vendorApprovalSentence,
+  vendorToolsSentence,
+} from "@graft/core";
 import type { PendingActionRow } from "@graft/db/repo/pending-action";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 
@@ -44,7 +50,8 @@ import type { MetaTool } from "./meta";
  *
  *   3. **The ask is one the card may answer**: a `build` ask; a `tool` ask — a write's first use
  *      (GRA-116), a yes or no on the tool's description and hints, which never touches the
- *      ask-every-call setting, the console's; a `connection` ask the keyring's form serves for a
+ *      ask-every-call setting, the console's, and may allow every tool of the tool's integration
+ *      for this agent, destructive ones only when ticked (GRA-237); a `connection` ask the keyring's form serves for a
  *      scheme that takes no credential (`ask-card.ts`'s `connectionAskAnswerable`, read from the
  *      row, never from the card), or a link provider's connection ask for its **decline** alone
  *      (GRA-117: the yes is the link's return, started through `start_link`); or a `scope` ask
@@ -69,7 +76,7 @@ function refuse(reason: AnswerAskRefusalReason, message: string): CallToolResult
 }
 
 const ANSWER_SHAPES =
-  "answer must be { allow, approveBuild? }, { connect: true, approveBuild } or { decline: true }";
+  "answer must be { allow, approveBuild? }, { allow: true, allowVendor: true, includesDestructive }, { connect: true, approveBuild, allowVendor? } or { decline: true }";
 
 /** The arguments by shape: an id and one of the three answers, nothing else. */
 export function readAnswerAskInput(
@@ -91,12 +98,37 @@ export function readAnswerAskInput(
   ) {
     return { pendingActionId, answer: { allow: answer.allow, approveBuild: answer.approveBuild } };
   }
+  // A tool ask's yes for every tool of its integration, with the destructive tick (GRA-237).
+  if (
+    keys === "allow,allowVendor,includesDestructive" &&
+    answer.allow === true &&
+    answer.allowVendor === true &&
+    typeof answer.includesDestructive === "boolean"
+  ) {
+    return {
+      pendingActionId,
+      answer: { allow: true, allowVendor: true, includesDestructive: answer.includesDestructive },
+    };
+  }
   if (
     keys === "approveBuild,connect" &&
     answer.connect === true &&
     typeof answer.approveBuild === "boolean"
   ) {
     return { pendingActionId, answer: { connect: true, approveBuild: answer.approveBuild } };
+  }
+  // The keyless confirm with the line for the integration's tools (GRA-239). Never with the
+  // destructive tick: the line leaves destructive tools out, so the shape has no room for one.
+  if (
+    keys === "allowVendor,approveBuild,connect" &&
+    answer.connect === true &&
+    typeof answer.approveBuild === "boolean" &&
+    typeof answer.allowVendor === "boolean"
+  ) {
+    return {
+      pendingActionId,
+      answer: { connect: true, approveBuild: answer.approveBuild, allowVendor: answer.allowVendor },
+    };
   }
   if (keys === "decline" && answer.decline === true) {
     return { pendingActionId, answer: { decline: true } };
@@ -139,7 +171,7 @@ async function answerBuildAsk(
   answer: AnswerAskAnswer,
   agentName: string,
 ): Promise<CallToolResult> {
-  if (!("allow" in answer) || "approveBuild" in answer) {
+  if (!("allow" in answer) || "approveBuild" in answer || "allowVendor" in answer) {
     return refuse(
       "input_invalid",
       "A build approval is answered { allow: true } or { allow: false }",
@@ -182,14 +214,21 @@ async function answerToolAsk(
   agentName: string,
 ): Promise<CallToolResult> {
   if (!("allow" in answer) || "approveBuild" in answer) {
-    return refuse("input_invalid", "A tool's ask is answered { allow: true } or { allow: false }");
+    return refuse(
+      "input_invalid",
+      "A tool's ask is answered { allow: true }, { allow: false } or { allow: true, allowVendor: true, includesDestructive }",
+    );
   }
+  const vendorChoice =
+    "allowVendor" in answer
+      ? { allowVendor: true, includesDestructive: answer.includesDestructive }
+      : {};
   const { ctx, principal, deps } = session;
   const recorded = await recordApprovalAnswer(
     ctx,
     principal,
     row.id,
-    { allow: answer.allow, via: "card" },
+    { allow: answer.allow, ...vendorChoice, via: "card" },
     {
       approval: deps.approval,
       pendingAction: deps.pendingAction,
@@ -198,13 +237,25 @@ async function answerToolAsk(
     },
   );
   const tool = String(row.payload.toolName ?? "the tool");
+  const allowed = !answer.allow
+    ? `Denied. The no holds for ${agentName} until withdrawn on its page in the console.`
+    : recorded.approval?.askEveryCall
+      ? `Allowed for this call. ${tool} asks again next time; turn that off on the agent's page in the console.`
+      : `Allowed. ${agentName} may run ${tool}; the answer holds for its next calls until withdrawn on its page in the console.`;
+  const integration = recorded.vendorApproval
+    ? vendorApprovalSentence(
+        typeof row.payload.integrationName === "string"
+          ? row.payload.integrationName
+          : integrationNameFor(
+              recorded.vendorApproval.vendor,
+              String(row.payload.connectionName ?? recorded.vendorApproval.vendor),
+            ),
+        recorded.vendorApproval.includesDestructive,
+      )
+    : null;
   const result: AnswerAskResult = {
     answered: true,
-    sentence: !answer.allow
-      ? `Denied. The no holds for ${agentName} until withdrawn on its page in the console.`
-      : recorded.approval?.askEveryCall
-        ? `Allowed for this call. ${tool} asks again next time; turn that off on the agent's page in the console.`
-        : `Allowed. ${agentName} may run ${tool}; the answer holds for its next calls until withdrawn on its page in the console.`,
+    sentence: integration ? `${allowed} ${integration}` : allowed,
   };
   return toolResult(result);
 }
@@ -221,7 +272,7 @@ async function answerScopeAsk(
   answer: AnswerAskAnswer,
   agentName: string,
 ): Promise<CallToolResult> {
-  if (!("allow" in answer)) {
+  if (!("allow" in answer) || "allowVendor" in answer) {
     return refuse(
       "input_invalid",
       "A scope ask is answered { allow: true, approveBuild? } or { allow: false }",
@@ -326,6 +377,7 @@ async function answerConnectionAsk(
       // A keyless scheme: nothing to enter, and the service writes no ciphertext (GRA-66).
       credential: {},
       approveBuild: answer.approveBuild,
+      allowVendor: answer.allowVendor === true,
     },
     {
       connection: deps.connection,
@@ -344,15 +396,20 @@ async function answerConnectionAsk(
     { connection: deps.connection },
     notifier,
   );
+  const tools = confirmed.vendorApproval
+    ? ` ${vendorToolsSentence(integrationNameFor(payload.vendor, payload.displayName))}`
+    : "";
   const result: AnswerAskResult = {
     answered: true,
-    sentence: payload.widens
-      ? `Confirmed. ${what} now also reaches ${payload.widens.addedHosts.join(", ")}${
-          confirmed.buildApproval ? `, and ${agentName} may build tools against it` : ""
-        }; nothing was entered and no new connection was made.`
-      : `Connected. ${what} is in ${agentName}'s scope${
-          confirmed.buildApproval ? ", and it may build tools against it" : ""
-        }; nothing was entered, since the vendor takes no credential.`,
+    sentence: `${
+      payload.widens
+        ? `Confirmed. ${what} now also reaches ${payload.widens.addedHosts.join(", ")}${
+            confirmed.buildApproval ? `, and ${agentName} may build tools against it` : ""
+          }; nothing was entered and no new connection was made.`
+        : `Connected. ${what} is in ${agentName}'s scope${
+            confirmed.buildApproval ? ", and it may build tools against it" : ""
+          }; nothing was entered, since the vendor takes no credential.`
+    }${tools}`,
   };
   return toolResult(result);
 }
@@ -361,7 +418,7 @@ export const answerAsk: MetaTool = {
   definition: {
     name: ANSWER_ASK,
     description:
-      "Called by Graft's ask card with the person's click, on a chat product that renders the card: records the person's answer to acquire's build approval, a tool's first-use approval, request_connection's confirmation or its scope ask, or a decline of a link provider's ask, the same record the console's answer makes. " +
+      "Called by Graft's ask card with the person's click, on a chat product that renders the card: records the person's answer to acquire's build approval, a tool's first-use approval (or its integration's, every tool at once), request_connection's confirmation or its scope ask, or a decline of a link provider's ask, the same record the console's answer makes. " +
       "App-only (_meta.ui.visibility app), so a host hides it from the model; the answer is the person's, given on the card or in the console, after which the asking tool's repeated call continues.",
     inputSchema: {
       type: "object",
@@ -373,9 +430,11 @@ export const answerAsk: MetaTool = {
         answer: {
           type: "object",
           description:
-            "{ allow: boolean } for a build approval; { allow: boolean, approveBuild?: boolean } for a scope ask; { connect: true, approveBuild: boolean } or { decline: true } for a connection that takes no credential.",
+            "{ allow: boolean } for a build approval or a tool's; { allow: true, allowVendor: true, includesDestructive: boolean } for a tool's yes to every tool of its integration; { allow: boolean, approveBuild?: boolean } for a scope ask; { connect: true, approveBuild: boolean, allowVendor?: boolean } or { decline: true } for a connection that takes no credential, allowVendor recording the agent's standing approval for the integration's tools, destructive ones left out.",
           properties: {
             allow: { type: "boolean" },
+            allowVendor: { type: "boolean" },
+            includesDestructive: { type: "boolean" },
             connect: { type: "boolean", const: true },
             approveBuild: { type: "boolean" },
             decline: { type: "boolean", const: true },

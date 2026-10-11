@@ -63,16 +63,53 @@ export type PendingAskKind = Exclude<AskCardKind, "setup">;
 
 /**
  * The facts of the tool a `tool` ask is about (GRA-116), as the console's card shows them: the
- * description in the agent's model's own words — the card says so — the two hints a harness gates
- * on (ADR 0008), and whether the person has set this tool to ask on every call, in which case a
- * yes is for this call alone.
+ * description, marked with where the tool came from, the two hints a harness gates on (ADR 0008),
+ * and whether the person has set this tool to ask on every call, in which case a yes is for this
+ * call alone.
  */
 export type AskCardTool = {
-  /** The agent's model's words, marked as such where they are shown. */
+  /** The agent's model's words, or Graft's for a stock copy: `provenance` says which. */
   description: string;
   readOnly: boolean;
   destructive: boolean;
   askEveryCall: boolean;
+  /**
+   * The mark and the sentence beside the description (GRA-245): `@graft/core`'s `toolProvenance`
+   * for the tool's kind, written by the server, since this file imports nothing. Absent on a card
+   * from a server older than it, which draws an authored tool's.
+   */
+  provenance?: { badge: string; note: string };
+};
+
+/**
+ * The offer beside Allow on a tool ask (ADR 0008 as amended 2026-10-09; GRA-237): allow every tool
+ * of the tool's integration for this agent, with destructive tools a separate tick, off by
+ * default. The words are the server's (`@graft/core`'s `vendor-approval.rules.ts`, which the
+ * console's card reads too), so the card draws them as they come and never spells them itself.
+ */
+export type AskCardVendorApproval = {
+  /** The integration as the person reads it, never the vendor slug. */
+  integrationName: string;
+  /** "Allow every <integration> tool for this agent": the button beside Allow. */
+  label: string;
+  /** The tick's label, "Include destructive tools". */
+  destructiveLabel: string;
+  /** What leaving the tick off means, one sentence under it. */
+  destructiveDescription: string;
+};
+
+/**
+ * The second line under the build choice on a connection's confirmation (ADR 0008 as amended
+ * 2026-10-09; GRA-239): "Use <integration>'s tools without asking each time", ticked by default,
+ * the standing approval without destructive tools. The server's words (`@graft/core`'s
+ * `vendorToolsOffer`), drawn as they come.
+ */
+export type AskCardVendorTools = {
+  integrationName: string;
+  /** The tick's label. */
+  label: string;
+  /** One sentence under it: destructive tools still ask. */
+  description: string;
 };
 
 /**
@@ -120,6 +157,10 @@ export type AskCard = {
   toolName?: string;
   /** For a tool ask: the tool's facts (GRA-116). */
   tool?: AskCardTool;
+  /** For a tool ask: the integration-wide offer beside Allow (GRA-237). */
+  vendorApproval?: AskCardVendorApproval;
+  /** For a connection ask: the line for the integration's tools under the build choice (GRA-239). */
+  vendorTools?: AskCardVendorTools;
 };
 
 /**
@@ -143,15 +184,18 @@ export type CardData = AskCard | SetupCard;
 
 /**
  * What the card sends `answer_ask`. The build approval's yes or no; the tool ask's yes or no
- * (GRA-116), which never carries the ask-every-call setting — that is the console's; the scope
+ * (GRA-116), which never carries the ask-every-call setting — that is the console's — or its yes
+ * for every tool of the integration, with the destructive tick (GRA-237); the scope
  * ask's yes or no, carrying the build choice GRA-75 put on the console's page (GRA-104); the
- * keyless connection's confirm, carrying the same choice (on by default there and here); or a
+ * keyless connection's confirm, carrying the same choice (on by default there and here) and, from
+ * a card that drew it, the line for the integration's tools (GRA-239, on by default too); or a
  * connection's decline — a link provider's included. Nothing else is accepted, and no field is a
  * secret.
  */
 export type AnswerAskAnswer =
   | { allow: boolean; approveBuild?: boolean }
-  | { connect: true; approveBuild: boolean }
+  | { allow: true; allowVendor: true; includesDestructive: boolean }
+  | { connect: true; approveBuild: boolean; allowVendor?: boolean }
   | { decline: true };
 
 export type AnswerAskInput = { pendingActionId: string; answer: AnswerAskAnswer };
@@ -167,8 +211,15 @@ export type AnswerAskRefusalReason =
   | "expired"
   | "input_invalid";
 
-/** What the card sends `start_link` (GRA-117): its ask, and the build choice the return records. */
-export type StartLinkInput = { pendingActionId: string; approveBuild: boolean };
+/**
+ * What the card sends `start_link` (GRA-117): its ask, and the choices the return records — the
+ * build choice and, from a card that drew it, the line for the integration's tools (GRA-239).
+ */
+export type StartLinkInput = {
+  pendingActionId: string;
+  approveBuild: boolean;
+  allowVendor?: boolean;
+};
 
 /** What `start_link` answers: the provider's link to open, and until when it is honoured. */
 export type StartLinkResult = { url: string; expiresAt: string; provider: string };
@@ -240,6 +291,8 @@ export function readAskCard(structuredContent: unknown): AskCard | null {
       : {}),
     ...(typeof card.toolName === "string" ? { toolName: card.toolName } : {}),
     ...(isAskCardTool(card.tool) ? { tool: card.tool } : {}),
+    ...(isVendorApproval(card.vendorApproval) ? { vendorApproval: card.vendorApproval } : {}),
+    ...(isVendorTools(card.vendorTools) ? { vendorTools: card.vendorTools } : {}),
     ...(isWidening(card.widens) ? { widens: card.widens } : {}),
   };
 }
@@ -267,13 +320,36 @@ function isWidening(value: unknown): value is { connectionId: string; addedHosts
   );
 }
 
+function isVendorApproval(value: unknown): value is AskCardVendorApproval {
+  return (
+    isRecord(value) &&
+    typeof value.integrationName === "string" &&
+    typeof value.label === "string" &&
+    typeof value.destructiveLabel === "string" &&
+    typeof value.destructiveDescription === "string"
+  );
+}
+
+function isVendorTools(value: unknown): value is AskCardVendorTools {
+  return (
+    isRecord(value) &&
+    typeof value.integrationName === "string" &&
+    typeof value.label === "string" &&
+    typeof value.description === "string"
+  );
+}
+
 function isAskCardTool(value: unknown): value is AskCardTool {
   return (
     isRecord(value) &&
     typeof value.description === "string" &&
     typeof value.readOnly === "boolean" &&
     typeof value.destructive === "boolean" &&
-    typeof value.askEveryCall === "boolean"
+    typeof value.askEveryCall === "boolean" &&
+    (value.provenance === undefined ||
+      (isRecord(value.provenance) &&
+        typeof value.provenance.badge === "string" &&
+        typeof value.provenance.note === "string"))
   );
 }
 

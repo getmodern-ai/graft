@@ -505,6 +505,89 @@ describe("answer_ask on a tool ask", () => {
     expect(after?.consumedAt).toBeNull();
   });
 
+  /** ADR 0008 as amended 2026-10-09 (GRA-237): "Allow every <integration> tool for this agent". */
+  it("records Allow every tool of the integration beside the tool's own allow, destructive tools left out unless ticked", async () => {
+    const claude = await connect(TOKEN_CLAUDE);
+    const row = await toolAsk(CLAUDE);
+    const { result, body } = await answer(claude, row.id, {
+      allow: true,
+      allowVendor: true,
+      includesDestructive: false,
+    });
+    expect(result.isError, JSON.stringify(body)).toBeFalsy();
+    expect(body).toMatchObject({
+      answered: true,
+      sentence: expect.stringContaining("Every Demo Orders tool now runs for this agent"),
+    });
+    expect(body.sentence).toContain("destructive ones still ask");
+    expect(store.pendingActions.get(row.id)?.answer).toEqual({
+      allow: true,
+      allowVendor: true,
+      includesDestructive: false,
+      via: "card",
+    });
+    expect(store.pendingActions.get(row.id)?.consumedAt).not.toBeNull();
+    expect(store.approvals.get(`${CLAUDE} tool_1`)).toMatchObject({ decision: "allow" });
+    expect(store.vendorApprovals.get(`${CLAUDE} demo`)).toMatchObject({
+      agentId: CLAUDE,
+      vendor: "demo",
+      includesDestructive: false,
+    });
+    // The agent asked; no other agent of the person is covered.
+    expect(store.vendorApprovals.get(`${OTHER} demo`)).toBeUndefined();
+
+    const second = await toolAsk(CLAUDE);
+    const ticked = await answer(claude, second.id, {
+      allow: true,
+      allowVendor: true,
+      includesDestructive: true,
+    });
+    expect(ticked.body.sentence).toContain("destructive ones included");
+    expect(store.vendorApprovals.get(`${CLAUDE} demo`)?.includesDestructive).toBe(true);
+  });
+
+  it("refuses Allow every tool beside a no, and on a build or scope ask, as input_invalid", async () => {
+    const claude = await connect(TOKEN_CLAUDE);
+    const row = await toolAsk(CLAUDE);
+    const no = await answer(claude, row.id, {
+      allow: false,
+      allowVendor: true,
+      includesDestructive: false,
+    });
+    expect(no.body).toMatchObject({ reason: "input_invalid" });
+    const build = await deps.pendingAction.insertPendingAction(deps.db, {
+      id: "pa_build_vendor",
+      agentId: CLAUDE,
+      kind: "build",
+      payload: { connectionId: CONN, vendor: "demo", connectionName: "Demo Orders", hosts: [] },
+      connectionId: CONN,
+      expiresAt: new Date(clock.getTime() + 60_000),
+      createdAt: clock,
+    });
+    const onBuild = await answer(claude, build.id, {
+      allow: true,
+      allowVendor: true,
+      includesDestructive: false,
+    });
+    expect(onBuild.body).toMatchObject({ reason: "input_invalid" });
+    expect(store.vendorApprovals.size).toBe(0);
+  });
+
+  it("puts the integration choice on a tool ask's card, its words from the shared helper", async () => {
+    store.promote(CLAUDE, "tool_1");
+    const claude = await connect(TOKEN_CLAUDE);
+    const card = cardOf(await claude.call("demo__create-order", {}));
+    expect(card).toMatchObject({
+      kind: "tool",
+      answerable: true,
+      vendorApproval: {
+        integrationName: "Demo Orders",
+        label: "Allow every Demo Orders tool for this agent",
+        destructiveLabel: "Include destructive tools",
+      },
+    });
+  });
+
   it("refuses the setting on the answer as input_invalid, a static-token agent as card_not_available, and another agent's ask as ask_not_found", async () => {
     const claude = await connect(TOKEN_CLAUDE);
     const row = await toolAsk(CLAUDE);
@@ -581,6 +664,56 @@ describe("answer_ask on a connection ask", () => {
     expect(text(await claude.call("acquire", { connectionId, goal: "forecast" }))).toMatchObject({
       reason: "awaiting_approval",
     });
+  });
+
+  it("carries the line for the integration's tools on the card, and records it with the connection when left on (GRA-239)", async () => {
+    const claude = await connect(TOKEN_CLAUDE);
+    const card = cardOf(await claude.call("request_connection", KEYLESS));
+    expect(card.vendorTools).toEqual({
+      integrationName: "Open-Meteo",
+      label: "Use Open-Meteo's tools without asking each time",
+      description: "A tool that can delete or overwrite data still asks you first.",
+    });
+    const { body } = await answer(claude, card.pendingActionId, {
+      connect: true,
+      approveBuild: true,
+      allowVendor: true,
+    });
+    expect(body.sentence).toContain(
+      "Open-Meteo's tools run for this agent without asking; destructive ones still ask.",
+    );
+    expect(store.vendorApprovals.get(`${CLAUDE} open-meteo`)).toMatchObject({
+      agentId: CLAUDE,
+      vendor: "open-meteo",
+      includesDestructive: false,
+    });
+    expect(store.vendorApprovals.get(`${OTHER} open-meteo`)).toBeUndefined();
+    store.vendorApprovals.clear();
+  });
+
+  it("records no standing approval when the line was unticked, or when an older card sends none", async () => {
+    const claude = await connect(TOKEN_CLAUDE);
+    const card = cardOf(await claude.call("request_connection", KEYLESS));
+    const { body } = await answer(claude, card.pendingActionId, {
+      connect: true,
+      approveBuild: true,
+      allowVendor: false,
+    });
+    expect(body.sentence).not.toContain("without asking");
+    expect(store.vendorApprovals.size).toBe(0);
+  });
+
+  it("refuses the destructive tick beside a connection's confirm as input_invalid", async () => {
+    const claude = await connect(TOKEN_CLAUDE);
+    const card = cardOf(await claude.call("request_connection", KEYLESS));
+    const { body } = await answer(claude, card.pendingActionId, {
+      connect: true,
+      approveBuild: true,
+      allowVendor: true,
+      includesDestructive: true,
+    });
+    expect(body).toMatchObject({ reason: "input_invalid" });
+    expect(store.vendorApprovals.size).toBe(0);
   });
 
   it("records a decline as the console's generic decline, and request_connection says so", async () => {

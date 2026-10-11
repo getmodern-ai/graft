@@ -15,7 +15,7 @@ import {
 import type { DbOrTx } from "@graft/db";
 import type { AcquireAttemptRow, AcquireJobRow, AcquireTraceRow } from "@graft/db/repo/acquire-job";
 import type { AgentRow } from "@graft/db/repo/agent";
-import type { ApprovalRow, BuildApprovalRow } from "@graft/db/repo/approval";
+import type { ApprovalRow, BuildApprovalRow, VendorApprovalRow } from "@graft/db/repo/approval";
 import type { BlobRow } from "@graft/db/repo/blob";
 import type { ConnectionRow } from "@graft/db/repo/connection";
 import type { findMcpClient, McpClientRow } from "@graft/db/repo/mcp-oauth";
@@ -61,6 +61,8 @@ export type FakeStore = {
   approvals: Map<string, ApprovalRow>;
   /** `<agentId> <connectionId>` -> row */
   buildApprovals: Map<string, BuildApprovalRow>;
+  /** `<agentId> <vendor>` -> row: an integration allowed at once (ADR 0008 as amended 2026-10-09). */
+  vendorApprovals: Map<string, VendorApprovalRow>;
   pendingActions: Map<string, PendingActionRow>;
   /** The OAuth clients a consent may have minted an agent from (ADR 0018) — what the ask card's gate reads (GRA-84). */
   mcpClients: Map<string, McpClientRow>;
@@ -138,6 +140,7 @@ export function createFakeStore(options: { now?: () => Date } = {}): FakeStore {
     blobs: [],
     approvals: new Map(),
     buildApprovals: new Map(),
+    vendorApprovals: new Map(),
     pendingActions: new Map(),
     mcpClients: new Map(),
     acquireJobs: new Map(),
@@ -656,6 +659,16 @@ export function createFakeDeps(store: FakeStore): FakeDeps {
       }
       return swept;
     },
+    deleteVendorApprovalsForVendor: async (_db, personId, vendor) => {
+      const swept: VendorApprovalRow[] = [];
+      for (const [k, row] of store.vendorApprovals) {
+        if (row.vendor === vendor && store.agents.get(row.agentId)?.personId === personId) {
+          swept.push(row);
+          store.vendorApprovals.delete(k);
+        }
+      }
+      return swept;
+    },
     deleteBuildApprovalsForConnection: async (_db, personId, connectionId) => {
       const swept: BuildApprovalRow[] = [];
       for (const [k, row] of store.buildApprovals) {
@@ -821,6 +834,18 @@ export function createFakeDeps(store: FakeStore): FakeDeps {
             ? (store.stockVersionNumbers.get(row.stockVersionId) ?? null)
             : null,
         })),
+    carryApprovalsToVersion: async (_db, personId, args) => {
+      if (store.tools.get(args.toolId)?.personId !== personId) return [];
+      const moved: ApprovalRow[] = [];
+      for (const [k, row] of store.approvals) {
+        if (row.toolId === args.toolId && row.toolVersionId === args.fromVersionId) {
+          const updated = { ...row, toolVersionId: args.toVersionId, updatedAt: store.now() };
+          store.approvals.set(k, updated);
+          moved.push(updated);
+        }
+      }
+      return moved;
+    },
     findToolVersion: async (_db, personId, versionId) => {
       const row = store.versions.get(versionId);
       if (!row) return null;
@@ -1110,6 +1135,7 @@ export function createFakeDeps(store: FakeStore): FakeDeps {
         decision: input.decision,
         decidedAt: input.decidedAt,
         askEveryCall: input.askEveryCall ?? existing?.askEveryCall ?? false,
+        toolVersionId: input.toolVersionId ?? null,
         owner: "person",
         createdAt: existing?.createdAt ?? at,
         updatedAt: at,
@@ -1165,7 +1191,41 @@ export function createFakeDeps(store: FakeStore): FakeDeps {
       store.buildApprovals.set(key(row.agentId, row.connectionId), row);
       return row;
     },
+    findVendorApproval: async (_db, scope, vendor) =>
+      ownsAgent(scope) ? (store.vendorApprovals.get(key(scope.agentId, vendor)) ?? null) : null,
+    listVendorApprovals: async (_db, scope) =>
+      ownsAgent(scope)
+        ? [...store.vendorApprovals.values()]
+            .filter((row) => row.agentId === scope.agentId)
+            .sort((a, b) => a.vendor.localeCompare(b.vendor))
+        : [],
+    upsertVendorApproval: async (_db, scope, input, options = {}) => {
+      if (!ownsAgent(scope)) return null;
+      const at = store.now();
+      const existing = store.vendorApprovals.get(key(scope.agentId, input.vendor));
+      // `keep`: the repo's `on conflict do nothing`, a standing row left as it is.
+      if (options.keep && existing) return null;
+      const row: VendorApprovalRow = {
+        agentId: scope.agentId,
+        vendor: input.vendor,
+        includesDestructive: input.includesDestructive,
+        grantedAt: input.grantedAt,
+        owner: "person",
+        createdAt: existing?.createdAt ?? at,
+        updatedAt: at,
+      };
+      store.vendorApprovals.set(key(row.agentId, row.vendor), row);
+      return row;
+    },
+    deleteVendorApproval: async (_db, scope, vendor) => {
+      if (!ownsAgent(scope)) return null;
+      const row = store.vendorApprovals.get(key(scope.agentId, vendor)) ?? null;
+      store.vendorApprovals.delete(key(scope.agentId, vendor));
+      return row;
+    },
     findAuthoredToolById: tool.findAuthoredToolById,
+    findAuthoredToolForUpdate: tool.findAuthoredToolForUpdate,
+    listToolVersionOrigins: tool.listToolVersionOrigins,
     findConnection: connection.findConnection,
     now: store.now,
   };

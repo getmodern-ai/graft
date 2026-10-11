@@ -4,6 +4,7 @@ import type { ProxyConnection } from "@graft/proxy";
 
 import type { ServiceContext } from "../context";
 import { isUniqueViolation, orNotFound, ServiceError } from "../errors";
+import { consentScopesFor } from "../setup/starter-vendors";
 import type { Principal } from "../tenancy";
 import type { ConnectionDeps } from "./connection.deps";
 import {
@@ -822,7 +823,7 @@ export async function startOAuthConsent(
       authorizeUrl,
       clientId,
       redirectUri: input.redirectUri,
-      scopes: row.schemeConfig.scopes,
+      scopes: consentScopesFor(row.vendor, authorizeUrl, row.schemeConfig.scopes),
       state: signOAuthState(payload, input.secret),
       codeChallenge: challenge,
     }),
@@ -952,6 +953,8 @@ export type ProviderRelease =
 export type RevokeConnectionResult = {
   connection: ConnectionOutput;
   approvalsDeleted: number;
+  /** Every agent's standing approval for the vendor's integration (GRA-237). */
+  vendorApprovalsDeleted: number;
   buildApprovalsDeleted: number;
   /** Open asks about the connection closed with it — a per-call yes among them (GRA-28). */
   pendingActionsExpired: number;
@@ -1015,6 +1018,11 @@ export async function revokeConnection(
     const row = await deps.revokeConnection(tx, principal.personId, connectionId, at);
     if (!row) return null;
     const approvals = await deps.deleteApprovalsForVendor(tx, principal.personId, row.vendor);
+    const vendorApprovals = await deps.deleteVendorApprovalsForVendor(
+      tx,
+      principal.personId,
+      row.vendor,
+    );
     const builds = await deps.deleteBuildApprovalsForConnection(tx, principal.personId, row.id);
     const actions = await deps.expirePendingActionsForConnection(
       tx,
@@ -1043,6 +1051,7 @@ export async function revokeConnection(
       row,
       result: {
         approvalsDeleted: approvals.length,
+        vendorApprovalsDeleted: vendorApprovals.length,
         buildApprovalsDeleted: builds.length,
         pendingActionsExpired: actions.length,
         demoted: entries.map((entry) => ({ agentId: entry.agentId, toolId: entry.toolId })),

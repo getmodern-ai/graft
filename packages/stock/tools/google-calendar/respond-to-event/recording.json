@@ -1,0 +1,67 @@
+{
+  "format": 1,
+  "tool": "google-calendar__respond-to-event",
+  "recordedAt": "2026-10-10T05:57:11.453Z",
+  "input": {
+    "eventId": "1o98ia8oa9n0n8uzcbf3om9fjt",
+    "response": "accepted"
+  },
+  "exchanges": [
+    {
+      "kind": "read",
+      "method": "GET",
+      "url": "https://www.googleapis.com/calendar/v3/calendars/primary/events/1o98ia8oa9n0n8uzcbf3om9fjt?fields=id%2Cetag%2ChtmlLink%2Cattendees",
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json; charset=UTF-8"
+        },
+        "body": {
+          "json": {
+            "etag": "\"8558764681788319\"",
+            "id": "1o98ia8oa9n0n8uzcbf3om9fjt",
+            "htmlLink": "https://www.google.com/",
+            "attendees": [
+              {
+                "email": "kwinf.lyzesz@example.com",
+                "organizer": true,
+                "responseStatus": "accepted"
+              },
+              {
+                "email": "ahvau@example.com",
+                "self": true,
+                "responseStatus": "accepted"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "kind": "write",
+      "method": "PATCH",
+      "url": "https://www.googleapis.com/calendar/v3/calendars/primary/events/1o98ia8oa9n0n8uzcbf3om9fjt",
+      "body": {
+        "json": {
+          "attendees": [
+            {
+              "email": "kwinf.lyzesz@example.com",
+              "organizer": true,
+              "responseStatus": "accepted"
+            },
+            {
+              "email": "ahvau@example.com",
+              "self": true,
+              "responseStatus": "accepted"
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "result": {
+    "eventId": "1o98ia8oa9n0n8uzcbf3om9fjt",
+    "response": "accepted",
+    "htmlLink": "https://www.google.com/"
+  }
+}

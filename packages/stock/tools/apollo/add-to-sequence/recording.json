@@ -1,0 +1,28 @@
+{
+  "format": 1,
+  "tool": "apollo__add-to-sequence",
+  "recordedAt": "2026-10-10T17:40:31.263Z",
+  "input": {
+    "sequenceId": "98a3e184dcd70781d3475707",
+    "contactIds": ["42c2b545afc82534c572619c"],
+    "emailAccountId": "11a0d806cdc65358a5155658"
+  },
+  "exchanges": [
+    {
+      "kind": "write",
+      "method": "POST",
+      "url": "https://api.apollo.io/api/v1/emailer_campaigns/98a3e184dcd70781d3475707/add_contact_ids",
+      "body": {
+        "json": {
+          "emailer_campaign_id": "98a3e184dcd70781d3475707",
+          "contact_ids": ["42c2b545afc82534c572619c"],
+          "send_email_from_email_account_id": "11a0d806cdc65358a5155658"
+        }
+      }
+    }
+  ],
+  "result": {
+    "added": false,
+    "sent": true
+  }
+}

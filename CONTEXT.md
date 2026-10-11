@@ -183,11 +183,12 @@ job acquires)
 **Check**:
 The static pass over a module: types against the input schema and the context, banned surface,
 imports outside the module, a literal foreign host, an SDK not bound to the proxy. Also the source
-of a tool's read-only and destructive annotations, derived from the methods it uses.
+of a tool's read-only and destructive annotations, derived from the reads and writes it makes
+(ADR 0008 as amended 2026-10-10).
 _Avoid_: lint, validate, compile
 
 **Dry run**:
-A run in which reads reach the vendor and every other method stops at the proxy, which answers
+A run in which reads reach the vendor and every other request stops at the proxy, which answers
 with a preview of the request that would have left. Exists for the model, which fixes the tool on
 what it learns; a person is never shown one.
 _Avoid_: test run, preview (that is what a dry run returns for a write), simulation
@@ -220,8 +221,10 @@ _Avoid_: link, redirect, elicitation (which is a different mechanism, used only 
 **Approval**:
 A person's answer to a tool's ask. Reads never ask. Any other tool, destructive included, asks once
 and the answer holds; the person may set a tool to ask every time, and back. The person may also
-allow every tool of an integration for an agent at once, destructive ones only if they say so.
-`acquire` asks once per agent per connection. Answerable later through the console.
+allow every tool of an integration for an agent at once, destructive ones only if they say so. The
+answer is for the version it was given for: a new version of a write asks again once, except a
+ready-made tool's update that does not widen what it may do. `acquire` asks once per agent per
+connection. Answerable later through the console.
 _Avoid_: grant, permission, consent (fine in prose, not as the noun for the record)
 
 **Setup**:

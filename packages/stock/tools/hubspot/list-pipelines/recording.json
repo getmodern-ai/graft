@@ -1,0 +1,186 @@
+{
+  "format": 1,
+  "tool": "hubspot__list-pipelines",
+  "recordedAt": "2026-10-09T19:26:49.626Z",
+  "input": {},
+  "exchanges": [
+    {
+      "kind": "read",
+      "method": "GET",
+      "url": "https://api.hubapi.com/crm/v3/pipelines/deals",
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json;charset=utf-8"
+        },
+        "body": {
+          "json": {
+            "results": [
+              {
+                "label": "Enljb Axitwwhi",
+                "displayOrder": 0,
+                "id": "wbfuemz",
+                "stages": [
+                  {
+                    "label": "Aknqybhimtx Oqotbnhso",
+                    "displayOrder": 0,
+                    "metadata": {
+                      "isClosed": "false",
+                      "probability": "1.6"
+                    },
+                    "id": "eqclfckzulkpvprvozyk",
+                    "createdAt": "2015-12-27T23:53:59.665Z",
+                    "updatedAt": "2015-12-27T23:53:59.665Z",
+                    "writePermissions": "GMF_SAPAYKNEXZH_BYJUMEDXRNJ",
+                    "archived": false
+                  },
+                  {
+                    "label": "Rtnpccmww Jk Jpv",
+                    "displayOrder": 1,
+                    "metadata": {
+                      "isClosed": "false",
+                      "probability": "3.7"
+                    },
+                    "id": "kvjeehqakatoza",
+                    "createdAt": "2015-12-27T23:53:59.665Z",
+                    "updatedAt": "2015-12-27T23:53:59.665Z",
+                    "writePermissions": "GMF_SAPAYKNEXZH_BYJUMEDXRNJ",
+                    "archived": false
+                  },
+                  {
+                    "label": "Tbiwqpulield Malhxorcx",
+                    "displayOrder": 2,
+                    "metadata": {
+                      "isClosed": "false",
+                      "probability": "8.5"
+                    },
+                    "id": "csigtsxyxpjcuqntetteo",
+                    "createdAt": "2015-12-27T23:53:59.665Z",
+                    "updatedAt": "2015-12-27T23:53:59.665Z",
+                    "writePermissions": "GMF_SAPAYKNEXZH_BYJUMEDXRNJ",
+                    "archived": false
+                  },
+                  {
+                    "label": "Icouwawl Kqrlw Jupcmn-Ae",
+                    "displayOrder": 3,
+                    "metadata": {
+                      "isClosed": "false",
+                      "probability": "4.2"
+                    },
+                    "id": "csiacjswqxifeheikbjml",
+                    "createdAt": "2015-12-27T23:53:59.665Z",
+                    "updatedAt": "2015-12-27T23:53:59.665Z",
+                    "writePermissions": "GMF_SAPAYKNEXZH_BYJUMEDXRNJ",
+                    "archived": false
+                  },
+                  {
+                    "label": "Iveeljgv Rngx",
+                    "displayOrder": 4,
+                    "metadata": {
+                      "isClosed": "false",
+                      "probability": "1.8"
+                    },
+                    "id": "cyrucoauospn",
+                    "createdAt": "2015-12-27T23:53:59.665Z",
+                    "updatedAt": "2015-12-27T23:53:59.665Z",
+                    "writePermissions": "GMF_SAPAYKNEXZH_BYJUMEDXRNJ",
+                    "archived": false
+                  },
+                  {
+                    "label": "Icllho Vtj",
+                    "displayOrder": 5,
+                    "metadata": {
+                      "isClosed": "true",
+                      "probability": "0.3"
+                    },
+                    "id": "gkyyychme",
+                    "createdAt": "2015-12-27T23:53:59.665Z",
+                    "updatedAt": "2015-12-27T23:53:59.665Z",
+                    "writePermissions": "GMF_SAPAYKNEXZH_BYJUMEDXRNJ",
+                    "archived": false
+                  },
+                  {
+                    "label": "Owgmdr Ivrf",
+                    "displayOrder": 6,
+                    "metadata": {
+                      "isClosed": "true",
+                      "probability": "3.8"
+                    },
+                    "id": "wetkqskecr",
+                    "createdAt": "2015-12-27T23:53:59.665Z",
+                    "updatedAt": "2015-12-27T23:53:59.665Z",
+                    "writePermissions": "GMF_SAPAYKNEXZH_BYJUMEDXRNJ",
+                    "archived": false
+                  }
+                ],
+                "createdAt": "2002-01-05T02:52:33Z",
+                "updatedAt": "2015-12-27T23:53:59.665Z",
+                "archived": false
+              }
+            ]
+          }
+        }
+      }
+    }
+  ],
+  "result": {
+    "pipelines": [
+      {
+        "id": "wbfuemz",
+        "label": "Enljb Axitwwhi",
+        "displayOrder": 0,
+        "stages": [
+          {
+            "id": "eqclfckzulkpvprvozyk",
+            "label": "Aknqybhimtx Oqotbnhso",
+            "displayOrder": 0,
+            "probability": 1.6,
+            "isClosed": false
+          },
+          {
+            "id": "kvjeehqakatoza",
+            "label": "Rtnpccmww Jk Jpv",
+            "displayOrder": 1,
+            "probability": 3.7,
+            "isClosed": false
+          },
+          {
+            "id": "csigtsxyxpjcuqntetteo",
+            "label": "Tbiwqpulield Malhxorcx",
+            "displayOrder": 2,
+            "probability": 8.5,
+            "isClosed": false
+          },
+          {
+            "id": "csiacjswqxifeheikbjml",
+            "label": "Icouwawl Kqrlw Jupcmn-Ae",
+            "displayOrder": 3,
+            "probability": 4.2,
+            "isClosed": false
+          },
+          {
+            "id": "cyrucoauospn",
+            "label": "Iveeljgv Rngx",
+            "displayOrder": 4,
+            "probability": 1.8,
+            "isClosed": false
+          },
+          {
+            "id": "gkyyychme",
+            "label": "Icllho Vtj",
+            "displayOrder": 5,
+            "probability": 0.3,
+            "isClosed": true
+          },
+          {
+            "id": "wetkqskecr",
+            "label": "Owgmdr Ivrf",
+            "displayOrder": 6,
+            "probability": 3.8,
+            "isClosed": true
+          }
+        ]
+      }
+    ]
+  }
+}

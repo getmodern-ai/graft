@@ -234,10 +234,15 @@ describe("GET /api/setup/vendors", () => {
       "gmail",
       "google-calendar",
       "google-drive",
+      "google-sheets",
       "slack",
       "notion",
       "github",
       "hubspot",
+      "stripe",
+      "microsoft-outlook",
+      "linear",
+      "apollo",
       "open-meteo",
     ]);
     expect(
@@ -362,6 +367,40 @@ describe("POST /api/setup/connect", () => {
         hosts: ["api.github.com"],
         scheme: "bearer",
         credential: { token: "ghp_setup_test_token" },
+      }),
+    );
+    expect(res.status).toBe(201);
+    const connectionId: string = (await read(res)).connection.id;
+    expect(await read(await h.app.request("/api/setup"))).toMatchObject({
+      step: "goal",
+      setup: { connectionId },
+    });
+  });
+
+  it("opens Linear's secret form with its bare Authorization header, and a key connects it (GRA-269)", async () => {
+    const h = harness();
+    await started(h);
+    const asked = await read(
+      await h.app.request("/api/setup/connect", post({ starterId: "linear" })),
+    );
+    const askId: string = asked.setup.pendingActionId;
+    expect(h.store.pendingActions.get(askId)?.payload).toMatchObject({
+      vendor: "linear",
+      primaryHost: "https://api.linear.app",
+      scheme: "api_key_header",
+      schemeConfig: { headerName: "Authorization" },
+      providerConnect: "form",
+    });
+    const res = await h.app.request(
+      `/api/pending-actions/${askId}/connection`,
+      post({
+        vendor: "linear",
+        displayName: "Linear",
+        primaryHost: "https://api.linear.app",
+        hosts: ["api.linear.app"],
+        scheme: "api_key_header",
+        schemeConfig: { headerName: "Authorization" },
+        credential: { apiKey: "lin_api_setup_test_key_0123456789" },
       }),
     );
     expect(res.status).toBe(201);

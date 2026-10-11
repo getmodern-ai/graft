@@ -1,0 +1,54 @@
+{
+  "name": "create-draft",
+  "description": "Creates an Outlook email draft (message) without sending it: the draft appears in the Drafts folder, with optional To, Cc and Bcc recipients.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "to": {
+        "type": "array",
+        "items": {
+          "type": "string",
+          "format": "email"
+        },
+        "description": "Email addresses for To recipients."
+      },
+      "cc": {
+        "type": "array",
+        "items": {
+          "type": "string",
+          "format": "email"
+        },
+        "description": "Email addresses for Cc recipients."
+      },
+      "bcc": {
+        "type": "array",
+        "items": {
+          "type": "string",
+          "format": "email"
+        },
+        "description": "Email addresses for Bcc recipients."
+      },
+      "subject": {
+        "type": "string",
+        "description": "The draft's subject."
+      },
+      "body": {
+        "type": "string",
+        "description": "The draft's message body."
+      },
+      "bodyType": {
+        "type": "string",
+        "enum": ["text", "html"],
+        "default": "text",
+        "description": "Whether the body is plain text or HTML."
+      }
+    },
+    "required": ["subject", "body"],
+    "additionalProperties": false
+  },
+  "hosts": ["graph.microsoft.com"],
+  "annotations": {
+    "readOnly": false,
+    "destructive": false
+  }
+}

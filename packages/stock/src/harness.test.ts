@@ -4,7 +4,13 @@ import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import { proveCheck, proveReplay, proveTestInput, readStockRecording } from "./harness";
+import {
+  jsonTextNotes,
+  proveCheck,
+  proveReplay,
+  proveTestInput,
+  readStockRecording,
+} from "./harness";
 import { stockHarnessModeFrom } from "./mode";
 import {
   formatRecording,
@@ -51,11 +57,20 @@ describe(`every stock tool (${mode.kind})`, () => {
         const read = await readStockRecording(tool);
         expect(read.ok ? [] : [read.problem]).toEqual([]);
         if (!read.ok) return;
+        // A note is printed, not failed on: the module may read the text for a reason of its own.
+        for (const note of jsonTextNotes(tool, read.recording)) console.warn(note);
         const report = await proveReplay(tool, read.recording, mode);
         expect(report.problems).toEqual([]);
-        expect(report.reachedVendor.every((call) => ["GET", "HEAD"].includes(call.method))).toBe(
-          true,
+        // Only reads reached the vendor: a GET or HEAD, or a POST the recording holds as a read
+        // because the proxy's classifier calls it one (GRA-260).
+        const readMethods = new Set(
+          read.recording.exchanges.filter((e) => e.kind === "read").map((e) => e.method),
         );
+        expect(
+          report.reachedVendor.every(
+            (call) => ["GET", "HEAD"].includes(call.method) || readMethods.has(call.method),
+          ),
+        ).toBe(true);
       });
     },
   );
@@ -159,6 +174,74 @@ const writeRecording: StockRecording = {
 };
 
 const firstWrite = writeRecording.exchanges[0] as RecordedWrite;
+
+// A search the reviewed read table admits (`@graft/proxy`'s `read-endpoints.ts`; GRA-260): a POST
+// that reaches the vendor in a dry run, recorded as a read with the body the module sent.
+const SEARCH_HOST = "api.apollo.io";
+
+const SEARCH_MODULE = `export default async (input: Input, ctx: Context) => {
+  const res = await ctx.fetch("/api/v1/contacts/search", {
+    host: "${SEARCH_HOST}",
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ q_keywords: input.q, per_page: 2 }),
+  });
+  if (!res.ok) throw new Error(\`POST /api/v1/contacts/search \${res.status}\`);
+  const body = (await res.json()) as { contacts: { id: string }[] };
+  return { ids: body.contacts.map((contact) => contact.id) };
+};
+`;
+
+const searchTool = fixture({
+  name: "search-contacts",
+  module: SEARCH_MODULE,
+  hosts: [SEARCH_HOST],
+});
+
+const searchRecording: StockRecording = {
+  format: 1,
+  tool: "demo__search-contacts",
+  recordedAt: "2026-10-11T00:00:00Z",
+  input: { q: "red" },
+  exchanges: [
+    {
+      kind: "read",
+      method: "POST",
+      url: `https://${SEARCH_HOST}/api/v1/contacts/search`,
+      body: { json: { q_keywords: "red", per_page: 2 } },
+      response: {
+        status: 200,
+        headers: { "content-type": "application/json" },
+        body: { json: { contacts: [{ id: "c_1" }] } },
+      },
+    },
+  ],
+  result: { ids: ["c_1"] },
+};
+
+describe("the harness over a read POST (GRA-270)", () => {
+  it("answers a search the reviewed table admits from the recording, body and all", async () => {
+    const report = await proveReplay(searchTool, searchRecording);
+    expect(report.problems).toEqual([]);
+    expect(report.reachedVendor).toEqual([
+      { method: "POST", url: `https://${SEARCH_HOST}/api/v1/contacts/search` },
+    ]);
+    expect(report.previewed).toEqual([]);
+  });
+
+  it("fails a search whose body disagrees with the recording", async () => {
+    const [read] = searchRecording.exchanges as RecordedRead[];
+    const report = await proveReplay(searchTool, {
+      ...searchRecording,
+      exchanges: [
+        { ...(read as RecordedRead), body: { json: { q_keywords: "blue", per_page: 2 } } },
+      ],
+    });
+    expect(report.problems[0]).toBe(
+      `stock tool demo__search-contacts: its read 1 disagrees with the recording: it made POST ${SEARCH_HOST}/api/v1/contacts/search, the recording holds POST ${SEARCH_HOST}/api/v1/contacts/search`,
+    );
+  });
+});
 
 describe("the harness", () => {
   it("passes a read tool whose recording agrees, answering every read from the recording", async () => {

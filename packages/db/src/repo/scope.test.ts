@@ -27,10 +27,16 @@ import {
   revokeAgent,
 } from "./agent";
 import {
+  carryApprovalsToVersion,
   deleteApproval,
   deleteApprovalsForVendor,
+  deleteVendorApproval,
+  deleteVendorApprovalsForVendor,
   findApproval,
+  findVendorApproval,
+  listVendorApprovals,
   updateAskEveryCall,
+  upsertVendorApproval,
 } from "./approval";
 import {
   findBlob,
@@ -175,6 +181,73 @@ describe("agent-scoped reads take both ids of the scope in the statement", () =>
     const s = only();
     expect(s.sql).toMatch(SCOPED_AGENT);
     expect(s.params).toEqual(["tool_1", "agent_1", "person_1", 1]);
+  });
+
+  /** ADR 0008 as amended 2026-10-09 (GRA-237): an integration's standing approval, per agent. */
+  it("an integration's standing approval", async () => {
+    await findVendorApproval(db, SCOPE, "hubspot");
+    const s = only();
+    expect(s.sql).toMatch(/^select .* from "vendor_approval" where/);
+    expect(s.sql).toContain('"vendor_approval"."vendor" = $1');
+    expect(s.sql).toMatch(SCOPED_AGENT);
+    expect(s.params).toEqual(["hubspot", "agent_1", "person_1", 1]);
+  });
+
+  it("the agent's integration approvals", async () => {
+    await listVendorApprovals(db, SCOPE);
+    const s = only();
+    expect(s.sql).toMatch(SCOPED_AGENT);
+    expect(s.params).toEqual(["agent_1", "person_1"]);
+  });
+
+  it("withdrawing an integration's standing approval", async () => {
+    await deleteVendorApproval(db, SCOPE, "hubspot");
+    const s = only();
+    expect(s.sql).toMatch(/^delete from "vendor_approval"/);
+    expect(s.sql).toContain('"vendor_approval"."vendor" = $1');
+    expect(s.sql).toMatch(SCOPED_AGENT);
+    expect(s.params).toEqual(["hubspot", "agent_1", "person_1"]);
+  });
+
+  /**
+   * The write takes the agent from the scope and inserts only where the agent is the person's:
+   * an `insert … select` from the agent row under both ids, so a mis-scoped grant writes nothing.
+   */
+  it("recording an integration's standing approval inserts only for the person's own agent", async () => {
+    await upsertVendorApproval(db, SCOPE, {
+      vendor: "hubspot",
+      includesDestructive: false,
+      grantedAt: new Date("2026-10-09T00:00:00Z"),
+    });
+    const s = only();
+    expect(s.sql).toMatch(/^insert into "vendor_approval"/);
+    expect(s.sql).toMatch(
+      /from "agent" where \("agent"\."id" = \$\d+ and "agent"\."person_id" = \$\d+\)/,
+    );
+    expect(s.sql).toContain("on conflict");
+    expect(s.params).toContain("agent_1");
+    expect(s.params).toContain("person_1");
+  });
+
+  it("a connection's confirmation records an integration's approval only where none stands", async () => {
+    await upsertVendorApproval(
+      db,
+      SCOPE,
+      {
+        vendor: "hubspot",
+        includesDestructive: false,
+        grantedAt: new Date("2026-10-09T00:00:00Z"),
+      },
+      { keep: true },
+    );
+    const s = only();
+    expect(s.sql).toMatch(/^insert into "vendor_approval"/);
+    expect(s.sql).toMatch(
+      /from "agent" where \("agent"\."id" = \$\d+ and "agent"\."person_id" = \$\d+\)/,
+    );
+    expect(s.sql).toContain("on conflict");
+    expect(s.sql).toContain("do nothing");
+    expect(s.sql).not.toContain("do update");
   });
 
   it("a pending action", async () => {
@@ -829,6 +902,17 @@ describe("person-scoped statements take the person", () => {
     );
   });
 
+  it("the vendor-wide integration approval delete reaches only the person's agents", async () => {
+    await deleteVendorApprovalsForVendor(db, "person_1", "hubspot");
+    const s = only();
+    expect(s.sql).toMatch(/^delete from "vendor_approval"/);
+    expect(s.sql).toContain('"vendor_approval"."vendor" = $1');
+    expect(s.sql).toContain(
+      '"vendor_approval"."agent_id" in (select "id" from "agent" where "agent"."person_id" = $2)',
+    );
+    expect(s.params).toEqual(["hubspot", "person_1"]);
+  });
+
   it("the vendor-wide approval delete reaches only the person's tools", async () => {
     await deleteApprovalsForVendor(db, "person_1", "unleashed");
     const s = only();
@@ -836,6 +920,21 @@ describe("person-scoped statements take the person", () => {
     expect(s.sql).toContain(
       '"tool_id" in (select "id" from "authored_tool" where ("authored_tool"."person_id" = $1 and "authored_tool"."vendor" = $2))',
     );
+  });
+
+  it("carrying approvals onto a stock advance's version reaches only the person's tool and the answers given for the version before (GRA-245)", async () => {
+    await carryApprovalsToVersion(db, "person_1", {
+      toolId: "tool_1",
+      fromVersionId: "ver_1",
+      toVersionId: "ver_2",
+    });
+    const s = only();
+    expect(s.sql).toMatch(/^update "approval" set "tool_version_id" = \$1/);
+    expect(s.sql).toContain(
+      '"approval"."tool_id" in (select "id" from "authored_tool" where ("authored_tool"."id" = $3 and "authored_tool"."person_id" = $4))',
+    );
+    expect(s.sql).toContain('"approval"."tool_version_id" = $5');
+    expect(s.params).toEqual(["ver_2", expect.any(String), "tool_1", "person_1", "ver_1"]);
   });
 
   /** A revoke's fourth sweep (GRA-69): every agent's entries, through the person's tools bound to the connection. */

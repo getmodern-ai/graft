@@ -15,6 +15,7 @@ function everySentence(origin: AskOrigin): string[] {
     connectedToastDescription({ origin, agentName: "Claude" }),
     connectedToastDescription({ origin, agentName: "Claude", approveBuild: true }),
     connectedToastDescription({ origin, agentName: "Claude", provider: "broker" }),
+    connectedToastDescription({ origin, agentName: "Claude", vendorTools: "HubSpot" }),
     connectedSettledSentence({ origin }),
     connectedSettledSentence({ origin, widens: true }),
     connectedSettledSentence({ origin, provider: "broker" }),
@@ -66,6 +67,24 @@ describe("an answered connection ask's copy (GRA-212)", () => {
       expect(sentence).not.toContain("waiting call");
       expect(sentence).not.toContain("Other agents");
     }
+  });
+
+  it("says the integration's tools run without asking when the line was left on (GRA-239)", () => {
+    expect(
+      connectedToastDescription({
+        origin: "agent",
+        agentName: "Claude",
+        approveBuild: true,
+        vendorTools: "HubSpot",
+      }),
+    ).toBe(
+      "In Claude's scope, allowed to build tools against it; its waiting call answers connected. Other agents get it when you add it to theirs. HubSpot's tools run for this agent without asking; destructive ones still ask.",
+    );
+    expect(
+      connectedToastDescription({ origin: "setup", agentName: "Claude", vendorTools: "Gmail" }),
+    ).toBe(
+      "In Claude's scope. Gmail's tools run for this agent without asking; destructive ones still ask. Setup carries on from here.",
+    );
   });
 
   it("says nothing with an em dash, in either origin", () => {

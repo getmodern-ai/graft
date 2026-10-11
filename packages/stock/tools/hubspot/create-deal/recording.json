@@ -1,0 +1,39 @@
+{
+  "format": 1,
+  "tool": "hubspot__create-deal",
+  "recordedAt": "2026-10-09T19:29:10.803Z",
+  "input": {
+    "name": "Yppuztp wzwf",
+    "stageId": "stsyuwprqgvnhwpwvhxw",
+    "pipelineId": "default",
+    "amount": 3726
+  },
+  "exchanges": [
+    {
+      "kind": "write",
+      "method": "POST",
+      "url": "https://api.hubapi.com/crm/v3/objects/deals",
+      "body": {
+        "json": {
+          "properties": {
+            "dealname": "Yppuztp wzwf",
+            "pipeline": "default",
+            "dealstage": "stsyuwprqgvnhwpwvhxw",
+            "amount": "3726"
+          }
+        }
+      }
+    }
+  ],
+  "result": {
+    "created": false,
+    "sent": {
+      "properties": {
+        "dealname": "Yppuztp wzwf",
+        "pipeline": "default",
+        "dealstage": "stsyuwprqgvnhwpwvhxw",
+        "amount": "3726"
+      }
+    }
+  }
+}

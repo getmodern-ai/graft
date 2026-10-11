@@ -4,6 +4,7 @@ import { useRef, useState } from "react";
 
 import { AgentConnectionDialog } from "@/components/agent/agent-connection-dialog";
 import { ApprovalsCard } from "@/components/agent/approvals-card";
+import { IntegrationApprovalsCard } from "@/components/agent/integration-approvals-card";
 import { LimitsForm } from "@/components/agent/limits-form";
 import { RevokeAgentDialog } from "@/components/agent/revoke-agent-dialog";
 import { ScopeEditor } from "@/components/agent/scope-editor";
@@ -23,7 +24,7 @@ import { StatusChip } from "@/components/status-chip";
 import { Time } from "@/components/time";
 import { Button } from "@/components/ui/button";
 import { agentQuery, workingSetChangesQuery, workingSetQuery } from "@/lib/agent-queries";
-import { approvalsQuery } from "@/lib/approval-queries";
+import { approvalsQuery, vendorApprovalsQuery } from "@/lib/approval-queries";
 import { connectionsQuery, toolsQuery } from "@/lib/connection-queries";
 import { agentStatusChip } from "@/lib/status-chips";
 
@@ -41,6 +42,7 @@ export const Route = createFileRoute("/_auth/_shell/agents/$agentId")({
     void context.queryClient.prefetchQuery(workingSetQuery(params.agentId));
     void context.queryClient.prefetchQuery(workingSetChangesQuery(params.agentId));
     void context.queryClient.prefetchQuery(approvalsQuery(params.agentId));
+    void context.queryClient.prefetchQuery(vendorApprovalsQuery(params.agentId));
     void context.queryClient.prefetchQuery(toolsQuery);
     return Promise.all([
       context.queryClient.ensureQueryData(agentQuery(params.agentId)),
@@ -129,6 +131,7 @@ function AgentRoute() {
 
       <WorkingSetTable agent={agent} />
       <ApprovalsCard agent={agent} />
+      <IntegrationApprovalsCard agent={agent} />
       <WorkingSetHistory agentId={agent.id} />
 
       {connecting && !agent.revokedAt ? (

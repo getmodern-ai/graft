@@ -1,0 +1,58 @@
+{
+  "name": "send-mail",
+  "description": "Sends an email (message) from the person's Outlook account at once. microsoft-outlook__create-draft saves one to review first, and microsoft-outlook__reply-to-message replies in a thread.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "to": {
+        "type": "array",
+        "description": "Email addresses to send the message to.",
+        "items": {
+          "type": "string",
+          "format": "email"
+        },
+        "minItems": 1
+      },
+      "cc": {
+        "type": "array",
+        "description": "Optional CC email addresses.",
+        "items": {
+          "type": "string",
+          "format": "email"
+        }
+      },
+      "bcc": {
+        "type": "array",
+        "description": "Optional BCC email addresses.",
+        "items": {
+          "type": "string",
+          "format": "email"
+        }
+      },
+      "subject": {
+        "type": "string",
+        "description": "The email subject."
+      },
+      "body": {
+        "type": "string",
+        "description": "The email body."
+      },
+      "bodyType": {
+        "type": "string",
+        "description": "Whether the body is plain text or HTML. Defaults to text.",
+        "enum": ["text", "html"]
+      },
+      "saveToSentItems": {
+        "type": "boolean",
+        "description": "Whether to save the message in Sent Items. Defaults to true."
+      }
+    },
+    "required": ["to", "subject", "body"],
+    "additionalProperties": false
+  },
+  "hosts": ["graph.microsoft.com"],
+  "annotations": {
+    "readOnly": false,
+    "destructive": false
+  }
+}

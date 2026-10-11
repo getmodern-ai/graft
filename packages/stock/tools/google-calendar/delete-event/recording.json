@@ -1,0 +1,22 @@
+{
+  "format": 1,
+  "tool": "google-calendar__delete-event",
+  "recordedAt": "2026-10-09T18:54:08.278Z",
+  "input": {
+    "eventId": "34900018_1ltgbjkm6qyfsm3ra34xhkixk0",
+    "calendarId": "qb.qog#ctstakl@example.com",
+    "sendUpdates": "all"
+  },
+  "exchanges": [
+    {
+      "kind": "write",
+      "method": "DELETE",
+      "url": "https://www.googleapis.com/calendar/v3/calendars/qb.qog%23ctstakl%40example.com/events/34900018_1ltgbjkm6qyfsm3ra34xhkixk0"
+    }
+  ],
+  "result": {
+    "deleted": true,
+    "eventId": "34900018_1ltgbjkm6qyfsm3ra34xhkixk0",
+    "calendarId": "qb.qog#ctstakl@example.com"
+  }
+}

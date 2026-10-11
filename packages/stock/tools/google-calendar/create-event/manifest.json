@@ -1,0 +1,67 @@
+{
+  "name": "create-event",
+  "description": "Creates (schedules, books) an event or meeting on Google Calendar, timed or all-day, and invites people as attendees by email, optionally with a Google Meet link; Google emails the invitations unless sendUpdates says otherwise. calendarId defaults to \"primary\"; google-calendar__list-calendars supplies others. The new event's id is the eventId google-calendar__get-event, google-calendar__update-event and google-calendar__delete-event take.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "summary": {
+        "type": "string",
+        "minLength": 1,
+        "description": "Event title."
+      },
+      "start": {
+        "type": "string",
+        "minLength": 1,
+        "description": "RFC 3339 date-time, or YYYY-MM-DD for an all-day event."
+      },
+      "end": {
+        "type": "string",
+        "minLength": 1,
+        "description": "RFC 3339 date-time, or the exclusive YYYY-MM-DD end date for an all-day event."
+      },
+      "timeZone": {
+        "type": "string",
+        "minLength": 1,
+        "description": "Optional IANA time zone applied to both start and end."
+      },
+      "description": {
+        "type": "string"
+      },
+      "location": {
+        "type": "string"
+      },
+      "attendees": {
+        "type": "array",
+        "items": {
+          "type": "string",
+          "format": "email"
+        },
+        "description": "Email addresses to invite."
+      },
+      "addMeetLink": {
+        "type": "boolean",
+        "default": false,
+        "description": "Whether to create a Google Meet conference link."
+      },
+      "sendUpdates": {
+        "type": "string",
+        "enum": ["all", "externalOnly", "none"],
+        "default": "all",
+        "description": "Who receives invitation emails."
+      },
+      "calendarId": {
+        "type": "string",
+        "minLength": 1,
+        "default": "primary",
+        "description": "Calendar identifier; defaults to the primary calendar."
+      }
+    },
+    "required": ["summary", "start", "end"],
+    "additionalProperties": false
+  },
+  "hosts": ["www.googleapis.com"],
+  "annotations": {
+    "readOnly": false,
+    "destructive": false
+  }
+}

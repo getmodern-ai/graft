@@ -8,6 +8,8 @@
  * `AskOrigin` is `components/pending/ask-card.tsx`'s, re-exported from there.
  */
 
+import { vendorToolsSentence } from "@graft/core/approval/vendor-approval.rules";
+
 export type AskOrigin = "agent" | "setup";
 
 /** Setup's next step after a connection is made, said the one way. */
@@ -18,22 +20,25 @@ const buildClause = (approveBuild: boolean | undefined) =>
 
 /**
  * A connection ask's success toast: the keyring's form, its OAuth consent, or a link provider's
- * sign-in (`provider` names it, and the account's token stays there).
+ * sign-in (`provider` names it, and the account's token stays there). `vendorTools` names the
+ * integration when the line for its tools was left on (GRA-239), and the toast says so.
  */
 export function connectedToastDescription(input: {
   origin: AskOrigin;
   agentName: string;
   approveBuild?: boolean;
   provider?: string;
+  vendorTools?: string;
 }): string {
   const scope = `In ${input.agentName}'s scope${buildClause(input.approveBuild)}`;
   const token = input.provider ? `the account's token stays with ${input.provider}` : null;
+  const tools = input.vendorTools ? ` ${vendorToolsSentence(input.vendorTools)}` : "";
   if (input.origin === "setup") {
-    return `${scope}${token ? `, and ${token}` : ""}. ${SETUP_MOVES_ON}`;
+    return `${scope}${token ? `, and ${token}` : ""}.${tools} ${SETUP_MOVES_ON}`;
   }
   return token
-    ? `${scope}; its waiting call answers connected. The account's token stays with ${input.provider}.`
-    : `${scope}; its waiting call answers connected. Other agents get it when you add it to theirs.`;
+    ? `${scope}; its waiting call answers connected. The account's token stays with ${input.provider}.${tools}`
+    : `${scope}; its waiting call answers connected. Other agents get it when you add it to theirs.${tools}`;
 }
 
 /** A connection ask's settled line, before the link to the connections screen. */

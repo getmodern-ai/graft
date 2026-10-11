@@ -1,3 +1,4 @@
+import { carryApprovalsToVersion } from "@graft/db/repo/approval";
 import { findConnection, findConnectionForUpdate } from "@graft/db/repo/connection";
 import {
   findAuthoredTool,
@@ -39,6 +40,12 @@ export type ToolDeps = {
    */
   findConnectionForUpdate: typeof findConnectionForUpdate;
   /**
+   * A stock advance that does not widen moves the answers given for the version before onto its
+   * own (ADR 0008 as amended 2026-10-09; `@graft/publish`'s `advanceStockCopy`, GRA-245). Here
+   * rather than on the approval seam because the advance is a tool write, under the tool's lock.
+   */
+  carryApprovalsToVersion: typeof carryApprovalsToVersion;
+  /**
    * The person's lock on one tool name for the transaction (`repo/tool.ts`): a publish and a stock
    * copy take it while they write a tool's rows (GRA-238), so the version numbers of one tool are
    * decided one writer at a time and a copy sees a tool another writer just made.
@@ -63,6 +70,7 @@ export const defaultToolDeps: ToolDeps = {
   recordToolVersionDryRun,
   findConnection,
   findConnectionForUpdate,
+  carryApprovalsToVersion,
   lockToolName: lockAuthoredToolName,
   newId: () => crypto.randomUUID(),
   now: () => new Date(),

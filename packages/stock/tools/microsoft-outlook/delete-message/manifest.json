@@ -1,0 +1,21 @@
+{
+  "name": "delete-message",
+  "description": "Deletes an Outlook email (message), moving it to Deleted Items. Destructive. The message id comes from microsoft-outlook__search-messages; microsoft-outlook__move-message files it in another folder instead.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "messageId": {
+        "type": "string",
+        "minLength": 1,
+        "description": "The message id microsoft-outlook__search-messages answers."
+      }
+    },
+    "required": ["messageId"],
+    "additionalProperties": false
+  },
+  "hosts": ["graph.microsoft.com"],
+  "annotations": {
+    "readOnly": false,
+    "destructive": true
+  }
+}

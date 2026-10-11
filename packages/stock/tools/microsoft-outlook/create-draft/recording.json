@@ -1,0 +1,81 @@
+{
+  "format": 1,
+  "tool": "microsoft-outlook__create-draft",
+  "recordedAt": "2026-10-10T06:12:00.718Z",
+  "input": {
+    "to": ["vfknfdmlp@example.com"],
+    "cc": ["eaaz@example.com"],
+    "bcc": ["bmsomv@example.com"],
+    "subject": "Xnjzc wjpdg bect",
+    "body": "Judx gwuntyg sm ubfaq by s peiwf sru nx hvj diog.",
+    "bodyType": "text"
+  },
+  "exchanges": [
+    {
+      "kind": "write",
+      "method": "POST",
+      "url": "https://graph.microsoft.com/v1.0/me/messages",
+      "body": {
+        "json": {
+          "subject": "Xnjzc wjpdg bect",
+          "body": {
+            "contentType": "Text",
+            "content": "Judx gwuntyg sm ubfaq by s peiwf sru nx hvj diog."
+          },
+          "toRecipients": [
+            {
+              "emailAddress": {
+                "address": "vfknfdmlp@example.com"
+              }
+            }
+          ],
+          "ccRecipients": [
+            {
+              "emailAddress": {
+                "address": "eaaz@example.com"
+              }
+            }
+          ],
+          "bccRecipients": [
+            {
+              "emailAddress": {
+                "address": "bmsomv@example.com"
+              }
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "result": {
+    "created": false,
+    "sent": {
+      "subject": "Xnjzc wjpdg bect",
+      "body": {
+        "contentType": "Text",
+        "content": "Judx gwuntyg sm ubfaq by s peiwf sru nx hvj diog."
+      },
+      "toRecipients": [
+        {
+          "emailAddress": {
+            "address": "vfknfdmlp@example.com"
+          }
+        }
+      ],
+      "ccRecipients": [
+        {
+          "emailAddress": {
+            "address": "eaaz@example.com"
+          }
+        }
+      ],
+      "bccRecipients": [
+        {
+          "emailAddress": {
+            "address": "bmsomv@example.com"
+          }
+        }
+      ]
+    }
+  }
+}

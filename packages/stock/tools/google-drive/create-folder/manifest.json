@@ -1,0 +1,25 @@
+{
+  "name": "create-folder",
+  "description": "Creates a folder in Google Drive, optionally inside a specified parent folder; without a parent, it is created in My Drive.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "name": {
+        "type": "string",
+        "description": "The name of the folder to create.",
+        "examples": ["Projects"]
+      },
+      "parentId": {
+        "type": "string",
+        "description": "A parent folder id from search-files or list-recent-files, or 'root' for My Drive."
+      }
+    },
+    "required": ["name"],
+    "additionalProperties": false
+  },
+  "hosts": ["www.googleapis.com"],
+  "annotations": {
+    "readOnly": false,
+    "destructive": false
+  }
+}

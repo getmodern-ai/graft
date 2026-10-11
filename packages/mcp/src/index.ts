@@ -50,6 +50,7 @@ export {
   type ApprovalAskKind,
   type AskChannel,
   type AwaitingApproval,
+  askedVersionOfPayload,
   type BuildAskPayload,
   DEFAULT_POLL_MS,
   DESCRIPTION_PROVENANCE_NOTE,

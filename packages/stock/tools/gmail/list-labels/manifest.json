@@ -1,0 +1,14 @@
+{
+  "name": "list-labels",
+  "description": "Lists Gmail labels and their ids. Label ids feed gmail__modify-labels, and a search can name a label with label:<name> in gmail__search-messages.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {},
+    "additionalProperties": false
+  },
+  "hosts": ["gmail.googleapis.com"],
+  "annotations": {
+    "readOnly": true,
+    "destructive": false
+  }
+}

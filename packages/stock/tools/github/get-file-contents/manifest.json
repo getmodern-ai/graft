@@ -1,0 +1,36 @@
+{
+  "name": "get-file-contents",
+  "description": "Gets a file's text, or lists a directory, from a GitHub repository at its default branch or a given branch, tag or commit; the README by default. The owner and repository come from github__list-my-repositories, and a pull request's changed paths from github__get-pull-request.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "owner": {
+        "type": "string",
+        "minLength": 1,
+        "description": "The repository's owner, the part before the slash of a full_name github__list-my-repositories answers."
+      },
+      "repo": {
+        "type": "string",
+        "minLength": 1,
+        "description": "The repository's name, the part after the slash of a full_name github__list-my-repositories answers."
+      },
+      "path": {
+        "type": "string",
+        "default": "README.md",
+        "description": "The file's or directory's path from the repository's root; README.md when omitted. github__get-pull-request answers a pull request's changed paths."
+      },
+      "ref": {
+        "type": "string",
+        "minLength": 1,
+        "description": "Optional branch, tag, or commit SHA. Omit to use the default branch."
+      }
+    },
+    "required": ["owner", "repo"],
+    "additionalProperties": false
+  },
+  "hosts": ["api.github.com"],
+  "annotations": {
+    "readOnly": true,
+    "destructive": false
+  }
+}

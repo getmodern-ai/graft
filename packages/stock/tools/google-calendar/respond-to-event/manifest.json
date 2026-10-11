@@ -1,0 +1,42 @@
+{
+  "name": "respond-to-event",
+  "description": "Responds to (RSVPs to) a Google Calendar invitation for the calendar's owner: accepts, declines or tentatively accepts it, with an optional comment, and tells the organizer unless sendUpdates says otherwise. Refuses an event the owner is not invited to. google-calendar__list-events supplies the eventId; calendarId defaults to \"primary\" and google-calendar__list-calendars supplies others.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "eventId": {
+        "type": "string",
+        "minLength": 1,
+        "description": "The Google Calendar event ID supplied by list-events."
+      },
+      "response": {
+        "type": "string",
+        "enum": ["accepted", "declined", "tentative"],
+        "description": "The response to send for the calendar owner's invitation."
+      },
+      "comment": {
+        "type": "string",
+        "description": "An optional comment to include with the response."
+      },
+      "calendarId": {
+        "type": "string",
+        "minLength": 1,
+        "default": "primary",
+        "description": "Calendar ID supplied by list-calendars, or primary by default."
+      },
+      "sendUpdates": {
+        "type": "string",
+        "enum": ["all", "externalOnly", "none"],
+        "default": "all",
+        "description": "Which guests Google Calendar should notify about the response."
+      }
+    },
+    "required": ["eventId", "response"],
+    "additionalProperties": false
+  },
+  "hosts": ["www.googleapis.com"],
+  "annotations": {
+    "readOnly": false,
+    "destructive": false
+  }
+}

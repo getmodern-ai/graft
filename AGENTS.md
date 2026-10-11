@@ -156,7 +156,12 @@ directory means the coding agent; everywhere else it is `CONTEXT.md`'s word.
   other tool, destructive included, asks once per agent and the answer holds; asking on every call
   is the person's opt-in per tool (`askEveryCall`), both ways. The connection confirmation may
   record `acquire`'s build approval for the asking agent (`approveBuild`, on by default): the person
-  answers on the same page, and the grain does not move. Read the amendments before changing
+  answers on the same page, and the grain does not move. Since the amendment of 2026-10-09
+  (GRA-237) a tool's ask may also allow every tool of its integration for that agent at once
+  (`vendor_approval`, `allowVendor`), destructive ones only when ticked; a tool's own `deny` and
+  `askEveryCall` still win over it. The connection confirmation offers it too (GRA-239), as a
+  second pre-ticked line under `approveBuild`, never with destructive tools and never narrowing one
+  that stands (`allowVendorWhenConnecting`). Read the amendments before changing
   `packages/core/src/approval/approval.decision.ts` or the ask in `packages/mcp/src/approval.ts`.
 - **The proxy is the only route to a vendor.** A sandbox with any other egress, or a module that
   holds a credential, violates ADR 0010 and ADR 0013 whatever the reason.
@@ -716,8 +721,32 @@ version number's unique constraint. A stock tool's run signal (GRA-244) reads `r
 toolbox hit `stock: true` or `remixed: true`. `repo/tool.ts`'s `listToolVersionOrigins` (each
 version's origin with the stock version's number, one statement) feeds both and `GET /api/tools`'s
 `lineage` and `versions`, which the connections screen draws under each tool
-(`apps/web/src/lib/tool-versions.ts`: *Ready-made v2* or *Written by your agent*). Approvals are
-untouched by an advance here; GRA-245 decides what one keeps.
+(`apps/web/src/lib/tool-versions.ts`: *Ready-made v2* or *Written by your agent*).
+
+**An approval is given for a version, and a stock advance carries it unless it widens** (GRA-245;
+ADR 0008 and its amendment of 2026-10-09). `approval.tool_version_id` (migration 0016, existing
+rows set to their tool's current version) is the version the answer was given for, and **that is
+the version the person was shown** (Greptile on #190): a tool ask's payload names
+`toolVersionId`, the version the asking call pinned, and every answer path (the console's route
+and the card's `answer_ask` through `ask-answer.ts`, the elicitation and a taken console answer
+through `approval.ts`) passes it to `setApproval` as `asked`, never the pointer at answer time. An
+old ask answered after a republish approves the old version only, so the new one asks; a waiting
+ask is taken only by a call running its version. `setApproval` reads the tool under its row lock
+(`findAuthoredToolForUpdate`, the advance's), lands a late yes on a stock copy's current version
+when `answerCarriesTo` says every later version is a non-widening advance of what the ask showed,
+and leaves an allow already standing for the current version in place. The gate judges **the
+version the run executes**: `run.ts` passes the pinned version's id to `gateToolCall`, and
+`decideToolCall` takes `{ toolId, versionId, annotations }`; `approvalDecision` asks again for a
+write or destructive tool whose `allow` names another (`forThisVersion`, read by `isForVersion`),
+so any republish, a remix included, asks once; a `deny` holds across versions. `advanceStockCopy` moves every agent's
+answer for the version the copy stood on onto the advance's version in its transaction
+(`repo/approval.ts`'s `carryApprovalsToVersion`, on `ToolDeps`) unless `annotationsWiden` says the
+new version went read-only to a write or non-destructive to destructive. **The ask names where the
+tool came from** through one browser-safe helper, `@graft/core`'s `stock/tool-provenance.rules.ts`
+(`toolProvenance(lineage)`: a badge, a note and the elicitation form's lead), which `approval.ts`
+reads for the form's message, the payload's `provenance` and `note`, and the ask card's
+`tool.provenance` (text, since the card imports nothing); the console's `tool-ask-card.tsx` calls
+it on the payload's `provenance`, absent on an older ask and read as `authored`.
 
 **Every stock tool proves itself in `pnpm run test`, with no secret** (GRA-240; ADR 0025).
 `packages/stock/src/harness.ts` answers sentences opening `stock tool <vendor>__<name>:` for three
@@ -735,6 +764,27 @@ keyed vendors, sends the reads to the vendor and compares status and JSON shape 
 Turbo's strict env mode keeps `pnpm run test` on replay. The recording is left out of the module's
 files and the source hash, so re-recording appends no catalogue version. CONTRIBUTING.md says stock
 is maintainer-built for now.
+
+**A stock tool is built by `pnpm --filter @graft/stock-build build-tool -- <vendor> "<goal>"
+[--from <name>]`** (GRA-246; ADR 0025). `packages/stock-build` is a leaf nothing imports, as
+`@graft/evals` is, since `@graft/mcp` dev-depends on `@graft/stock` and the command needs both.
+`loop.ts` runs the real `acquire` over MCP in-process, in `@graft/evals`' world shape: `@graft/mcp`'s
+in-memory store, a temporary toolbox, the fake sandbox and the real proxy in front of the
+maintainer's connection, so it never writes to a person's toolbox or a database. On success
+`build.ts` stages the passing draft with its manifest (the connection hosts the proof reached or the
+module names), its test input and the recording `@graft/stock`'s `record.ts` makes (one dry run
+through the proxy, the vendor's echo of the credential mirrored as the proxy redacts it, written
+only through `redactRecording`) and, before that, **scrubs of every vendor value** (GRA-257:
+`src/scrub.ts`'s `scrubRecording` over the answers and the test input under a random seed, then a
+second dry run over the scrubbed answers that the recorded requests and result are taken from, then
+`survivingValuesOf` as the last check; no opt-out, and `test-input.json` is the scrubbed input),
+formats it with the repository's Biome, proves it with the
+harness's three proofs as CI will, and only then writes `tools/<vendor>/<name>/`. `--from` hands the
+model the current module through the opening context's hints (past `acquire`'s 4,000 characters)
+and writes under the current name in its place; without it an existing tool is refused. A failure
+writes nothing and prints the job's failure and last diagnostics, redacted by the credential's
+values. The model is `GRAFT_MODEL_BACKEND` as the server reads it, the connection
+`GRAFT_STOCK_LIVE_CONNECTIONS`; `packages/stock/README.md` is the maintainer's page.
 
 **A file moves between tools as a blob, never through the model** (GRA-181; ADR 0023). A blob is a
 directory `<id>/` holding `data` and a `meta.json` sidecar under the agent's blobs directory,
@@ -959,7 +1009,19 @@ string }`) and keeps refusing a literal absolute URL. `acquire`'s proof reads ca
 optional `host` (`@graft/model`'s `ProofReadTarget`, `{ path, host: string | null }` on the wire,
 a bare path still read from a script): the probe passes it to `ctx.fetch`, and `job.ts` refuses a
 host outside the connection's set (`hostSetOf`) before any read, as a failed read naming the
-declared hosts. The authoring skill says both, and that `ctx.proxyBase` stays for SDKs.
+declared hosts. The authoring skill says both, and that `ctx.proxyBase` stays for SDKs. **A proof
+read carries the vendor's own headers, and may be a read `POST`** (GRA-271): `ProofReadTarget`
+adds optional `headers`, `method` (`GET`, or `POST`) and `body`, on the wire as `method` null for a
+`GET`, `headers` a list of `{ name, value }` and `body` null; `proofReadProblems` refuses a
+credential-shaped name (`Authorization`, `Cookie`, `Host`, `Proxy-*`, `X-Graft-*`), a name that is
+not a token, a body on a `GET` and the caps (`MAX_PROOF_READ_HEADERS` and the two beside it), and
+`job.ts` refuses before any read a header the proxy would strip or the scheme sets over the
+caller's (`@graft/proxy`'s `unforwardedRequestHeaderNames`, the outgoing policy itself, and
+`schemeReplacedHeaderNames`, the scheme's `apply` over probe values, so a default it supplies only
+when the caller sends none stays the module's) and a `POST` its `classifyRequest` does not call a read, each as a failed read with
+the sentence. A preview the proxy answers anyway (`x-graft-dry-run: intercepted`) is a failed read,
+never a pass. Progress lines name the headers, never a value; the trace records each as
+`name: value` so the job's redaction reads it.
 
 ### The self-hosted image
 
@@ -1143,13 +1205,15 @@ offers *Set up Graft* in its empty body to a person who skipped.
 are `@graft/core/setup/starter-vendors.ts`, browser-safe, one entry each (vendor slug, hosts, docs,
 the keyring's scheme and parameters, the curated read-only `goal`, `runInput` with its default, the
 `outcome` sentence); adding one is one entry. **Starters are one-click only** (GRA-216): the list is
-common services a link provider connects by OAuth (Gmail, Google Calendar, Google Drive, Slack,
-Notion, GitHub, HubSpot) plus Open-Meteo, the keyless one, each task a `GET`, since the check counts
+common services a link provider connects by OAuth (Gmail, Google Calendar, Google Drive,
+Google Sheets, Slack, Notion, GitHub, HubSpot, and Stripe, a stock integration since GRA-261) plus
+Open-Meteo, the keyless one, each task a `GET`, since the check counts
 a `POST` as a write and the result step runs only a read-only tool (so no Linear, whose API is
 GraphQL). **Every task needs nothing the person has to look up** (GRA-217): no id, no name, no link;
 Open-Meteo's city, with its default, is the one input, and every other starter's `hints` names its
 one endpoint and says the tool takes no input (`starter-vendors.test.ts` pins both). That is why
-Google Drive's file list replaced Google Sheets, whose rows need a spreadsheet's id and a range; a
+Google Sheets' task lists spreadsheets through Drive's search (both hosts on the entry, GRA-259)
+rather than reading rows, which need a spreadsheet's id and a range; a
 starter's vendor slug is the catalogue's app with hyphens read as underscores (`google-drive` is
 Pipedream's `google_drive`). The keyring's scheme on each entry stays truthful for the form path a link provider steps
 aside to (GRA-147). `setupVendorOptions` is the pure filter and order over each starter's covering

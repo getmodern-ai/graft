@@ -111,6 +111,18 @@ const TOOL: AskCard = {
   },
 };
 
+/** The same ask from a server that offers the integration-wide yes beside Allow (GRA-237). */
+const TOOL_OFFER: AskCard = {
+  ...TOOL,
+  vendorApproval: {
+    integrationName: "Demo Orders",
+    label: "Allow every Demo Orders tool for this agent",
+    destructiveLabel: "Include destructive tools",
+    destructiveDescription:
+      "Off, a Demo Orders tool that can delete or overwrite data still asks you first.",
+  },
+};
+
 /** Gmail through a link provider (GRA-117): started from the card, answered by the link's return. */
 const LINK: AskCard = {
   ...SECRET,
@@ -286,6 +298,35 @@ describe("a tool's first-use approval (GRA-116)", () => {
     expect(buttons(root)).toEqual(["Deny", "Allow"]);
   });
 
+  it("marks the description with where the tool came from, as the server wrote it (GRA-245)", () => {
+    const stock = renderAsk(
+      {
+        ...TOOL,
+        tool: {
+          ...(TOOL.tool as NonNullable<AskCard["tool"]>),
+          provenance: {
+            badge: "Ready-made by Graft",
+            note: "Ready-made by Graft and reviewed before release.",
+          },
+        },
+      },
+      handlers(),
+      document,
+    );
+    expect(stock.querySelector(".ask-badge")?.textContent).toBe("Ready-made by Graft");
+    expect(stock.querySelector(".ask-quote figcaption")?.textContent).toContain(
+      "Ready-made by Graft and reviewed before release.",
+    );
+    expect(stock.textContent).not.toContain("agent's model");
+  });
+
+  it("reads a card with no provenance, from an older server, as an authored tool's", () => {
+    const root = renderAsk(TOOL, handlers(), document);
+    expect(root.querySelector(".ask-quote figcaption")?.textContent).toContain(
+      "Read it as the agent's account of what the tool does.",
+    );
+  });
+
   it("says when the tool is destructive, and when it is set to ask every time", () => {
     const destructive = renderAsk(
       { ...TOOL, tool: { ...(TOOL.tool as NonNullable<AskCard["tool"]>), destructive: true } },
@@ -321,6 +362,59 @@ describe("a tool's first-use approval (GRA-116)", () => {
     expect(readAskCard({ reason: "awaiting_approval", card: TOOL })).toEqual(TOOL);
     const { tool: _tool, ...bare } = TOOL;
     expect(readAskCard({ card: { ...TOOL, tool: { description: 1 } } })).toEqual(bare);
+  });
+});
+
+/** ADR 0008 as amended 2026-10-09 (GRA-237): every tool of the integration, allowed at once. */
+describe("a tool's ask offering the whole integration", () => {
+  it("draws the server's offer beside Allow and the destructive tick, off by default", () => {
+    const root = renderAsk(TOOL_OFFER, handlers(), document);
+    expect(buttons(root)).toEqual(["Deny", "Allow every Demo Orders tool for this agent", "Allow"]);
+    const tick = root.querySelector<HTMLInputElement>("input[name=includesDestructive]");
+    expect(tick?.checked).toBe(false);
+    expect(root.textContent).toContain("Include destructive tools");
+    expect(root.textContent).toContain(
+      "Off, a Demo Orders tool that can delete or overwrite data still asks you first.",
+    );
+  });
+
+  it("sends the integration's yes with the tick as it stands, and Allow alone without it", async () => {
+    const h = handlers({ answer: { ok: true, sentence: "Allowed. Every Demo Orders tool." } });
+    const root = renderAsk(TOOL_OFFER, h, document);
+    [...root.querySelectorAll("button")]
+      .find((b) => b.textContent === "Allow every Demo Orders tool for this agent")
+      ?.click();
+    await flush();
+    expect(h.answer).toHaveBeenCalledWith({
+      allow: true,
+      allowVendor: true,
+      includesDestructive: false,
+    });
+    expect(status(root)?.textContent).toBe("Allowed. Every Demo Orders tool.");
+
+    const ticked = handlers();
+    const second = renderAsk(TOOL_OFFER, ticked, document);
+    second.querySelector<HTMLInputElement>("input[name=includesDestructive]")?.click();
+    [...second.querySelectorAll("button")]
+      .find((b) => b.textContent === "Allow every Demo Orders tool for this agent")
+      ?.click();
+    await flush();
+    expect(ticked.answer).toHaveBeenCalledWith({
+      allow: true,
+      allowVendor: true,
+      includesDestructive: true,
+    });
+
+    const plain = handlers();
+    const third = renderAsk(TOOL_OFFER, plain, document);
+    [...third.querySelectorAll("button")].find((b) => b.textContent === "Allow")?.click();
+    await flush();
+    expect(plain.answer).toHaveBeenCalledWith({ allow: true });
+  });
+
+  it("reads the offer off the wire, and drops one of the wrong shape", () => {
+    expect(readAskCard({ card: TOOL_OFFER })).toEqual(TOOL_OFFER);
+    expect(readAskCard({ card: { ...TOOL_OFFER, vendorApproval: { label: 1 } } })).toEqual(TOOL);
   });
 });
 
@@ -830,5 +924,96 @@ describe("the Setup offer", () => {
     expect(readCardData({ reason: "awaiting_approval", card: BUILD })).toEqual(BUILD);
     expect(readSetupCard({ card: { kind: "setup", agentName: "Claude" } })).toBeNull();
     expect(readCardData({ tools: [], connections: [] })).toBeNull();
+  });
+});
+
+/**
+ * GRA-239 (ADR 0008 as amended 2026-10-09): a connection's card from a server that offers the
+ * line for the integration's tools draws it under the build choice, ticked, and sends it with the
+ * confirm or the link's start; a card without it draws and sends what it always did.
+ */
+describe("the line for the integration's tools on a connection's card", () => {
+  const USE_TOOLS = {
+    integrationName: "Open-Meteo",
+    label: "Use Open-Meteo's tools without asking each time",
+    description: "A tool that can delete or overwrite data still asks you first.",
+  };
+  const KEYLESS_LINE: AskCard = { ...KEYLESS, vendorTools: USE_TOOLS };
+  const LINK_LINE: AskCard = {
+    ...LINK,
+    vendorTools: {
+      ...USE_TOOLS,
+      integrationName: "Gmail",
+      label: "Use Gmail's tools without asking each time",
+    },
+  };
+  const box = (root: HTMLElement, name: string) =>
+    root.querySelector(`input[name=${name}]`) as HTMLInputElement | null;
+
+  it("is read off the result with the rest of the card", () => {
+    expect(readAskCard({ card: KEYLESS_LINE })).toEqual(KEYLESS_LINE);
+  });
+
+  it("draws the line ticked under the build choice, in the server's words", () => {
+    const root = renderAsk(KEYLESS_LINE, handlers(), document);
+    expect(box(root, "approveBuild")?.checked).toBe(true);
+    expect(box(root, "allowVendor")?.checked).toBe(true);
+    expect(root.textContent).toContain(USE_TOOLS.label);
+    expect(root.textContent).toContain(USE_TOOLS.description);
+    const ticks = [...root.querySelectorAll("input[type=checkbox]")].map(
+      (node) => (node as HTMLInputElement).name,
+    );
+    expect(ticks).toEqual(["approveBuild", "allowVendor"]);
+  });
+
+  it("sends the line with the keyless confirm as the person left it, and freezes it", async () => {
+    const h = handlers();
+    const root = renderAsk(KEYLESS_LINE, h, document);
+    const line = box(root, "allowVendor") as HTMLInputElement;
+    line.checked = false;
+    [...root.querySelectorAll("button")].find((b) => b.textContent === "Connect")?.click();
+    await flush();
+    expect(h.answer).toHaveBeenCalledWith({
+      connect: true,
+      approveBuild: true,
+      allowVendor: false,
+    });
+    expect(line.disabled).toBe(true);
+
+    const again = handlers();
+    const second = renderAsk(KEYLESS_LINE, again, document);
+    [...second.querySelectorAll("button")].find((b) => b.textContent === "Connect")?.click();
+    await flush();
+    expect(again.answer).toHaveBeenCalledWith({
+      connect: true,
+      approveBuild: true,
+      allowVendor: true,
+    });
+  });
+
+  it("sends the line with the link's start", async () => {
+    const h = handlers();
+    const root = renderAsk(LINK_LINE, h, document);
+    expect(box(root, "allowVendor")?.checked).toBe(true);
+    [...root.querySelectorAll("button")]
+      .find((b) => b.textContent === "Connect through broker")
+      ?.click();
+    await flush();
+    expect(h.startLink).toHaveBeenCalledWith({
+      pendingActionId: "pa_4",
+      approveBuild: true,
+      allowVendor: true,
+    });
+    expect(box(root, "allowVendor")?.disabled).toBe(true);
+    h.stop();
+  });
+
+  it("is absent from a card the server wrote without it, which sends what it always sent", async () => {
+    const h = handlers();
+    const root = renderAsk(KEYLESS, h, document);
+    expect(box(root, "allowVendor")).toBeNull();
+    [...root.querySelectorAll("button")].find((b) => b.textContent === "Connect")?.click();
+    await flush();
+    expect(h.answer).toHaveBeenCalledWith({ connect: true, approveBuild: true });
   });
 });

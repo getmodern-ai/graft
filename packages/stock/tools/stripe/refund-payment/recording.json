@@ -1,0 +1,28 @@
+{
+  "format": 1,
+  "tool": "stripe__refund-payment",
+  "recordedAt": "2026-10-09T23:58:35.867Z",
+  "input": {
+    "charge": "pc_EgmdHgdncb3933",
+    "amount": 973,
+    "reason": "requested_by_customer"
+  },
+  "exchanges": [
+    {
+      "kind": "write",
+      "method": "POST",
+      "url": "https://api.stripe.com/v1/refunds",
+      "body": {
+        "text": "charge=pc_EgmdHgdncb3933&amount=973&reason=requested_by_customer"
+      }
+    }
+  ],
+  "result": {
+    "created": false,
+    "sent": {
+      "charge": "pc_EgmdHgdncb3933",
+      "amount": "973",
+      "reason": "requested_by_customer"
+    }
+  }
+}

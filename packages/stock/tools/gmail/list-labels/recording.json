@@ -1,0 +1,261 @@
+{
+  "format": 1,
+  "tool": "gmail__list-labels",
+  "recordedAt": "2026-10-09T18:51:00.336Z",
+  "input": {},
+  "exchanges": [
+    {
+      "kind": "read",
+      "method": "GET",
+      "url": "https://gmail.googleapis.com/gmail/v1/users/me/labels",
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json; charset=UTF-8"
+        },
+        "body": {
+          "json": {
+            "labels": [
+              {
+                "id": "ZGCI",
+                "name": "ZGCI",
+                "messageListVisibility": "etmz",
+                "labelListVisibility": "fsowmDpoe",
+                "type": "system"
+              },
+              {
+                "id": "GLRZ",
+                "name": "GLRZ",
+                "type": "system"
+              },
+              {
+                "id": "ATNNR",
+                "name": "ATNNR",
+                "type": "system"
+              },
+              {
+                "id": "UCYVXGSSG",
+                "name": "UCYVXGSSG",
+                "messageListVisibility": "etmz",
+                "labelListVisibility": "fsowmDpoe",
+                "type": "system"
+              },
+              {
+                "id": "XELFD",
+                "name": "XELFD",
+                "messageListVisibility": "etmz",
+                "labelListVisibility": "fsowmDpoe",
+                "type": "system"
+              },
+              {
+                "id": "DOHWS",
+                "name": "DOHWS",
+                "type": "system"
+              },
+              {
+                "id": "NCYS",
+                "name": "NCYS",
+                "messageListVisibility": "etmz",
+                "labelListVisibility": "fsowmDpoe",
+                "type": "system"
+              },
+              {
+                "id": "JKRMDAVR_HYAIIH",
+                "name": "JKRMDAVR_HYAIIH",
+                "messageListVisibility": "etmz",
+                "labelListVisibility": "fsowmDpoe",
+                "type": "system"
+              },
+              {
+                "id": "PIHLYUNR_HDZRJXF",
+                "name": "PIHLYUNR_HDZRJXF",
+                "messageListVisibility": "etmz",
+                "labelListVisibility": "fsowmDpoe",
+                "type": "system"
+              },
+              {
+                "id": "IIFEHMZX_YTWWQMQL",
+                "name": "IIFEHMZX_YTWWQMQL",
+                "messageListVisibility": "etmz",
+                "labelListVisibility": "fsowmDpoe",
+                "type": "system"
+              },
+              {
+                "id": "AFHISQMO_YUFSCLPSWY",
+                "name": "AFHISQMO_YUFSCLPSWY",
+                "messageListVisibility": "etmz",
+                "labelListVisibility": "fsowmDpoe",
+                "type": "system"
+              },
+              {
+                "id": "ILZXTQZB_MDWQIP",
+                "name": "ILZXTQZB_MDWQIP",
+                "messageListVisibility": "etmz",
+                "labelListVisibility": "fsowmDpoe",
+                "type": "system"
+              },
+              {
+                "id": "FEZMJB_FCVR",
+                "name": "FEZMJB_FCVR",
+                "type": "system"
+              },
+              {
+                "id": "IVSAAUT",
+                "name": "IVSAAUT",
+                "type": "system"
+              },
+              {
+                "id": "RZKPIS",
+                "name": "RZKPIS",
+                "type": "system"
+              },
+              {
+                "id": "Fyefc_7",
+                "name": "Oxsgctfiemp",
+                "messageListVisibility": "etyj",
+                "labelListVisibility": "fzifoSjxk",
+                "type": "user",
+                "color": {
+                  "textColor": "#624117",
+                  "backgroundColor": "#y6g4x7"
+                }
+              },
+              {
+                "id": "Uoyvj_3",
+                "name": "Zonzo & Hkfa Hbavunog",
+                "messageListVisibility": "etyj",
+                "labelListVisibility": "fzifoSjxk",
+                "type": "user",
+                "color": {
+                  "textColor": "#624117",
+                  "backgroundColor": "#o6c6cn"
+                }
+              },
+              {
+                "id": "Xevat_5",
+                "name": "Wtfrqgdpbdalk & Jbqwzflh",
+                "messageListVisibility": "etyj",
+                "labelListVisibility": "fzifoSjxk",
+                "type": "user",
+                "color": {
+                  "textColor": "#624117",
+                  "backgroundColor": "#pib8a4"
+                }
+              },
+              {
+                "id": "Fbbqu_5",
+                "name": "SFL Mfkdte",
+                "messageListVisibility": "etyj",
+                "labelListVisibility": "fzifoSjxk",
+                "type": "user",
+                "color": {
+                  "textColor": "#eqiogs",
+                  "backgroundColor": "#96y387"
+                }
+              }
+            ]
+          }
+        }
+      }
+    }
+  ],
+  "result": {
+    "labels": [
+      {
+        "id": "AFHISQMO_YUFSCLPSWY",
+        "name": "AFHISQMO_YUFSCLPSWY",
+        "type": "system"
+      },
+      {
+        "id": "ATNNR",
+        "name": "ATNNR",
+        "type": "system"
+      },
+      {
+        "id": "DOHWS",
+        "name": "DOHWS",
+        "type": "system"
+      },
+      {
+        "id": "FEZMJB_FCVR",
+        "name": "FEZMJB_FCVR",
+        "type": "system"
+      },
+      {
+        "id": "GLRZ",
+        "name": "GLRZ",
+        "type": "system"
+      },
+      {
+        "id": "IIFEHMZX_YTWWQMQL",
+        "name": "IIFEHMZX_YTWWQMQL",
+        "type": "system"
+      },
+      {
+        "id": "ILZXTQZB_MDWQIP",
+        "name": "ILZXTQZB_MDWQIP",
+        "type": "system"
+      },
+      {
+        "id": "IVSAAUT",
+        "name": "IVSAAUT",
+        "type": "system"
+      },
+      {
+        "id": "JKRMDAVR_HYAIIH",
+        "name": "JKRMDAVR_HYAIIH",
+        "type": "system"
+      },
+      {
+        "id": "NCYS",
+        "name": "NCYS",
+        "type": "system"
+      },
+      {
+        "id": "PIHLYUNR_HDZRJXF",
+        "name": "PIHLYUNR_HDZRJXF",
+        "type": "system"
+      },
+      {
+        "id": "RZKPIS",
+        "name": "RZKPIS",
+        "type": "system"
+      },
+      {
+        "id": "UCYVXGSSG",
+        "name": "UCYVXGSSG",
+        "type": "system"
+      },
+      {
+        "id": "XELFD",
+        "name": "XELFD",
+        "type": "system"
+      },
+      {
+        "id": "ZGCI",
+        "name": "ZGCI",
+        "type": "system"
+      },
+      {
+        "id": "Fyefc_7",
+        "name": "Oxsgctfiemp",
+        "type": "user"
+      },
+      {
+        "id": "Fbbqu_5",
+        "name": "SFL Mfkdte",
+        "type": "user"
+      },
+      {
+        "id": "Xevat_5",
+        "name": "Wtfrqgdpbdalk & Jbqwzflh",
+        "type": "user"
+      },
+      {
+        "id": "Uoyvj_3",
+        "name": "Zonzo & Hkfa Hbavunog",
+        "type": "user"
+      }
+    ]
+  }
+}

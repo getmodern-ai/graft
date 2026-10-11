@@ -1,0 +1,1058 @@
+{
+  "format": 1,
+  "tool": "stripe__list-payments",
+  "recordedAt": "2026-10-09T23:50:09.790Z",
+  "input": {},
+  "exchanges": [
+    {
+      "kind": "read",
+      "method": "GET",
+      "url": "https://api.stripe.com/v1/charges?limit=10",
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "json": {
+            "object": "tbtw",
+            "data": [
+              {
+                "id": "sy_4HN0xDC6858ezqy213JaGivS",
+                "object": "axzvcc",
+                "amount": 2737,
+                "amount_captured": 2737,
+                "amount_refunded": 0,
+                "application": null,
+                "application_fee": null,
+                "application_fee_amount": null,
+                "balance_transaction": "khg_8OI5jOF7314zyuo34cUo6sKs",
+                "billing_details": {
+                  "address": {
+                    "city": null,
+                    "country": "WT",
+                    "line1": null,
+                    "line2": null,
+                    "postal_code": null,
+                    "state": null
+                  },
+                  "email": "fer477-tpjhn-0557222287246@example.com",
+                  "name": "Nhvcl Komdm",
+                  "phone": null,
+                  "tax_id": null
+                },
+                "calculated_statement_descriptor": "ZGMBI",
+                "captured": true,
+                "created": 5464805831,
+                "currency": "zrm",
+                "customer": "pjk_MKLcxNeZEavB8T",
+                "description": "Pgiukxhiqodu dfxxdqlq",
+                "destination": null,
+                "dispute": null,
+                "disputed": false,
+                "failure_balance_transaction": null,
+                "failure_code": null,
+                "failure_message": null,
+                "fraud_details": {},
+                "livemode": false,
+                "metadata": {},
+                "on_behalf_of": null,
+                "order": null,
+                "outcome": {
+                  "advice_code": null,
+                  "network_advice_code": null,
+                  "network_decline_code": null,
+                  "network_status": "jojrnemz_ox_hzcxdka",
+                  "reason": null,
+                  "risk_level": "jtxfwc",
+                  "risk_score": 3,
+                  "seller_message": "Srxagty ajwnrocb.",
+                  "type": "idanjovrao"
+                },
+                "paid": true,
+                "payment_intent": "yk_1KO6wZH8647eexr01Y7vbEjR",
+                "payment_method": "ju_4ZZ1qNF1760xdst9xYaoT2u3",
+                "payment_method_details": {
+                  "card": {
+                    "amount_authorized": 2737,
+                    "authorization_code": "128169",
+                    "brand": "rgxp",
+                    "checks": {
+                      "address_line1_check": null,
+                      "address_postal_code_check": null,
+                      "cvc_check": "pduk"
+                    },
+                    "country": "DI",
+                    "electronic_commerce_indicator": "08",
+                    "exp_month": 12,
+                    "exp_year": 2408,
+                    "extended_authorization": {
+                      "status": "mhxomple"
+                    },
+                    "fingerprint": "389oHNBBdv8yoXCm",
+                    "funding": "usavzv",
+                    "incremental_authorization": {
+                      "status": "bcfwirksdmh"
+                    },
+                    "installments": null,
+                    "last4": "5712",
+                    "mandate": null,
+                    "multicapture": {
+                      "status": "bcfwirksdmh"
+                    },
+                    "network": "rgxp",
+                    "network_token": {
+                      "used": false
+                    },
+                    "network_transaction_id": "453000000317769",
+                    "overcapture": {
+                      "maximum_amount_capturable": 2737,
+                      "status": "bcfwirksdmh"
+                    },
+                    "regulated_status": "xrazsujsbtc",
+                    "three_d_secure": null,
+                    "transaction_link_id": null,
+                    "wallet": null
+                  },
+                  "type": "buzp"
+                },
+                "radar_options": {},
+                "receipt_email": null,
+                "receipt_number": null,
+                "receipt_url": "https://pay.stripe.com/",
+                "refunded": false,
+                "review": null,
+                "shipping": null,
+                "source": null,
+                "source_transfer": null,
+                "statement_descriptor": null,
+                "statement_descriptor_suffix": null,
+                "status": "ifzswqrcc",
+                "transfer_data": null,
+                "transfer_group": null
+              },
+              {
+                "id": "yn_4TSqVGO1318erzg32vFlY8v7",
+                "object": "axzvcc",
+                "amount": 2737,
+                "amount_captured": 2737,
+                "amount_refunded": 0,
+                "application": null,
+                "application_fee": null,
+                "application_fee_amount": null,
+                "balance_transaction": "oyn_0ZDbGFL4388evpe11jEMuvY4",
+                "billing_details": {
+                  "address": {
+                    "city": null,
+                    "country": "WT",
+                    "line1": null,
+                    "line2": null,
+                    "postal_code": null,
+                    "state": null
+                  },
+                  "email": "whj004-cskjm-1@example.com",
+                  "name": "Nhvcl Komdm",
+                  "phone": null,
+                  "tax_id": null
+                },
+                "calculated_statement_descriptor": "ZGMBI",
+                "captured": true,
+                "created": 8966988093,
+                "currency": "zrm",
+                "customer": "xlz_HEXyeKEerBGFfV",
+                "description": "Pgiukxhiqodu dfxxdqlq",
+                "destination": null,
+                "dispute": null,
+                "disputed": false,
+                "failure_balance_transaction": null,
+                "failure_code": null,
+                "failure_message": null,
+                "fraud_details": {},
+                "livemode": false,
+                "metadata": {},
+                "on_behalf_of": null,
+                "order": null,
+                "outcome": {
+                  "advice_code": null,
+                  "network_advice_code": null,
+                  "network_decline_code": null,
+                  "network_status": "jojrnemz_ox_hzcxdka",
+                  "reason": null,
+                  "risk_level": "jtxfwc",
+                  "risk_score": 5,
+                  "seller_message": "Srxagty ajwnrocb.",
+                  "type": "idanjovrao"
+                },
+                "paid": true,
+                "payment_intent": "rr_7DWjJYJ8609ygti485GOLu82",
+                "payment_method": "fb_6DRcDFD4189fzce3nEG54u8a",
+                "payment_method_details": {
+                  "card": {
+                    "amount_authorized": 2737,
+                    "authorization_code": "171568",
+                    "brand": "rgxp",
+                    "checks": {
+                      "address_line1_check": null,
+                      "address_postal_code_check": null,
+                      "cvc_check": "pduk"
+                    },
+                    "country": "DI",
+                    "electronic_commerce_indicator": "08",
+                    "exp_month": 12,
+                    "exp_year": 2408,
+                    "extended_authorization": {
+                      "status": "mhxomple"
+                    },
+                    "fingerprint": "389oHNBBdv8yoXCm",
+                    "funding": "usavzv",
+                    "incremental_authorization": {
+                      "status": "bcfwirksdmh"
+                    },
+                    "installments": null,
+                    "last4": "5712",
+                    "mandate": null,
+                    "multicapture": {
+                      "status": "bcfwirksdmh"
+                    },
+                    "network": "rgxp",
+                    "network_token": {
+                      "used": false
+                    },
+                    "network_transaction_id": "453000000317769",
+                    "overcapture": {
+                      "maximum_amount_capturable": 2737,
+                      "status": "bcfwirksdmh"
+                    },
+                    "regulated_status": "xrazsujsbtc",
+                    "three_d_secure": null,
+                    "transaction_link_id": null,
+                    "wallet": null
+                  },
+                  "type": "buzp"
+                },
+                "radar_options": {},
+                "receipt_email": null,
+                "receipt_number": null,
+                "receipt_url": "https://pay.stripe.com/",
+                "refunded": false,
+                "review": null,
+                "shipping": null,
+                "source": null,
+                "source_transfer": null,
+                "statement_descriptor": null,
+                "statement_descriptor_suffix": null,
+                "status": "ifzswqrcc",
+                "transfer_data": null,
+                "transfer_group": null
+              },
+              {
+                "id": "by_0TVrApN5065sjjr34k1VdgVo",
+                "object": "axzvcc",
+                "amount": 2737,
+                "amount_captured": 2737,
+                "amount_refunded": 0,
+                "application": null,
+                "application_fee": null,
+                "application_fee_amount": null,
+                "balance_transaction": "bzx_0EMxAoT7837qwvo29XZ877bp",
+                "billing_details": {
+                  "address": {
+                    "city": null,
+                    "country": null,
+                    "line1": null,
+                    "line2": null,
+                    "postal_code": null,
+                    "state": null
+                  },
+                  "email": null,
+                  "name": null,
+                  "phone": null,
+                  "tax_id": null
+                },
+                "calculated_statement_descriptor": "ZGMBI",
+                "captured": true,
+                "created": 1704320693,
+                "currency": "zrm",
+                "customer": "mzw_BLEfDO18qPWjlU",
+                "description": "Pgiukxhiqodu dfxxdqlq",
+                "destination": null,
+                "dispute": null,
+                "disputed": false,
+                "failure_balance_transaction": null,
+                "failure_code": null,
+                "failure_message": null,
+                "fraud_details": {},
+                "livemode": false,
+                "metadata": {},
+                "on_behalf_of": null,
+                "order": null,
+                "outcome": {
+                  "advice_code": null,
+                  "network_advice_code": null,
+                  "network_decline_code": null,
+                  "network_status": "jojrnemz_ox_hzcxdka",
+                  "reason": null,
+                  "risk_level": "jtxfwc",
+                  "risk_score": 35,
+                  "seller_message": "Srxagty ajwnrocb.",
+                  "type": "idanjovrao"
+                },
+                "paid": true,
+                "payment_intent": "ac_6BDiMgZ6331lstb168BnDoij",
+                "payment_method": "xu_9IRrKwM1299ualv6gqANyPEG",
+                "payment_method_details": {
+                  "card": {
+                    "amount_authorized": 2737,
+                    "authorization_code": "760406",
+                    "brand": "rgxp",
+                    "checks": {
+                      "address_line1_check": null,
+                      "address_postal_code_check": null,
+                      "cvc_check": null
+                    },
+                    "country": "DI",
+                    "electronic_commerce_indicator": "16",
+                    "exp_month": 9,
+                    "exp_year": 9362,
+                    "extended_authorization": {
+                      "status": "mhxomple"
+                    },
+                    "fingerprint": "389oHNBBdv8yoXCm",
+                    "funding": "usavzv",
+                    "incremental_authorization": {
+                      "status": "bcfwirksdmh"
+                    },
+                    "installments": null,
+                    "last4": "5712",
+                    "mandate": null,
+                    "multicapture": {
+                      "status": "bcfwirksdmh"
+                    },
+                    "network": "rgxp",
+                    "network_token": {
+                      "used": false
+                    },
+                    "network_transaction_id": "453000000317769",
+                    "overcapture": {
+                      "maximum_amount_capturable": 2737,
+                      "status": "bcfwirksdmh"
+                    },
+                    "regulated_status": "xrazsujsbtc",
+                    "three_d_secure": null,
+                    "transaction_link_id": null,
+                    "wallet": null
+                  },
+                  "type": "buzp"
+                },
+                "radar_options": {},
+                "receipt_email": null,
+                "receipt_number": null,
+                "receipt_url": "https://pay.stripe.com/",
+                "refunded": false,
+                "review": null,
+                "shipping": null,
+                "source": null,
+                "source_transfer": null,
+                "statement_descriptor": null,
+                "statement_descriptor_suffix": null,
+                "status": "ifzswqrcc",
+                "transfer_data": null,
+                "transfer_group": null
+              },
+              {
+                "id": "zt_7DUlQoE8832pipp94acyQ8Cl",
+                "object": "axzvcc",
+                "amount": 6843,
+                "amount_captured": 6843,
+                "amount_refunded": 0,
+                "application": null,
+                "application_fee": null,
+                "application_fee_amount": null,
+                "balance_transaction": "apy_7QMlLeQ3721hkim35El30Qzq",
+                "billing_details": {
+                  "address": {
+                    "city": null,
+                    "country": null,
+                    "line1": null,
+                    "line2": null,
+                    "postal_code": null,
+                    "state": null
+                  },
+                  "email": null,
+                  "name": null,
+                  "phone": null,
+                  "tax_id": null
+                },
+                "calculated_statement_descriptor": "ZGMBI",
+                "captured": true,
+                "created": 4844267576,
+                "currency": "zrm",
+                "customer": "cym_EVFrS18G7mhaS6",
+                "description": "Pgiukxhiqodu dfxxdqlq",
+                "destination": null,
+                "dispute": null,
+                "disputed": false,
+                "failure_balance_transaction": null,
+                "failure_code": null,
+                "failure_message": null,
+                "fraud_details": {},
+                "livemode": false,
+                "metadata": {},
+                "on_behalf_of": null,
+                "order": null,
+                "outcome": {
+                  "advice_code": null,
+                  "network_advice_code": null,
+                  "network_decline_code": null,
+                  "network_status": "jojrnemz_ox_hzcxdka",
+                  "reason": null,
+                  "risk_level": "jtxfwc",
+                  "risk_score": 58,
+                  "seller_message": "Srxagty ajwnrocb.",
+                  "type": "idanjovrao"
+                },
+                "paid": true,
+                "payment_intent": "up_1XOrDsA1674xxxr15UPvAkdu",
+                "payment_method": "wb_4PSqUeL7125cceb2mHfgiBKR",
+                "payment_method_details": {
+                  "card": {
+                    "amount_authorized": 6843,
+                    "authorization_code": "455997",
+                    "brand": "rgxp",
+                    "checks": {
+                      "address_line1_check": null,
+                      "address_postal_code_check": null,
+                      "cvc_check": "pduk"
+                    },
+                    "country": "DI",
+                    "electronic_commerce_indicator": "16",
+                    "exp_month": 9,
+                    "exp_year": 9362,
+                    "extended_authorization": {
+                      "status": "mhxomple"
+                    },
+                    "fingerprint": "389oHNBBdv8yoXCm",
+                    "funding": "usavzv",
+                    "incremental_authorization": {
+                      "status": "bcfwirksdmh"
+                    },
+                    "installments": null,
+                    "last4": "5712",
+                    "mandate": null,
+                    "multicapture": {
+                      "status": "bcfwirksdmh"
+                    },
+                    "network": "rgxp",
+                    "network_token": {
+                      "used": false
+                    },
+                    "network_transaction_id": "453000000317769",
+                    "overcapture": {
+                      "maximum_amount_capturable": 6843,
+                      "status": "bcfwirksdmh"
+                    },
+                    "regulated_status": "xrazsujsbtc",
+                    "three_d_secure": null,
+                    "transaction_link_id": null,
+                    "wallet": null
+                  },
+                  "type": "buzp"
+                },
+                "radar_options": {},
+                "receipt_email": null,
+                "receipt_number": null,
+                "receipt_url": "https://pay.stripe.com/",
+                "refunded": false,
+                "review": null,
+                "shipping": null,
+                "source": null,
+                "source_transfer": null,
+                "statement_descriptor": null,
+                "statement_descriptor_suffix": null,
+                "status": "ifzswqrcc",
+                "transfer_data": null,
+                "transfer_group": null
+              },
+              {
+                "id": "gn_5SEqLxF3038rbtj98OoAombz",
+                "object": "axzvcc",
+                "amount": 2737,
+                "amount_captured": 2737,
+                "amount_refunded": 0,
+                "application": null,
+                "application_fee": null,
+                "application_fee_amount": null,
+                "balance_transaction": "phm_3KQbWsK9606madz545MauMwi",
+                "billing_details": {
+                  "address": {
+                    "city": null,
+                    "country": "WT",
+                    "line1": null,
+                    "line2": null,
+                    "postal_code": null,
+                    "state": null
+                  },
+                  "email": "whj004-cskjm-1@example.com",
+                  "name": "Nhvcl Komdm",
+                  "phone": null,
+                  "tax_id": null
+                },
+                "calculated_statement_descriptor": "ZGMBI",
+                "captured": true,
+                "created": 2562380298,
+                "currency": "zrm",
+                "customer": "xlz_HEXyeKEerBGFfV",
+                "description": "Pgiukxhiqodu dfxxdqlq",
+                "destination": null,
+                "dispute": null,
+                "disputed": false,
+                "failure_balance_transaction": null,
+                "failure_code": null,
+                "failure_message": null,
+                "fraud_details": {},
+                "livemode": false,
+                "metadata": {},
+                "on_behalf_of": null,
+                "order": null,
+                "outcome": {
+                  "advice_code": null,
+                  "network_advice_code": null,
+                  "network_decline_code": null,
+                  "network_status": "jojrnemz_ox_hzcxdka",
+                  "reason": null,
+                  "risk_level": "jtxfwc",
+                  "risk_score": 52,
+                  "seller_message": "Srxagty ajwnrocb.",
+                  "type": "idanjovrao"
+                },
+                "paid": true,
+                "payment_intent": "rz_8WDtHxX6437pcnc72QJL0mwX",
+                "payment_method": "tj_6GPvUaG4385kmgl0ycFaGzGp",
+                "payment_method_details": {
+                  "card": {
+                    "amount_authorized": 2737,
+                    "authorization_code": "280505",
+                    "brand": "rgxp",
+                    "checks": {
+                      "address_line1_check": null,
+                      "address_postal_code_check": null,
+                      "cvc_check": "pduk"
+                    },
+                    "country": "DI",
+                    "electronic_commerce_indicator": "08",
+                    "exp_month": 12,
+                    "exp_year": 2408,
+                    "extended_authorization": {
+                      "status": "mhxomple"
+                    },
+                    "fingerprint": "389oHNBBdv8yoXCm",
+                    "funding": "usavzv",
+                    "incremental_authorization": {
+                      "status": "bcfwirksdmh"
+                    },
+                    "installments": null,
+                    "last4": "5712",
+                    "mandate": null,
+                    "multicapture": {
+                      "status": "bcfwirksdmh"
+                    },
+                    "network": "rgxp",
+                    "network_token": {
+                      "used": false
+                    },
+                    "network_transaction_id": "453000000317769",
+                    "overcapture": {
+                      "maximum_amount_capturable": 2737,
+                      "status": "bcfwirksdmh"
+                    },
+                    "regulated_status": "xrazsujsbtc",
+                    "three_d_secure": null,
+                    "transaction_link_id": null,
+                    "wallet": null
+                  },
+                  "type": "buzp"
+                },
+                "radar_options": {},
+                "receipt_email": null,
+                "receipt_number": null,
+                "receipt_url": "https://pay.stripe.com/",
+                "refunded": false,
+                "review": null,
+                "shipping": null,
+                "source": null,
+                "source_transfer": null,
+                "statement_descriptor": null,
+                "statement_descriptor_suffix": null,
+                "status": "ifzswqrcc",
+                "transfer_data": null,
+                "transfer_group": null
+              },
+              {
+                "id": "zt_2EBmMpT9452jrpl63nWeJiwy",
+                "object": "axzvcc",
+                "amount": 6249,
+                "amount_captured": 6249,
+                "amount_refunded": 0,
+                "application": null,
+                "application_fee": null,
+                "application_fee_amount": null,
+                "balance_transaction": "xqq_9ATnPdY5119uzhk40TqOoA70",
+                "billing_details": {
+                  "address": {
+                    "city": null,
+                    "country": null,
+                    "line1": null,
+                    "line2": null,
+                    "postal_code": null,
+                    "state": null
+                  },
+                  "email": null,
+                  "name": null,
+                  "phone": null,
+                  "tax_id": null
+                },
+                "calculated_statement_descriptor": "ZGMBI",
+                "captured": true,
+                "created": 6716132443,
+                "currency": "zrm",
+                "customer": "zit_TCJu6IIaQZmoG8",
+                "description": "Sqzwlwv llz Jjmkjua",
+                "destination": null,
+                "dispute": null,
+                "disputed": false,
+                "failure_balance_transaction": null,
+                "failure_code": null,
+                "failure_message": null,
+                "fraud_details": {},
+                "livemode": false,
+                "metadata": {},
+                "on_behalf_of": null,
+                "order": null,
+                "outcome": {
+                  "advice_code": null,
+                  "network_advice_code": null,
+                  "network_decline_code": null,
+                  "network_status": "jojrnemz_ox_hzcxdka",
+                  "reason": null,
+                  "risk_level": "jtxfwc",
+                  "risk_score": 12,
+                  "seller_message": "Srxagty ajwnrocb.",
+                  "type": "idanjovrao"
+                },
+                "paid": true,
+                "payment_intent": "cp_3UEjUvT5754jxuj72PzwXDov",
+                "payment_method": "fb_1ZTbNqM5854bggo8bn3gNZ0S",
+                "payment_method_details": {
+                  "card": {
+                    "amount_authorized": 6249,
+                    "authorization_code": "903787",
+                    "brand": "rgxp",
+                    "checks": {
+                      "address_line1_check": null,
+                      "address_postal_code_check": null,
+                      "cvc_check": "pduk"
+                    },
+                    "country": "DI",
+                    "electronic_commerce_indicator": "08",
+                    "exp_month": 9,
+                    "exp_year": 9362,
+                    "extended_authorization": {
+                      "status": "mhxomple"
+                    },
+                    "fingerprint": "389oHNBBdv8yoXCm",
+                    "funding": "usavzv",
+                    "incremental_authorization": {
+                      "status": "bcfwirksdmh"
+                    },
+                    "installments": null,
+                    "last4": "5712",
+                    "mandate": null,
+                    "multicapture": {
+                      "status": "bcfwirksdmh"
+                    },
+                    "network": "rgxp",
+                    "network_token": {
+                      "used": false
+                    },
+                    "network_transaction_id": "453000000317769",
+                    "overcapture": {
+                      "maximum_amount_capturable": 6249,
+                      "status": "bcfwirksdmh"
+                    },
+                    "regulated_status": "xrazsujsbtc",
+                    "three_d_secure": null,
+                    "transaction_link_id": null,
+                    "wallet": null
+                  },
+                  "type": "buzp"
+                },
+                "radar_options": {},
+                "receipt_email": null,
+                "receipt_number": null,
+                "receipt_url": "https://pay.stripe.com/",
+                "refunded": false,
+                "review": null,
+                "shipping": null,
+                "source": null,
+                "source_transfer": null,
+                "statement_descriptor": null,
+                "statement_descriptor_suffix": null,
+                "status": "ifzswqrcc",
+                "transfer_data": null,
+                "transfer_group": null
+              },
+              {
+                "id": "gl_9FJjGzP2381kuan91VVuepg5",
+                "object": "axzvcc",
+                "amount": 6843,
+                "amount_captured": 6843,
+                "amount_refunded": 0,
+                "application": null,
+                "application_fee": null,
+                "application_fee_amount": null,
+                "balance_transaction": "luk_2PTkQgD6136hkqs19erIW4Xy",
+                "billing_details": {
+                  "address": {
+                    "city": null,
+                    "country": null,
+                    "line1": null,
+                    "line2": null,
+                    "postal_code": null,
+                    "state": null
+                  },
+                  "email": null,
+                  "name": null,
+                  "phone": null,
+                  "tax_id": null
+                },
+                "calculated_statement_descriptor": "ZGMBI",
+                "captured": true,
+                "created": 5844167631,
+                "currency": "zrm",
+                "customer": "yep_SXOfxtzbTh2Kvs",
+                "description": "Pgiukxhiqodu dfxxdqlq",
+                "destination": null,
+                "dispute": null,
+                "disputed": false,
+                "failure_balance_transaction": null,
+                "failure_code": null,
+                "failure_message": null,
+                "fraud_details": {},
+                "livemode": false,
+                "metadata": {},
+                "on_behalf_of": null,
+                "order": null,
+                "outcome": {
+                  "advice_code": null,
+                  "network_advice_code": null,
+                  "network_decline_code": null,
+                  "network_status": "jojrnemz_ox_hzcxdka",
+                  "reason": null,
+                  "risk_level": "jtxfwc",
+                  "risk_score": 30,
+                  "seller_message": "Srxagty ajwnrocb.",
+                  "type": "idanjovrao"
+                },
+                "paid": true,
+                "payment_intent": "cz_2PJpAbB0686tsrp150qRFttd",
+                "payment_method": "xo_2LJgHoN7659opib1WrmYqsqw",
+                "payment_method_details": {
+                  "card": {
+                    "amount_authorized": 6843,
+                    "authorization_code": "449572",
+                    "brand": "rgxp",
+                    "checks": {
+                      "address_line1_check": null,
+                      "address_postal_code_check": null,
+                      "cvc_check": "pduk"
+                    },
+                    "country": "DI",
+                    "electronic_commerce_indicator": "16",
+                    "exp_month": 9,
+                    "exp_year": 9362,
+                    "extended_authorization": {
+                      "status": "mhxomple"
+                    },
+                    "fingerprint": "389oHNBBdv8yoXCm",
+                    "funding": "usavzv",
+                    "incremental_authorization": {
+                      "status": "bcfwirksdmh"
+                    },
+                    "installments": null,
+                    "last4": "5712",
+                    "mandate": null,
+                    "multicapture": {
+                      "status": "bcfwirksdmh"
+                    },
+                    "network": "rgxp",
+                    "network_token": {
+                      "used": false
+                    },
+                    "network_transaction_id": "453000000317769",
+                    "overcapture": {
+                      "maximum_amount_capturable": 6843,
+                      "status": "bcfwirksdmh"
+                    },
+                    "regulated_status": "xrazsujsbtc",
+                    "three_d_secure": null,
+                    "transaction_link_id": null,
+                    "wallet": null
+                  },
+                  "type": "buzp"
+                },
+                "radar_options": {},
+                "receipt_email": null,
+                "receipt_number": null,
+                "receipt_url": "https://pay.stripe.com/",
+                "refunded": false,
+                "review": null,
+                "shipping": null,
+                "source": null,
+                "source_transfer": null,
+                "statement_descriptor": null,
+                "statement_descriptor_suffix": null,
+                "status": "ifzswqrcc",
+                "transfer_data": null,
+                "transfer_group": null
+              },
+              {
+                "id": "ox_3XBlb6S1810mxlj94dsNgzoQ",
+                "object": "axzvcc",
+                "amount": 2737,
+                "amount_captured": 2737,
+                "amount_refunded": 0,
+                "application": null,
+                "application_fee": null,
+                "application_fee_amount": null,
+                "balance_transaction": "kje_3EOsr0M0127fpua410vMFSw7",
+                "billing_details": {
+                  "address": {
+                    "city": null,
+                    "country": "WT",
+                    "line1": null,
+                    "line2": null,
+                    "postal_code": null,
+                    "state": null
+                  },
+                  "email": "mug172-dvnzi-3906732231450@example.com",
+                  "name": "Nhvcl Komdm",
+                  "phone": null,
+                  "tax_id": null
+                },
+                "calculated_statement_descriptor": "ZGMBI",
+                "captured": true,
+                "created": 6627030666,
+                "currency": "zrm",
+                "customer": "ddm_FMFFDbetFvUMej",
+                "description": "Pgiukxhiqodu dfxxdqlq",
+                "destination": null,
+                "dispute": null,
+                "disputed": false,
+                "failure_balance_transaction": null,
+                "failure_code": null,
+                "failure_message": null,
+                "fraud_details": {},
+                "livemode": false,
+                "metadata": {},
+                "on_behalf_of": null,
+                "order": null,
+                "outcome": {
+                  "advice_code": null,
+                  "network_advice_code": null,
+                  "network_decline_code": null,
+                  "network_status": "jojrnemz_ox_hzcxdka",
+                  "reason": null,
+                  "risk_level": "jtxfwc",
+                  "risk_score": 25,
+                  "seller_message": "Srxagty ajwnrocb.",
+                  "type": "idanjovrao"
+                },
+                "paid": true,
+                "payment_intent": "pm_6KBnp5O3127vpka5134e1dCs",
+                "payment_method": "pl_0MXfe6D3192mogr763kzQoiw",
+                "payment_method_details": {
+                  "card": {
+                    "amount_authorized": 2737,
+                    "authorization_code": "067229",
+                    "brand": "rgxp",
+                    "checks": {
+                      "address_line1_check": null,
+                      "address_postal_code_check": null,
+                      "cvc_check": "pduk"
+                    },
+                    "country": "DI",
+                    "electronic_commerce_indicator": "08",
+                    "exp_month": 12,
+                    "exp_year": 2408,
+                    "extended_authorization": {
+                      "status": "mhxomple"
+                    },
+                    "fingerprint": "389oHNBBdv8yoXCm",
+                    "funding": "usavzv",
+                    "incremental_authorization": {
+                      "status": "bcfwirksdmh"
+                    },
+                    "installments": null,
+                    "last4": "5712",
+                    "mandate": null,
+                    "multicapture": {
+                      "status": "bcfwirksdmh"
+                    },
+                    "network": "rgxp",
+                    "network_token": {
+                      "used": false
+                    },
+                    "network_transaction_id": "453000000317769",
+                    "overcapture": {
+                      "maximum_amount_capturable": 2737,
+                      "status": "bcfwirksdmh"
+                    },
+                    "regulated_status": "xrazsujsbtc",
+                    "three_d_secure": null,
+                    "transaction_link_id": null,
+                    "wallet": null
+                  },
+                  "type": "buzp"
+                },
+                "radar_options": {},
+                "receipt_email": null,
+                "receipt_number": null,
+                "receipt_url": "https://pay.stripe.com/",
+                "refunded": false,
+                "review": null,
+                "shipping": null,
+                "source": null,
+                "source_transfer": null,
+                "statement_descriptor": null,
+                "statement_descriptor_suffix": null,
+                "status": "ifzswqrcc",
+                "transfer_data": null,
+                "transfer_group": null
+              }
+            ],
+            "has_more": false,
+            "url": "/t9/ppzzrzl"
+          }
+        }
+      }
+    }
+  ],
+  "result": {
+    "payments": [
+      {
+        "id": "sy_4HN0xDC6858ezqy213JaGivS",
+        "amount": 2737,
+        "currency": "zrm",
+        "status": "ifzswqrcc",
+        "paid": true,
+        "refunded": false,
+        "amount_refunded": 0,
+        "created": "2143-03-05T01:37:11.000Z",
+        "description": "Pgiukxhiqodu dfxxdqlq",
+        "customer": "pjk_MKLcxNeZEavB8T",
+        "payment_intent": "yk_1KO6wZH8647eexr01Y7vbEjR",
+        "receipt_email": null
+      },
+      {
+        "id": "yn_4TSqVGO1318erzg32vFlY8v7",
+        "amount": 2737,
+        "currency": "zrm",
+        "status": "ifzswqrcc",
+        "paid": true,
+        "refunded": false,
+        "amount_refunded": 0,
+        "created": "2254-02-25T14:01:33.000Z",
+        "description": "Pgiukxhiqodu dfxxdqlq",
+        "customer": "xlz_HEXyeKEerBGFfV",
+        "payment_intent": "rr_7DWjJYJ8609ygti485GOLu82",
+        "receipt_email": null
+      },
+      {
+        "id": "by_0TVrApN5065sjjr34k1VdgVo",
+        "amount": 2737,
+        "currency": "zrm",
+        "status": "ifzswqrcc",
+        "paid": true,
+        "refunded": false,
+        "amount_refunded": 0,
+        "created": "2024-01-03T22:24:53.000Z",
+        "description": "Pgiukxhiqodu dfxxdqlq",
+        "customer": "mzw_BLEfDO18qPWjlU",
+        "payment_intent": "ac_6BDiMgZ6331lstb168BnDoij",
+        "receipt_email": null
+      },
+      {
+        "id": "zt_7DUlQoE8832pipp94acyQ8Cl",
+        "amount": 6843,
+        "currency": "zrm",
+        "status": "ifzswqrcc",
+        "paid": true,
+        "refunded": false,
+        "amount_refunded": 0,
+        "created": "2123-07-05T21:52:56.000Z",
+        "description": "Pgiukxhiqodu dfxxdqlq",
+        "customer": "cym_EVFrS18G7mhaS6",
+        "payment_intent": "up_1XOrDsA1674xxxr15UPvAkdu",
+        "receipt_email": null
+      },
+      {
+        "id": "gn_5SEqLxF3038rbtj98OoAombz",
+        "amount": 2737,
+        "currency": "zrm",
+        "status": "ifzswqrcc",
+        "paid": true,
+        "refunded": false,
+        "amount_refunded": 0,
+        "created": "2051-03-14T04:18:18.000Z",
+        "description": "Pgiukxhiqodu dfxxdqlq",
+        "customer": "xlz_HEXyeKEerBGFfV",
+        "payment_intent": "rz_8WDtHxX6437pcnc72QJL0mwX",
+        "receipt_email": null
+      },
+      {
+        "id": "zt_2EBmMpT9452jrpl63nWeJiwy",
+        "amount": 6249,
+        "currency": "zrm",
+        "status": "ifzswqrcc",
+        "paid": true,
+        "refunded": false,
+        "amount_refunded": 0,
+        "created": "2182-10-29T00:20:43.000Z",
+        "description": "Sqzwlwv llz Jjmkjua",
+        "customer": "zit_TCJu6IIaQZmoG8",
+        "payment_intent": "cp_3UEjUvT5754jxuj72PzwXDov",
+        "receipt_email": null
+      },
+      {
+        "id": "gl_9FJjGzP2381kuan91VVuepg5",
+        "amount": 6843,
+        "currency": "zrm",
+        "status": "ifzswqrcc",
+        "paid": true,
+        "refunded": false,
+        "amount_refunded": 0,
+        "created": "2155-03-12T19:53:51.000Z",
+        "description": "Pgiukxhiqodu dfxxdqlq",
+        "customer": "yep_SXOfxtzbTh2Kvs",
+        "payment_intent": "cz_2PJpAbB0686tsrp150qRFttd",
+        "receipt_email": null
+      },
+      {
+        "id": "ox_3XBlb6S1810mxlj94dsNgzoQ",
+        "amount": 2737,
+        "currency": "zrm",
+        "status": "ifzswqrcc",
+        "paid": true,
+        "refunded": false,
+        "amount_refunded": 0,
+        "created": "2180-01-01T17:51:06.000Z",
+        "description": "Pgiukxhiqodu dfxxdqlq",
+        "customer": "ddm_FMFFDbetFvUMej",
+        "payment_intent": "pm_6KBnp5O3127vpka5134e1dCs",
+        "receipt_email": null
+      }
+    ],
+    "hasMore": false,
+    "nextCursor": null
+  }
+}

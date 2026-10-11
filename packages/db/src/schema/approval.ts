@@ -4,7 +4,7 @@ import { boolean, index, pgTable, primaryKey, text, timestamp } from "drizzle-or
 import { agent } from "./agent";
 import { owned, ownedRecord } from "./columns";
 import { connection } from "./connection";
-import { authoredTool } from "./tool";
+import { authoredTool, toolVersion } from "./tool";
 
 export const approvalDecision = ["allow", "deny"] as const;
 export type ApprovalDecision = (typeof approvalDecision)[number];
@@ -35,11 +35,22 @@ export const approval = pgTable(
      * than inverted, because a destructive allow recorded under the old rule now holds).
      */
     askEveryCall: boolean("ask_every_call").notNull().default(false),
+    /**
+     * The version of the tool the answer was given for (ADR 0008: a republished write tool asks
+     * again once; GRA-245). An `allow` for another version than the tool's current one asks again
+     * and the yes moves it; a new stock version that does not widen the annotations carries it
+     * forward (ADR 0008 as amended 2026-10-09). Null reads as no version, so it asks: migration 0016
+     * set every existing row to its tool's current version, and a version is never deleted.
+     */
+    toolVersionId: text("tool_version_id").references(() => toolVersion.id, {
+      onDelete: "set null",
+    }),
     ...owned(),
   },
   (table) => [
     primaryKey({ columns: [table.agentId, table.toolId] }),
     index("approval_tool_id_idx").on(table.toolId),
+    index("approval_tool_version_id_idx").on(table.toolVersionId),
   ],
 );
 
@@ -67,6 +78,32 @@ export const buildApproval = pgTable(
   ],
 );
 
+/**
+ * A **standing approval for an integration**: the person's yes to every tool of one vendor for one
+ * agent, given on a tool's ask (ADR 0008 as amended 2026-10-09; GRA-237). A non-read tool of that
+ * vendor with no answer of its own then passes without asking, stock, remixed or authored, existing
+ * or future, unless it is destructive and `includesDestructive` is off. A tool's own row still wins:
+ * a `deny` refuses and the ask-every-call setting asks (`approvalDecision`). Presence is the yes;
+ * there is no deny row, since leaving it absent is how an integration's tools keep asking. Deleted
+ * for every agent of the person when one of the vendor's connections is revoked, as the vendor's
+ * tool approvals are (ADR 0007).
+ */
+export const vendorApproval = pgTable(
+  "vendor_approval",
+  {
+    agentId: text("agent_id")
+      .notNull()
+      .references(() => agent.id, { onDelete: "cascade" }),
+    /** The connection's and the tool's vendor slug, the `<vendor>` of `<vendor>__<name>`. */
+    vendor: text("vendor").notNull(),
+    /** The separate tick on the same card, off by default: whether destructive tools pass too. */
+    includesDestructive: boolean("includes_destructive").notNull().default(false),
+    grantedAt: timestamp("granted_at").notNull(),
+    ...owned(),
+  },
+  (table) => [primaryKey({ columns: [table.agentId, table.vendor] })],
+);
+
 export const approvalRelations = relations(approval, ({ one }) => ({
   agent: one(agent, { fields: [approval.agentId], references: [agent.id] }),
   tool: one(authoredTool, { fields: [approval.toolId], references: [authoredTool.id] }),
@@ -80,6 +117,11 @@ export const buildApprovalRelations = relations(buildApproval, ({ one }) => ({
   }),
 }));
 
+export const vendorApprovalRelations = relations(vendorApproval, ({ one }) => ({
+  agent: one(agent, { fields: [vendorApproval.agentId], references: [agent.id] }),
+}));
+
 export type ApprovalRow = typeof approval.$inferSelect;
 export type NewApprovalRow = typeof approval.$inferInsert;
 export type BuildApprovalRow = typeof buildApproval.$inferSelect;
+export type VendorApprovalRow = typeof vendorApproval.$inferSelect;

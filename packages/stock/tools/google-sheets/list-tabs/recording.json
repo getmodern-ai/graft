@@ -1,0 +1,56 @@
+{
+  "format": 1,
+  "tool": "google-sheets__list-tabs",
+  "recordedAt": "2026-10-09T19:22:10.140Z",
+  "input": {
+    "spreadsheet": "https://docs.google.com/spreadsheets/d/1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms/edit"
+  },
+  "exchanges": [
+    {
+      "kind": "read",
+      "method": "GET",
+      "url": "https://sheets.googleapis.com/v4/spreadsheets/1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms?fields=spreadsheetId%2Cproperties.title%2Csheets.properties(sheetId%2Ctitle%2Cindex%2CgridProperties(rowCount%2CcolumnCount))",
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json; charset=UTF-8"
+        },
+        "body": {
+          "json": {
+            "spreadsheetId": "1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms",
+            "properties": {
+              "title": "Llcyska Xzmhuhdfjax"
+            },
+            "sheets": [
+              {
+                "properties": {
+                  "sheetId": 0,
+                  "title": "Fsnsm Qtka",
+                  "index": 0,
+                  "gridProperties": {
+                    "rowCount": 481,
+                    "columnCount": 22
+                  }
+                }
+              }
+            ]
+          }
+        }
+      }
+    }
+  ],
+  "result": {
+    "id": "1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms",
+    "title": "Llcyska Xzmhuhdfjax",
+    "url": "https://docs.google.com/spreadsheets/d/1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms/edit",
+    "tabs": [
+      {
+        "title": "Fsnsm Qtka",
+        "sheetId": 0,
+        "index": 0,
+        "rowCount": 481,
+        "columnCount": 22
+      }
+    ]
+  }
+}

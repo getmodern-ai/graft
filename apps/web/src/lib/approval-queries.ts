@@ -1,4 +1,4 @@
-import type { ApprovalRow } from "@graft/db/repo/approval";
+import type { ApprovalRow, VendorApprovalRow } from "@graft/db/repo/approval";
 import { queryOptions } from "@tanstack/react-query";
 
 import { api, type Jsonified } from "./api";
@@ -12,9 +12,30 @@ import { api, type Jsonified } from "./api";
 
 export type Approval = Jsonified<ApprovalRow>;
 
+/** An agent's standing approval for every tool of one integration (ADR 0008 as amended 2026-10-09; GRA-237). */
+export type VendorApproval = Jsonified<VendorApprovalRow>;
+
 export const approvalKeys = {
   ofAgent: (agentId: string) => ["approvals", agentId] as const,
+  vendorsOfAgent: (agentId: string) => ["vendor-approvals", agentId] as const,
 };
+
+export const vendorApprovalsQuery = (agentId: string) =>
+  queryOptions({
+    queryKey: approvalKeys.vendorsOfAgent(agentId),
+    queryFn: () =>
+      api<{ vendorApprovals: VendorApproval[] }>(
+        `/vendor-approvals?agentId=${encodeURIComponent(agentId)}`,
+      ),
+  });
+
+/** Withdraw it: the integration's tools ask again, each once, unless a tool's own answer stands. */
+export function withdrawVendorApproval(agentId: string, vendor: string) {
+  return api<{ vendorApproval: VendorApproval }>(
+    `/vendor-approvals/${encodeURIComponent(vendor)}?agentId=${encodeURIComponent(agentId)}`,
+    { method: "DELETE" },
+  );
+}
 
 export const approvalsQuery = (agentId: string) =>
   queryOptions({

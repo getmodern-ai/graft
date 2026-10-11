@@ -27,8 +27,8 @@ import type { HandoffConfig } from "./handoff";
  * one link: the provider is the one the ask was routed to, never one the caller names; the two
  * URIs the provider sends the browser back to are the server's return route with a **signed
  * state** in the query — the ask, the person, the provider, an expiry, a nonce, under
- * `GRAFT_HANDOFF_SECRET` (`@graft/core`'s `link-state.ts`) — and the person's build choice rides
- * the state, signed, because the connection it is about does not exist until the return.
+ * `GRAFT_HANDOFF_SECRET` (`@graft/core`'s `link-state.ts`) — and the person's build choice and
+ * line for the integration's tools (GRA-239) ride the state, signed, because the connection it is about does not exist until the return.
  *
  * What differs by door is one query parameter on the return, `from=card`: the return route copies
  * it onto its redirect to the console's `/link/callback`, whose page then closes itself, since
@@ -56,6 +56,8 @@ export type ProviderLinkMintDeps = {
 export type ProviderLinkChoices = {
   /** Record the asking agent's build approval with the connection the return makes. */
   approveBuild?: boolean;
+  /** Record the asking agent's standing approval for the vendor, destructive tools left out (GRA-239). */
+  allowVendor?: boolean;
   /** The ask card minted it (GRA-117): the return's console page closes itself. */
   fromCard?: boolean;
 };
@@ -154,6 +156,7 @@ export async function mintProviderLink(
       expiresAt: expiresAt.getTime(),
       nonce: deps.connection.newId(),
       ...(choices.approveBuild ? { approveBuild: true } : {}),
+      ...(choices.allowVendor ? { allowVendor: true } : {}),
     },
     deps.handoff.secret,
   );

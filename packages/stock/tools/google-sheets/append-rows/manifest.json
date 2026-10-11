@@ -1,0 +1,51 @@
+{
+  "name": "append-rows",
+  "description": "Adds rows to the end of a tab in a Google Sheets spreadsheet (append rows). The spreadsheet can be a URL copied from the browser or an id from google-sheets__find-spreadsheets; tab names come from google-sheets__list-tabs. Each row is an array of cells in column order, or an object keyed by the header names google-sheets__read-rows answers.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "spreadsheet": {
+        "type": "string",
+        "minLength": 1,
+        "description": "The spreadsheet URL copied from the browser, or its ID from google-sheets__find-spreadsheets.",
+        "examples": [
+          "https://docs.google.com/spreadsheets/d/1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms/edit",
+          "1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms"
+        ]
+      },
+      "tab": {
+        "type": "string",
+        "minLength": 1,
+        "description": "The name of the tab to add rows to, from google-sheets__list-tabs."
+      },
+      "rows": {
+        "type": "array",
+        "minItems": 1,
+        "description": "Rows to append. Each row is either an array of cell values in column order or an object keyed by the tab's header cells.",
+        "items": {
+          "oneOf": [
+            {
+              "type": "array",
+              "items": {
+                "type": ["string", "number", "boolean", "null"]
+              }
+            },
+            {
+              "type": "object",
+              "additionalProperties": {
+                "type": ["string", "number", "boolean", "null"]
+              }
+            }
+          ]
+        }
+      }
+    },
+    "required": ["spreadsheet", "tab", "rows"],
+    "additionalProperties": false
+  },
+  "hosts": ["sheets.googleapis.com"],
+  "annotations": {
+    "readOnly": false,
+    "destructive": false
+  }
+}

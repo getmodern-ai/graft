@@ -1,0 +1,24 @@
+{
+  "name": "comment-on-issue",
+  "description": "Adds a Markdown comment to a Linear issue. The issue's identifier (like ENG-123) or id comes from linear__list-my-issues, linear__find-issues or linear__get-issue.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "issueId": {
+        "type": "string",
+        "description": "The issue's identifier, like ENG-123, or its id, from linear__list-my-issues, linear__find-issues or linear__get-issue."
+      },
+      "body": {
+        "type": "string",
+        "description": "The comment, in Markdown."
+      }
+    },
+    "required": ["issueId", "body"],
+    "additionalProperties": false
+  },
+  "hosts": ["api.linear.app"],
+  "annotations": {
+    "readOnly": false,
+    "destructive": false
+  }
+}

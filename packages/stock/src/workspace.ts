@@ -62,10 +62,14 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 async function subdirectories(dir: string): Promise<string[]> {
-  return (await readdir(dir, { withFileTypes: true }))
-    .filter((entry) => entry.isDirectory())
-    .map((entry) => entry.name)
-    .sort();
+  return (
+    (await readdir(dir, { withFileTypes: true }))
+      // A dot-directory is not a vendor or a tool: the build command proves a tool in one before it
+      // moves it into place (`@graft/stock-build`'s `build.ts`).
+      .filter((entry) => entry.isDirectory() && !entry.name.startsWith("."))
+      .map((entry) => entry.name)
+      .sort()
+  );
 }
 
 /**

@@ -1,0 +1,28 @@
+{
+  "name": "list-my-repositories",
+  "description": "Lists your GitHub repositories, most recently updated first, with each one's full_name (owner/repo, which the other GitHub tools take as owner and repo), visibility, default branch, language, activity and URL. Needs no id.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "perPage": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 100,
+        "default": 30,
+        "description": "Number of repositories to return per page."
+      },
+      "page": {
+        "type": "integer",
+        "minimum": 1,
+        "default": 1,
+        "description": "Page number to return."
+      }
+    },
+    "additionalProperties": false
+  },
+  "hosts": ["api.github.com"],
+  "annotations": {
+    "readOnly": true,
+    "destructive": false
+  }
+}

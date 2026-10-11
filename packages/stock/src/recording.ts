@@ -1,4 +1,5 @@
 import { GENERIC_SECRET_FIELD_NAMES, REDACTED, type RedactionRule, redactValue } from "@graft/core";
+import { classifyRequest } from "@graft/proxy/read-request";
 
 /**
  * A stock tool's recording (ADR 0025; GRA-240): `recording.json` beside its module, what the tool's
@@ -29,12 +30,18 @@ export type RecordedResponse = {
   body?: RecordedBody;
 };
 
-/** A `GET` or `HEAD` the vendor answered: replayed from `response`. */
+/**
+ * A read the vendor answered: replayed from `response`. A `GET` or `HEAD`, or a request the proxy's
+ * classifier calls a read by its body or by the reviewed table (`@graft/proxy`'s `read-request.ts`,
+ * GRA-260), such as Notion's `POST` search; only those reach the vendor in a dry run.
+ */
 export type RecordedRead = {
   kind: "read";
-  method: "GET" | "HEAD";
+  method: string;
   /** The vendor URL as it left the proxy, query included, redacted. */
   url: string;
+  /** What the module sent, for a read that carries a body (a `POST` search). Absent otherwise. */
+  body?: RecordedBody;
   response: RecordedResponse;
 };
 
@@ -62,6 +69,26 @@ export type StockRecording = {
   /** The module's result in that run, compared whole on a replay. Absent: not compared. */
   result?: unknown;
 };
+
+/**
+ * Whether a request is a read as the proxy's dry run judges it (`read-request.ts`'s
+ * `classifyRequest`, the one classifier the check and the proxy share): the requests a dry run lets
+ * reach the vendor, and so the reads a recording holds.
+ */
+export function isReadRequest(
+  method: string,
+  url: string,
+  body: RecordedBody | undefined,
+): boolean {
+  const parsed = new URL(url);
+  return classifyRequest({
+    method,
+    host: parsed.hostname.toLowerCase(),
+    path: parsed.pathname,
+    hasQuery: parsed.search.length > 1,
+    body: body && "json" in body ? { json: body.json } : null,
+  }).read;
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -114,8 +141,14 @@ export function parseRecording(text: string, where: string): StockRecording {
       throw problem(`${at}'s url is not an absolute URL`);
     }
     if (exchange.kind === "read") {
-      if (exchange.method !== "GET" && exchange.method !== "HEAD") {
-        throw problem(`${at} is a read, so its method is GET or HEAD`);
+      const requestBody = bodyProblem(exchange.body);
+      if (requestBody) throw problem(`${at}'s body ${requestBody}`);
+      if (
+        !isReadRequest(exchange.method, exchange.url, exchange.body as RecordedBody | undefined)
+      ) {
+        throw problem(
+          `${at} is a read, so it is a GET or HEAD or a request the proxy's classifier calls a read`,
+        );
       }
       const response = exchange.response;
       if (!isRecord(response) || typeof response.status !== "number") {
@@ -125,11 +158,13 @@ export function parseRecording(text: string, where: string): StockRecording {
       const body = bodyProblem(response.body);
       if (body) throw problem(`${at}'s response body ${body}`);
     } else if (exchange.kind === "write") {
-      if (exchange.method === "GET" || exchange.method === "HEAD") {
-        throw problem(`${at} is a write, so its method is not GET or HEAD`);
-      }
       const body = bodyProblem(exchange.body);
       if (body) throw problem(`${at}'s body ${body}`);
+      if (isReadRequest(exchange.method, exchange.url, exchange.body as RecordedBody | undefined)) {
+        throw problem(
+          `${at} is a write, so it is not a request the proxy's classifier calls a read`,
+        );
+      }
     } else {
       throw problem(`${at}'s kind must be read or write`);
     }
@@ -179,6 +214,15 @@ export function bodyBytesOf(body: RecordedBody | undefined): {
   if ("text" in body)
     return { bytes: new TextEncoder().encode(body.text), contentType: "text/plain" };
   return { bytes: Buffer.from(body.base64, "base64"), contentType: "application/octet-stream" };
+}
+
+/** The vendor's answer to a read, as a replay hands it to the proxy. */
+export function replayResponseOf(read: RecordedRead): Response {
+  const { bytes, contentType } = bodyBytesOf(read.response.body);
+  const headers = new Headers(read.response.headers);
+  if (!headers.has("content-type") && contentType) headers.set("content-type", contentType);
+  const nullBody = read.method === "HEAD" || [204, 205, 304].includes(read.response.status);
+  return new Response(nullBody ? null : bytes, { status: read.response.status, headers });
 }
 
 /**

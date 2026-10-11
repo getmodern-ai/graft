@@ -163,8 +163,9 @@
  * ## `GRAFT_DRY_RUN=1` is a dry run, and the report replaces the result
  *
  * Set by a publish given a test input, or by a run asked for as a dry run. The token carries the
- * dry-run claim, so the proxy forwards `GET` and `HEAD` and stops every other method with a **preview**
- * of the request that would have left, marked `x-graft-dry-run: intercepted`. `ctx.fetch` records each
+ * dry-run claim, so the proxy forwards a read (`GET`, `HEAD`, and a `POST` its classifier calls a read,
+ * marked `x-graft-dry-run: forwarded`) and stops every other request with a **preview** of the
+ * request that would have left, marked `x-graft-dry-run: intercepted`. `ctx.fetch` records each
  * call — a read's path and status, an intercepted write's preview — and hands the module the proxy's
  * response unchanged, so the module runs its own code against the preview. A read the proxy refused
  * because **no response came from the vendor** arrives marked `x-graft-refusal: <reason>`, and its
@@ -305,6 +306,7 @@ function readByteCount(value) {
 /** The proxy's marker on a dry-run answer and the value for a stopped write — `DRY_RUN_HEADER` in `runner-source.ts`. */
 const DRY_RUN_HEADER = "x-graft-dry-run";
 const DRY_RUN_INTERCEPTED = "intercepted";
+const DRY_RUN_FORWARDED = "forwarded";
 /**
  * The proxy's mark on a refusal it made because no response came from the vendor, carrying the
  * reason — `REFUSAL_HEADER` in `runner-source.ts`. A read that bears it is recorded with the reason,
@@ -317,7 +319,7 @@ const REFUSAL_HEADER = "x-graft-refusal";
  * in `runner-source.ts`. A response bearing it is never a vendor's error status (GRA-244).
  */
 const PROXY_REFUSED_HEADER = "x-graft-refused";
-/** Methods the proxy forwards in a dry run; everything else it stops with a preview. */
+/** Methods the proxy always forwards in a dry run; a `POST` it forwards comes back marked `forwarded`. */
 const READ_METHODS = new Set(["GET", "HEAD"]);
 /** How much of a previewed body the report carries — the head, since a body's shape is at its start. */
 const MAX_RECORDED_BODY_CHARS = 4_000;
@@ -741,7 +743,14 @@ function boundFetch(path, init = {}) {
  */
 async function dryRunFetch(url, request, call) {
   const response = await fetch(url, request);
-  if (READ_METHODS.has(call.method)) {
+  // A read is what the proxy forwarded: a `GET` or `HEAD`, and a `POST` its classifier calls a read
+  // (a GraphQL query, a reviewed search endpoint; ADR 0008 as amended 2026-10-10), which comes back
+  // marked `forwarded`, or marked with the refusal of a forwarded call no vendor answered.
+  if (
+    READ_METHODS.has(call.method) ||
+    response.headers.get(DRY_RUN_HEADER) === DRY_RUN_FORWARDED ||
+    response.headers.has(REFUSAL_HEADER)
+  ) {
     const reason = response.headers.get(REFUSAL_HEADER);
     recordCall(dryRunRecord.reads, {
       method: call.method,

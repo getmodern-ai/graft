@@ -1,0 +1,45 @@
+{
+  "name": "update-record",
+  "description": "Updates properties of a HubSpot contact, company or deal, such as moving a deal to another stage, changing its amount or owner, or a contact's lifecycle stage or phone. The record id comes from hubspot__find-contact, hubspot__find-deal or hubspot__get-record; stage ids from hubspot__list-pipelines and owner ids from hubspot__list-owners. Property names are HubSpot's internal names; null clears one.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "objectType": {
+        "type": "string",
+        "enum": ["contact", "company", "deal"]
+      },
+      "recordId": {
+        "type": "string",
+        "description": "The record's id: a contact's from hubspot__find-contact, a deal's from hubspot__find-deal, a company's from the associations hubspot__get-record answers.",
+        "minLength": 1
+      },
+      "properties": {
+        "type": "object",
+        "minProperties": 1,
+        "additionalProperties": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "number"
+            },
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "required": ["objectType", "recordId", "properties"],
+    "additionalProperties": false
+  },
+  "hosts": ["api.hubapi.com"],
+  "annotations": {
+    "readOnly": false,
+    "destructive": false
+  }
+}

@@ -1215,6 +1215,121 @@ describe("derived annotations", () => {
     ).toEqual(DESTRUCTIVE);
   });
 
+  it("marks a POST the reviewed destructive table names destructive (GRA-267)", () => {
+    // Stripe's refund-payment, as the stock tool writes it: a relative path under the connection's
+    // `/v1`, a form body the check cannot read, no `host`.
+    expect(
+      tool(
+        [
+          "  const form = new URLSearchParams();",
+          '  form.set("charge", "ch_1");',
+          '  const res = await ctx.fetch("/refunds", {',
+          '    method: "POST",',
+          '    headers: { "content-type": "application/x-www-form-urlencoded" },',
+          "    body: form,",
+          "  });",
+          "  void res;",
+        ].join("\n"),
+      ),
+    ).toEqual(DESTRUCTIVE);
+    expect(tool('  await ctx.fetch("/charges/ch_1/refund", { method: "POST" });')).toEqual(
+      DESTRUCTIVE,
+    );
+    expect(
+      tool('  await ctx.fetch("/v1/refunds", { method: "POST", host: "api.stripe.com" });'),
+    ).toEqual(DESTRUCTIVE);
+    expect(
+      tool('  const PATH = "/chat.delete";\n  await ctx.fetch(PATH, { method: "POST" });'),
+    ).toEqual(DESTRUCTIVE);
+    // A template's substitution stands for one segment, for the destructive judgement alone.
+    expect(
+      tool('  await ctx.fetch(`/charges/${input.notes}/refund`, { method: "POST" });'),
+    ).toEqual(DESTRUCTIVE);
+    expect(
+      tool('  await ctx.fetch(`/invoices/${input.notes}/void?expand=x`, { method: "POST" });'),
+    ).toEqual(DESTRUCTIVE);
+    // ...and never makes a read: a templated search path stays a write.
+    expect(
+      tool(
+        '  await ctx.fetch(`/crm/v3/objects/${input.notes}/search`, { method: "POST", host: "api.hubapi.com" });',
+      ),
+    ).toEqual(WRITE);
+    // A destructive call beside reads and ordinary writes still makes the tool destructive.
+    expect(
+      tool(
+        [
+          '  await ctx.fetch("/charges/ch_1");',
+          '  await ctx.fetch("/customers", { method: "POST" });',
+          '  await ctx.fetch("/refunds", { method: "POST" });',
+        ].join("\n"),
+      ),
+    ).toEqual(DESTRUCTIVE);
+  });
+
+  it("leaves a POST the table does not name, on the host it names or a path it cannot read, a write", () => {
+    expect(tool('  await ctx.fetch("/customers", { method: "POST" });')).toEqual(WRITE);
+    expect(
+      tool('  await ctx.fetch("/refunds", { method: "POST", host: "api.example.com" });'),
+    ).toEqual(WRITE);
+    expect(tool('  await ctx.fetch(input.notes ?? "/refunds", { method: "POST" });')).toEqual(
+      WRITE,
+    );
+    expect(tool('  await ctx.fetch(`${input.notes}/cancel`, { method: "POST" });')).toEqual(WRITE);
+    expect(tool('  await ctx.fetch("/refunds", { method: "PUT" });')).toEqual(WRITE);
+  });
+
+  it("reads a destructive path's shape: a const, a concatenation, a fragment, a held base (Greptile on #205)", () => {
+    expect(
+      tool(
+        '  const path = `/charges/${input.notes}/refund`;\n  await ctx.fetch(path, { method: "POST" });',
+      ),
+    ).toEqual(DESTRUCTIVE);
+    expect(
+      tool('  await ctx.fetch("/charges/" + input.notes + "/refund", { method: "POST" });'),
+    ).toEqual(DESTRUCTIVE);
+    expect(
+      tool(
+        '  const id = input.notes;\n  const path = "/charges/" + id + "/refund";\n  await ctx.fetch(path, { method: "POST" });',
+      ),
+    ).toEqual(DESTRUCTIVE);
+    expect(tool('  await ctx.fetch("/refunds#receipt", { method: "POST" });')).toEqual(DESTRUCTIVE);
+    expect(
+      tool('  await ctx.fetch(`/invoices/${input.notes}/void#x?y`, { method: "POST" });'),
+    ).toEqual(DESTRUCTIVE);
+    expect(tool('  await ctx.fetch(`${input.notes}/refunds`, { method: "POST" });')).toEqual(
+      DESTRUCTIVE,
+    );
+    // A shadowed const is not followed: the path is unread, and the call an ordinary write.
+    expect(
+      tool(
+        '  const path = "/refunds";\n  { const path = "/customers"; void path; }\n  await ctx.fetch(path, { method: "POST" });',
+      ),
+    ).toEqual(WRITE);
+    // The shape is the destructive judgement's alone: a fragment still leaves a read unread.
+    expect(tool('  await ctx.fetch("/items#x", { method: "POST" });')).toEqual(WRITE);
+  });
+
+  it("reads a destructive path as the runner resolves it: dot segments, encoded dots, backslashes, doubled slashes", () => {
+    for (const path of [
+      "/./refunds",
+      "/customers/../refunds",
+      "/%2e/refunds",
+      "/x/%2E%2E/refunds",
+      "/x\\..\\refunds",
+      "//refunds",
+      "/charges/./ch_1/../ch_2/refund",
+    ]) {
+      expect(tool(`  await ctx.fetch(${JSON.stringify(path)}, { method: "POST" });`), path).toEqual(
+        DESTRUCTIVE,
+      );
+    }
+    expect(
+      tool('  await ctx.fetch(`/charges/${input.notes}/./refund`, { method: "POST" });'),
+    ).toEqual(DESTRUCTIVE);
+    // A path that climbs out of the connection is refused by the runner, so it matches nothing.
+    expect(tool('  await ctx.fetch("/../../refunds", { method: "POST" });')).toEqual(WRITE);
+  });
+
   it("counts a method it cannot read as a write: a variable init, a shorthand, a spread, a computed method", () => {
     expect(tool('  const init = { method: "GET" };\n  await ctx.fetch("/items", init);')).toEqual(
       WRITE,
@@ -1259,6 +1374,178 @@ describe("derived annotations", () => {
         ].join("\n"),
       ),
     ).toEqual(WRITE);
+  });
+
+  /**
+   * A read-only POST (ADR 0008 as amended 2026-10-10), judged by the proxy's classifier on what
+   * the check can see: the method, the path, the `host` option, and a body built from literals.
+   */
+  describe("a read-only POST", () => {
+    const gql = (query: string, extra = "") =>
+      `  await ctx.fetch("/graphql", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ query: ${query}${extra} }) });`;
+
+    it("marks a GraphQL query with a literal document read-only", () => {
+      expect(tool(gql('"query { viewer { id } }"'))).toEqual(READ);
+      expect(tool(gql("`{ issues { nodes { id } } }`"))).toEqual(READ);
+      expect(
+        tool(
+          gql(
+            '"query Q($id: String!) { issue(id: $id) { id } }"',
+            ', variables: { id: input.itemId }, operationName: "Q"',
+          ),
+        ),
+      ).toEqual(READ);
+    });
+
+    it("follows a document built from literals: concatenation and a const of the file", () => {
+      expect(tool(gql('"query { " + "viewer { id } }"'))).toEqual(READ);
+      expect(
+        tool(gql("QUERY"), {}, [], ['const QUERY = "query { viewer { " + `id }` + " }";']),
+      ).toEqual(READ);
+      expect(
+        tool(
+          '  await ctx.fetch("/graphql", { method: "POST", body: JSON.stringify({ query }) });',
+          {},
+          [],
+          ['const query = "{ viewer { id } }";'],
+        ),
+      ).toEqual(READ);
+    });
+
+    it("marks a mutation, a subscription and a mixed document a write", () => {
+      expect(tool(gql('"mutation { issueDelete(id: \\"x\\") { success } }"'))).toEqual(WRITE);
+      expect(tool(gql('"subscription { issueUpdated { id } }"'))).toEqual(WRITE);
+      expect(tool(gql('"query A { viewer { id } } mutation B { logout }"'))).toEqual(WRITE);
+    });
+
+    it("marks a document it cannot see statically a write", () => {
+      // An interpolation, the input, a let, a name declared twice, a body built elsewhere.
+      expect(tool(gql("`query { ${input.notes} }`"))).toEqual(WRITE);
+      expect(tool(gql('input.notes ?? ""'))).toEqual(WRITE);
+      expect(tool(gql("q"), {}, [], ['let q = "{ viewer { id } }";'])).toEqual(WRITE);
+      // A const the function shadows: the name is declared twice in the file, so neither is followed.
+      expect(
+        tool(
+          ['  const q = "mutation { logout }";', gql("q")].join("\n"),
+          {},
+          [],
+          ['const q = "{ viewer { id } }";'],
+        ),
+      ).toEqual(WRITE);
+      // A JSON the file declares for itself is not the global one.
+      expect(
+        tool(
+          gql('"{ viewer { id } }"'),
+          {},
+          [],
+          [
+            'const JSON = { stringify: (_: unknown) => "{\\"query\\":\\"mutation { logout }\\"}" };',
+          ],
+        ),
+      ).toEqual(WRITE);
+      expect(
+        tool(
+          '  const body = JSON.stringify({ query: "{ a }" });\n  await ctx.fetch("/graphql", { method: "POST", body });',
+        ),
+      ).toEqual(WRITE);
+    });
+
+    it("marks a malformed or persisted GraphQL body a write", () => {
+      expect(tool(gql('"query { viewer { id "'))).toEqual(WRITE);
+      expect(
+        tool(
+          '  await ctx.fetch("/graphql", { method: "POST", body: JSON.stringify({ extensions: { persistedQuery: { version: 1, sha256Hash: "abc" } } }) });',
+        ),
+      ).toEqual(WRITE);
+      expect(tool(gql('"{ a }"', ", ...input"))).toEqual(WRITE);
+    });
+
+    it("marks a query sent anywhere but a GraphQL endpoint a write", () => {
+      expect(
+        tool(
+          '  await ctx.fetch("/messages", { method: "POST", body: JSON.stringify({ query: "{ a }" }) });',
+        ),
+      ).toEqual(WRITE);
+      expect(
+        tool(
+          '  await ctx.fetch(`/${input.notes}/graphql`, { method: "POST", body: JSON.stringify({ query: "{ a }" }) });',
+        ),
+      ).toEqual(WRITE);
+    });
+
+    it("marks a reviewed search endpoint read-only only where the call names its host", () => {
+      const search = (init: string) =>
+        `  await ctx.fetch("/crm/v3/objects/contacts/search", { method: "POST", ${init}body: JSON.stringify({ limit: 10, filterGroups: [] }) });`;
+      expect(tool(search('host: "api.hubapi.com", '))).toEqual(READ);
+      // A relative path's host is the connection's, which the check cannot know.
+      expect(tool(search(""))).toEqual(WRITE);
+      expect(tool(search('host: "api.example.com", '))).toEqual(WRITE);
+      expect(tool(search("host: input.notes, "))).toEqual(WRITE);
+      expect(
+        tool(
+          '  await ctx.fetch(`/crm/v3/objects/${input.notes}/search`, { method: "POST", host: "api.hubapi.com", body: "{}" });',
+        ),
+      ).toEqual(WRITE);
+    });
+
+    it("marks a call whose init has a computed key, a spread or an accessor a write (Greptile on #200)", () => {
+      const query = 'body: JSON.stringify({ query: "{ viewer { id } }" })';
+      // The computed key may be "body", replacing the document the check read.
+      expect(
+        tool(
+          `  await ctx.fetch("/graphql", { method: "POST", ${query}, [input.notes ?? "x"]: "{}" });`,
+        ),
+      ).toEqual(WRITE);
+      expect(
+        tool(`  await ctx.fetch("/graphql", { method: "POST", ${query}, ...{ body: "{}" } });`),
+      ).toEqual(WRITE);
+      expect(
+        tool(
+          `  await ctx.fetch("/graphql", { method: "POST", ${query}, get host() { return "x"; } });`,
+        ),
+      ).toEqual(WRITE);
+      // A literal key given twice is read as JavaScript reads it: the last one wins.
+      expect(
+        tool(
+          `  await ctx.fetch("/graphql", { method: "POST", ${query}, body: JSON.stringify({ query: "mutation { logout }" }) });`,
+        ),
+      ).toEqual(WRITE);
+      expect(
+        tool(`  await ctx.fetch("/graphql", { method: "POST", body: "{}", ${query} });`),
+      ).toEqual(READ);
+    });
+
+    it("marks every body a write where the module may change JSON.stringify (Greptile on #200)", () => {
+      const read = gql('"{ viewer { id } }"');
+      expect(tool(read, {}, [], ['JSON.stringify = () => "";'])).toEqual(WRITE);
+      expect(tool(read, {}, [], ['(JSON as any)["stringify"] = () => "";'])).toEqual(WRITE);
+      expect(
+        tool(
+          read,
+          {},
+          [],
+          ['Object.defineProperty(Object.prototype, "toJSON", { value: () => ({}) });'],
+        ),
+      ).toEqual(WRITE);
+      // In a helper file too: the global is the module's, whichever file changes it.
+      expect(
+        tool(read, {
+          "lib/tamper.ts":
+            "export const helper = () => { (Object.prototype as any).toJSON = () => ({}); };",
+        }),
+      ).toEqual(WRITE);
+    });
+
+    it("still counts a write beside a read-only POST", () => {
+      expect(
+        tool(
+          [
+            gql('"{ viewer { id } }"'),
+            '  await ctx.fetch("/orders", { method: "POST", body: "{}" });',
+          ].join("\n"),
+        ),
+      ).toEqual(WRITE);
+    });
   });
 
   it("answers UNKNOWN_ANNOTATIONS for a module it could not read", () => {
@@ -1493,6 +1780,27 @@ describe("checkModule", () => {
       dependencies: ["@linear/sdk"],
     });
     expect(vendored.refusals).toEqual([]);
+  }, 30_000);
+
+  /** The worker loads the proxy's classifier and the GraphQL parser by Node's own resolution. */
+  it("judges a GraphQL query read-only in the worker thread", async () => {
+    const result = await checkModule({
+      files: [
+        {
+          path: "index.ts",
+          content: [
+            "export default async (input: Input, ctx: Context) => {",
+            '  const res = await ctx.fetch("/graphql", { method: "POST", body: JSON.stringify({ query: "{ viewer { id } }" }) });',
+            `  return { data: await res.json(), ${READS_INPUT} };`,
+            "};",
+          ].join("\n"),
+        },
+      ],
+      entry: "index.ts",
+      inputSchema: SCHEMA,
+    });
+    expect(result.refusals).toEqual([]);
+    expect(result.annotations).toEqual(READ);
   }, 30_000);
 
   it("refuses a module over the size cap before starting a thread, in KiB", async () => {

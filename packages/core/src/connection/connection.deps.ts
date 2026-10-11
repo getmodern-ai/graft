@@ -2,6 +2,7 @@ import { listAgentIdsForConnection } from "@graft/db/repo/agent";
 import {
   deleteApprovalsForVendor,
   deleteBuildApprovalsForConnection,
+  deleteVendorApprovalsForVendor,
 } from "@graft/db/repo/approval";
 import {
   addConnectionHosts,
@@ -54,6 +55,8 @@ export type ConnectionDeps = {
   addConnectionHosts: typeof addConnectionHosts;
   /** A revoke's three sweeps (ADR 0007): every approval for the vendor's tools, every build approval, every open ask about the connection. */
   deleteApprovalsForVendor: typeof deleteApprovalsForVendor;
+  /** Beside it, every agent's standing approval for the vendor (ADR 0008 as amended 2026-10-09). */
+  deleteVendorApprovalsForVendor: typeof deleteVendorApprovalsForVendor;
   deleteBuildApprovalsForConnection: typeof deleteBuildApprovalsForConnection;
   expirePendingActionsForConnection: typeof expirePendingActionsForConnection;
   /**
@@ -99,6 +102,7 @@ export function createConnectionDeps(
     reconnectConnection,
     addConnectionHosts,
     deleteApprovalsForVendor,
+    deleteVendorApprovalsForVendor,
     deleteBuildApprovalsForConnection,
     expirePendingActionsForConnection,
     deleteWorkingSetEntriesForConnection,

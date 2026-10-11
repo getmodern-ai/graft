@@ -1,0 +1,19 @@
+{
+  "name": "get-message",
+  "description": "Reads one Gmail message with headers, labels, text, and a list of its attachments. messageId comes from gmail__search-messages; omit it to read the newest inbox message. The returned threadId feeds gmail__get-thread and gmail__reply-to-thread.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "messageId": {
+        "type": "string",
+        "description": "Message ID from gmail__search-messages. Omit to read the newest inbox message."
+      }
+    },
+    "additionalProperties": false
+  },
+  "hosts": ["gmail.googleapis.com"],
+  "annotations": {
+    "readOnly": true,
+    "destructive": false
+  }
+}

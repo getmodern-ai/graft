@@ -56,6 +56,7 @@ describe("every owned table", () => {
       "setup",
       "tool_version",
       "usage_ledger",
+      "vendor_approval",
       "working_set",
       "working_set_change",
     ]);

@@ -1,0 +1,37 @@
+{
+  "name": "send-email",
+  "description": "Sends a plain-text email at once through Gmail. To save without sending, use gmail__create-draft; to reply inside a conversation, use gmail__reply-to-thread.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "to": {
+        "type": "string",
+        "minLength": 1,
+        "description": "One recipient address or several addresses separated by commas."
+      },
+      "subject": {
+        "type": "string",
+        "description": "The email subject."
+      },
+      "body": {
+        "type": "string",
+        "description": "The plain-text email body."
+      },
+      "cc": {
+        "type": "string",
+        "description": "Optional CC address or comma-separated addresses."
+      },
+      "bcc": {
+        "type": "string",
+        "description": "Optional BCC address or comma-separated addresses."
+      }
+    },
+    "required": ["to", "subject", "body"],
+    "additionalProperties": false
+  },
+  "hosts": ["gmail.googleapis.com"],
+  "annotations": {
+    "readOnly": false,
+    "destructive": false
+  }
+}

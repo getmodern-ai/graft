@@ -39,6 +39,18 @@ describe("buildDryRunPreview", () => {
     expect(JSON.stringify(preview)).not.toContain("expand");
   });
 
+  it("labels a write destructive by the shared classifier: a DELETE or a reviewed endpoint (GRA-267)", () => {
+    const label = (method: string, href: string) =>
+      buildDryRunPreview({ method, url: new URL(href), headerNames: [], body: null }).destructive;
+    expect(label("POST", "https://api.stripe.com/v1/refunds")).toBe(true);
+    expect(label("POST", "https://api.stripe.com/v1/charges/ch_1/refund?expand=x")).toBe(true);
+    expect(label("POST", "https://slack.com/api/chat.delete")).toBe(true);
+    expect(label("DELETE", "https://api.vendor.example/v1/orders/1")).toBe(true);
+    expect(label("POST", "https://api.stripe.com/v1/customers")).toBe(false);
+    expect(label("POST", "https://api.vendor.example/v1/refunds")).toBe(false);
+    expect(label("PATCH", "https://api.stripe.com/v1/refunds")).toBe(false);
+  });
+
   it("names the host without its port, as the connection declares it", () => {
     const preview = buildDryRunPreview({
       method: "POST",

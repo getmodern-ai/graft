@@ -160,6 +160,9 @@ describe("the shipped skills", () => {
       "`ctx.proxyBase` stays for SDKs: a hand-written call to another host is `ctx.fetch(path, { host })`",
       "A proof read may name a host",
       "with the same `{ host }` the module passes to `ctx.fetch`, never on the primary host",
+      // GRA-271: a proof read carries the vendor's headers, and a POST only where it is a read.
+      "A proof read carries the vendor's own headers the module sends",
+      "A proof read may be a `POST` with its body only where the proxy counts it as a read",
       "RequestInit & { host?: string }",
       // GRA-197 (ADR 0010 as amended 2026-09-23): a URL the vendor answers at run time goes to
       // ctx.fetch as it is, and a write flow is ctx.fetch rather than an SDK.
