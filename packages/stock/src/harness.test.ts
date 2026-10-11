@@ -7,6 +7,7 @@ import { describe, expect, it } from "vitest";
 import {
   jsonTextNotes,
   proveCheck,
+  proveOptionalDefaults,
   proveReplay,
   proveTestInput,
   readStockRecording,
@@ -51,6 +52,10 @@ describe(`every stock tool (${mode.kind})`, () => {
 
       it("takes its test input", () => {
         expect(proveTestInput(tool)).toEqual([]);
+      });
+
+      it("requires no input it defaults or falls back on", () => {
+        expect(proveOptionalDefaults(tool)).toEqual([]);
       });
 
       it("replays its recording: the recorded reads, writes stopped at the preview, the recorded result", async () => {
@@ -240,6 +245,142 @@ describe("the harness over a read POST (GRA-270)", () => {
     expect(report.problems[0]).toBe(
       `stock tool demo__search-contacts: its read 1 disagrees with the recording: it made POST ${SEARCH_HOST}/api/v1/contacts/search, the recording holds POST ${SEARCH_HOST}/api/v1/contacts/search`,
     );
+  });
+});
+
+describe("the harness over required inputs", () => {
+  it("passes a tool whose required inputs it cannot do without", () => {
+    expect(proveOptionalDefaults(readTool)).toEqual([]);
+  });
+
+  it("fails a required input with a default, as gmail__search-messages had", () => {
+    const tool = fixture({
+      module: READ_MODULE,
+      inputSchema: {
+        type: "object",
+        properties: { q: { type: "string", default: "in:inbox" } },
+        required: ["q"],
+      },
+    });
+    expect(proveOptionalDefaults(tool)).toEqual([
+      'stock tool demo__list-items: its input schema requires q and gives it a default of "in:inbox"; drop it from required and apply the default in the module',
+    ]);
+  });
+
+  it("fails a required input the module falls back on", () => {
+    for (const read of [
+      'input.q ?? "red"',
+      'input?.q || "red"',
+      'input["q"] ?? "red"',
+      '(() => input.q ?? "red")()',
+    ]) {
+      const tool = fixture({
+        module: READ_MODULE.replace("encodeURIComponent(input.q)", `encodeURIComponent(${read})`),
+      });
+      expect(proveOptionalDefaults(tool)).toEqual([
+        "stock tool demo__list-items: its input schema requires q, but the module falls back when it is absent; drop it from required, and declare the fallback as its default",
+      ]);
+    }
+    const assigned = fixture({
+      module: READ_MODULE.replace(
+        "export default async (input: Input, ctx: Context) => {",
+        'export default async (input: Input, ctx: Context) => {\n  const q = input.q ?? "red";',
+      ),
+    });
+    expect(proveOptionalDefaults(assigned)).toHaveLength(1);
+  });
+
+  it("does not read a comparison as a fallback", () => {
+    for (const read of [
+      'id === input.q || "red"',
+      'id !== input.q || "red"',
+      'n > input.q || "red"',
+    ]) {
+      const tool = fixture({
+        module: READ_MODULE.replace(
+          "encodeURIComponent(input.q)",
+          `encodeURIComponent(String((id: string, n: string) => ${read}))`,
+        ),
+      });
+      expect(proveOptionalDefaults(tool)).toEqual([]);
+    }
+  });
+
+  it("does not read an || evaluated as a test as a fallback (Greptile on #216)", () => {
+    const top = "export default async (input: Input, ctx: Context) => {";
+    for (const extra of [
+      "  if (input.q || input.other) void 0;",
+      '  if ((input.q || "") && ctx) void 0;',
+      '  if (!(input.q || "red")) void 0;',
+      "  while (input.q || false) break;",
+      "  void (input.q || input.other ? 1 : 2);",
+      "  if ((ctx && (input.q || input.other)) satisfies unknown) void 0;",
+      "  if ((input.q || input.other) as unknown) void 0;",
+      '  if (!(input.q || "red")!) void 0;',
+    ]) {
+      const tool = fixture({ module: READ_MODULE.replace(top, `${top}\n${extra}`) });
+      expect(proveOptionalDefaults(tool)).toEqual([]);
+    }
+    for (const extra of [
+      '  const v = ctx && (input.q || "red");',
+      '  if (ctx && (input.q || "red") === "red") void 0;',
+    ]) {
+      const tool = fixture({ module: READ_MODULE.replace(top, `${top}\n${extra}`) });
+      expect(proveOptionalDefaults(tool)).toHaveLength(1);
+    }
+  });
+
+  it("does not read a comment, a string or a shadowing parameter as a fallback (Greptile on #216)", () => {
+    const top = "export default async (input: Input, ctx: Context) => {";
+    for (const extra of [
+      '  // Never input.q ?? "red": q is required.',
+      '  const note = "input.q ?? red";',
+      '  const pick = (input: { q?: string }) => input.q ?? "red";',
+      '  const pickAll = ({ input }: { input: { q?: string } }) => input.q ?? "red";',
+      '  if (ctx) { const input = { q: undefined as string | undefined }; void (input.q ?? "red"); }',
+      '  for (const input of [{ q: "x" }]) void (input.q || "red");',
+      '  try { void 0; } catch (input) { void ((input as { q?: string }).q ?? "red"); }',
+    ]) {
+      const tool = fixture({ module: READ_MODULE.replace(top, `${top}\n${extra}`) });
+      expect(proveOptionalDefaults(tool)).toEqual([]);
+    }
+  });
+
+  it("follows every form of the default export (Greptile on #216)", () => {
+    const body = READ_MODULE.replace("input.q", 'input.q ?? "red"').replace(
+      "export default async (input: Input, ctx: Context) => {",
+      "",
+    );
+    for (const module of [
+      `const run = async (input: Input, ctx: Context) => {${body}\nexport { run as default };\n`,
+      `const run = async (input: Input, ctx: Context) => {${body}\nexport default run;\n`,
+      `export default async function run(input: Input, ctx: Context) {${body.replace(/};\n$/, "}\n")}`,
+    ]) {
+      expect(proveOptionalDefaults(fixture({ module }))).toHaveLength(1);
+    }
+  });
+
+  it("reads a destructuring default as a fallback", () => {
+    for (const module of [
+      READ_MODULE.replace("(input: Input,", '({ q = "red" }: Input,').replace("input.q", "q"),
+      READ_MODULE.replace(
+        "export default async (input: Input, ctx: Context) => {",
+        'export default async (input: Input, ctx: Context) => {\n  const { q = "red" } = input;',
+      ),
+    ]) {
+      expect(proveOptionalDefaults(fixture({ module }))).toHaveLength(1);
+    }
+  });
+
+  it("names nothing for a tool with no required list", () => {
+    const tool = fixture({
+      module: READ_MODULE.replace(
+        "encodeURIComponent(input.q)",
+        'encodeURIComponent(input.q ?? "red")',
+      ),
+      inputSchema: { type: "object", properties: { q: { type: "string", default: "red" } } },
+    });
+    expect(proveOptionalDefaults(tool)).toEqual([]);
   });
 });
 

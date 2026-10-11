@@ -17,7 +17,6 @@
         "description": "Maximum number of matching messages to return."
       }
     },
-    "required": ["query", "maxResults"],
     "additionalProperties": false
   },
   "hosts": ["gmail.googleapis.com"],

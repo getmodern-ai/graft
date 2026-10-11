@@ -25,8 +25,8 @@ type GmailMessage = {
 
 export default async (input: Input, ctx: Context) => {
   const listParams = new URLSearchParams({
-    q: input.query,
-    maxResults: String(input.maxResults),
+    q: input.query ?? "in:inbox",
+    maxResults: String(input.maxResults ?? 10),
   });
   const listPath = `/users/me/messages?${listParams.toString()}`;
   const listResponse = await ctx.fetch(listPath);
