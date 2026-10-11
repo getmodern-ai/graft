@@ -260,3 +260,25 @@ export function acquireJobQuery(agentId: string, jobId: string) {
     queryFn: () => api<AcquireJobStatus>(`/agents/${agentId}/acquire-jobs/${jobId}`),
   });
 }
+
+/**
+ * A directory entry's mark by its slug, from the directory reads this page already made (the home
+ * view and any search), so the connect, building and done cards of an integration chosen there
+ * draw its logo rather than a glyph. Null when the page never read it, as after a reload.
+ */
+export function cachedDirectoryLogo(queryClient: QueryClient, slug: string): string | null {
+  for (const [, data] of queryClient.getQueriesData<unknown>({ queryKey: ["setup-directory"] })) {
+    const pages =
+      data && typeof data === "object" && "pages" in data
+        ? (data as { pages: DirectoryPage[] }).pages
+        : null;
+    const entries: { slug: string; logoUrl: string | null }[] = pages
+      ? pages.flatMap((page) => page.entries)
+      : data && typeof data === "object" && "popular" in data
+        ? (data as DirectoryHome).popular
+        : [];
+    const found = entries.find((entry) => entry.slug === slug && entry.logoUrl);
+    if (found?.logoUrl) return found.logoUrl;
+  }
+  return null;
+}
