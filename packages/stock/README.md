@@ -14,7 +14,8 @@ Graft's own `acquire` loop, reviewed, and shipped with the server. One directory
 The boot loads the workspace into the global catalogue (`src/workspace.ts`); a tool whose files
 changed is appended as its next catalogue version, and no version is ever edited.
 `src/harness.test.ts` is the harness every tool passes on every pull request, with no secret:
-the check, the test input, and the replay of the recording through the real proxy.
+the check, the test input, no required input the tool defaults or falls back on, and the replay
+of the recording through the real proxy.
 `pnpm --filter @graft/stock test:live` runs the same replay against the vendors (`RECORDING.md`,
 *Live mode*). Stock tools are maintainer-built for now (`CONTRIBUTING.md`).
 
@@ -36,7 +37,7 @@ pnpm --filter @graft/stock-build build-tool -- github "List my open pull request
 - **On success** it writes the module, `manifest.json`, `test-input.json` and `recording.json` into
   `tools/<vendor>/<name>/`, where `<name>` is the one the model chose. The files are formatted
   with the repository's Biome first, then copied into a `.build-*` directory in the workspace and
-  must pass the harness's three proofs there as they stand, which is what CI runs; only then are
+  must pass the harness's four proofs there as they stand, which is what CI runs; only then are
   they renamed into place. Then read the module and the recording (the build prints a note where
   the module reads a JSON answer as text; `RECORDING.md`), run `pnpm run lint` and
   `pnpm --filter @graft/stock test` as a reviewer will, and open a pull request.

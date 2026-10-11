@@ -135,7 +135,17 @@ function toolboxHit(
   };
 }
 
+/**
+ * The two ways a tool is named to `promote`, `demote` and `run_tool` (GRA-278): `tool`, the wire
+ * name a `find_tool` hit carries, passed back as it came, or `vendor` and `name`. No `required`:
+ * either form is complete, and `readToolKey` refuses a call that gives neither or both disagreeing.
+ */
 const toolKeyProperties = {
+  tool: {
+    type: "string",
+    description:
+      'The tool as vendor__name, the tool field of a find_tool hit, e.g. "gmail__search-messages"; in place of vendor and name.',
+  },
   vendor: {
     type: "string",
     description: 'The vendor slug the tool is authored against, e.g. "unleashed".',
@@ -143,12 +153,33 @@ const toolKeyProperties = {
   name: { type: "string", description: 'The tool\'s kebab-case name, e.g. "list-orders".' },
 } as const;
 
-function readToolKey(
+const TOOL_KEY_REQUIRED =
+  'tool must be a find_tool hit\'s vendor__name (e.g. "gmail__search-messages"), or vendor and name must both be non-empty strings';
+
+/**
+ * The tool a call names: `tool` as a wire name, or `vendor` and `name`. A wire name given as
+ * `name` alone is read as `tool`, since that is the hit's other field a model reaches for.
+ */
+export function readToolKey(
   args: Record<string, unknown>,
 ): { vendor: string; name: string } | { error: string } {
   const vendor = typeof args.vendor === "string" ? args.vendor.trim() : "";
   const name = typeof args.name === "string" ? args.name.trim() : "";
-  if (!vendor || !name) return { error: "vendor and name must both be non-empty strings" };
+  const wire =
+    typeof args.tool === "string" ? args.tool.trim() : !vendor && name.includes("__") ? name : "";
+  if (args.tool !== undefined && typeof args.tool !== "string") return { error: TOOL_KEY_REQUIRED };
+  if (wire) {
+    const key = parseAuthoredToolName(wire);
+    if (!key) return { error: TOOL_KEY_REQUIRED };
+    const named = typeof args.tool === "string";
+    if (named && ((vendor && vendor !== key.vendor) || (name && name !== key.name))) {
+      return {
+        error: `tool names ${wire} but vendor and name say ${vendor || "(none)"} and ${name || "(none)"}; one form is enough`,
+      };
+    }
+    return key;
+  }
+  if (!vendor || !name) return { error: TOOL_KEY_REQUIRED };
   return { vendor, name };
 }
 
@@ -166,12 +197,12 @@ const findTool: MetaTool = {
   definition: {
     name: FIND_TOOL,
     description:
-      "Used first, before acquire, for a task no listed tool covers: searches this account's toolbox, demoted tools included, and Graft's ready-made stock tools for every vendor, connected or not, by vendor, name, input labels and description; every word of the query hits, in any order, as itself, another form of it (contacts, contact) or a common synonym (find reaches search, dm reaches message). A tool no version of which has passed its dry run is not listed. " +
+      "Used first, before acquire, for a task no listed tool covers: searches this account's toolbox, demoted tools included, and Graft's ready-made stock tools for the person's email, calendar, files, chat, CRM and other vendors, connected or not, by vendor, name, input labels and description; every word of the query hits, in any order, as itself, another form (contacts, contact) or a synonym (find reaches search, dm reaches message), and a qualifier (recent, most, a count) only ranks. A tool no version of which has passed its dry run is not listed. " +
       "Answers the five best hits, the agent's working set first, then the rest of the toolbox, then stock tools of a vendor connected in the agent's scope, then the others, and, for a query that reads, read-only tools before writes, with more, the count of further hits, when there are any. " +
-      "Each hit carries vendor and name (the arguments promote, demote and run_tool take), its inputSchema (the shape run_tool's input must match), whether it is in the agent's working set, and its read-only and destructive hints. " +
-      "A hit that is not promoted is one promote call from the agent's list. The answer also carries connections, every live connection in the agent's scope with the connectionId acquire takes, its vendor and its name. An empty answer leads to request_connection when the vendor has no connection in the agent's scope, otherwise to acquire against the connection named. " +
+      "Each hit carries tool, its vendor__name, which promote, demote and run_tool take as it is (or as vendor and name), its inputSchema (the shape run_tool's input must match), whether it is in the agent's working set, and its read-only and destructive hints. " +
+      "The answer also carries connections, every live connection in the agent's scope with the connectionId acquire takes, its vendor and its name. An empty answer leads to request_connection when the vendor has no connection in the agent's scope, otherwise to acquire against the connection named. " +
       "A stock hit carries stock: true and either connectionIds, the connections in the agent's scope it runs over, or connect, the request_connection arguments for its vendor; its first run_tool or promote copies it into the toolbox, and a toolbox tool of the same vendor__name replaces it in the answer, marked stock: true while it follows stock's new versions or remixed: true once changed here. " +
-      "While the person has no connection at all and has neither finished nor skipped Setup, the answer also carries setup, a url to the console's Setup page for this agent, where a first vendor is connected and a first tool acquired, and a message in the shape of a handoff, shown as a card on a chat product that renders one.",
+      "While the person has no connection at all and has neither finished nor skipped Setup, the answer also carries setup, a url to the console's Setup page for this agent and a message in the shape of a handoff, shown as a card on a chat product that renders one.",
     inputSchema: {
       type: "object",
       properties: {
@@ -332,11 +363,10 @@ const promote: MetaTool = {
     description:
       "Used for a tool find_tool found that is not in the agent's working set: adds it. A stock tool is first copied into the toolbox, over a connection of its vendor in the agent's scope; with none, answers connection_needed with connect, the request_connection arguments. " +
       "The tool then appears in the agent's list as vendor__name with its own schema once the list is re-fetched, and run_tool calls it by name before that. " +
-      "Answers the working set's new size. Nothing is authored.",
+      "The tool is named by a find_tool hit's tool, vendor__name, as it is, or by vendor and name. Answers the working set's new size. Nothing is authored.",
     inputSchema: {
       type: "object",
       properties: toolKeyProperties,
-      required: ["vendor", "name"],
       additionalProperties: false,
     },
     annotations: { readOnlyHint: false, destructiveHint: false },
@@ -363,11 +393,10 @@ const demote: MetaTool = {
     description:
       "Used for a tool the agent no longer needs in its working set: removes it and keeps the list short. " +
       "The tool stays in the toolbox, one find_tool and promote away; nothing is deleted. " +
-      "The tool list changes (tools/list_changed). Answers the working set's new size.",
+      "The tool is named by a find_tool hit's tool, vendor__name, as it is, or by vendor and name. The tool list changes (tools/list_changed). Answers the working set's new size.",
     inputSchema: {
       type: "object",
       properties: toolKeyProperties,
-      required: ["vendor", "name"],
       additionalProperties: false,
     },
     annotations: { readOnlyHint: false, destructiveHint: false },
@@ -432,7 +461,6 @@ const runTool: MetaTool = {
           maximum: MAX_DETACHED_TIMEOUT_SECONDS,
         },
       },
-      required: ["vendor", "name"],
       additionalProperties: false,
     },
     // As destructive as the tool it carries, which a host cannot know per call; the tool's own hints

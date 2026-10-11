@@ -1,5 +1,7 @@
 // The door and its shapes only. The rule vocabulary and the core live in `./module-check.core`, which
 // loads the TypeScript compiler when imported; reach for it by its own path, knowingly.
+
+export { type RequiredDefault, requiredWithDefault } from "./input-schema";
 export {
   type AdviceRule,
   checkModule,

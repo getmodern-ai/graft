@@ -1,7 +1,7 @@
 import type { ConnectionOutput, RevokeConnectionResult } from "@graft/core";
 import { takesCredential } from "@graft/core/connection/connection.rules";
 import { GATEWAY_PROVIDER } from "@graft/core/connection/gateway-provider";
-import { KEYRING_PROVIDER } from "@graft/core/connection/provider";
+import { KEYRING_PROVIDER, providerDisplayName } from "@graft/core/connection/provider";
 import type { AuthScheme } from "@graft/proxy/types";
 import type {
   ConnectionCallOutput,
@@ -138,11 +138,11 @@ export function isGatewayConnection(connection: Pick<Connection, "provider">): b
 
 /**
  * The provider's badge on a card, in the person's words: the gateway is *their* API gateway, and
- * a provider this console has no words for yet is named as the row names it.
+ * a provider this console has no words for yet is named by its name, drawn capitalised.
  */
 export function providerLabel(connection: Pick<Connection, "provider">): string {
   if (isGatewayConnection(connection)) return "Through your API gateway";
-  return `via ${connection.provider}`;
+  return `via ${providerDisplayName(connection.provider)}`;
 }
 
 /**

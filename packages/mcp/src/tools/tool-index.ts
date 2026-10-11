@@ -9,12 +9,16 @@
  * (`SYNONYMS`: "find" reaches a search, "dm" a message), or, for a term of four characters or
  * more, as the start of a longer word. All-or-nothing on the terms is GRA-115's rule kept, so a
  * word absent from every field is still a miss; what changed is what counts as the word present.
+ * Two exceptions (GRA-278): a soft word ("recent", "most", a count; `SOFT_WORDS`) ranks and never
+ * decides, and a read verb counts as a weak hit on any read-only tool (`READ_CLASS`). Another
+ * tool's wire name inside a description is not indexed (`WIRE_NAME_REFERENCE`).
  *
  * Hits are ranked by the caller's `tier` (the working set before the rest of the toolbox), then,
- * when the query asks to read (`READ_VERBS`) and not to write, read-only tools before the rest,
+ * when the query asks to read (`readsOnly`) and not to write, read-only tools before the rest,
  * then by score: per term and field, the field's weight (name over vendor over input labels over
  * description) times how the term hit (itself over a synonym over a prefix), plus the name's weight
- * for each owner word of the query ("my") the name spells (`OWNER_WORDS`). Ties go by name, then
+ * for each owner word of the query ("my") the name spells (`OWNER_WORDS`) and for each term asked
+ * for in the plural that the name answers in the plural (`agreement`). Ties go by name, then
  * vendor, so the order is a function of the tools and the query alone. The first `limit` are
  * answered and the rest counted as `more`.
  *
@@ -146,9 +150,9 @@ const SYNONYMS: Readonly<Record<string, readonly string[]>> = {
   get: ["retrieve", "fetch", "read", "find"],
   fetch: ["get", "retrieve", "read"],
   retrieve: ["get", "fetch", "read"],
-  read: ["get", "fetch", "retrieve", "list"],
+  read: ["get", "fetch", "retrieve", "list", "search"],
   list: ["search", "query", "browse", "find"],
-  show: ["list", "get", "display"],
+  show: ["list", "get", "display", "search"],
   browse: ["list", "search"],
   send: ["post"],
   post: ["send", "publish"],
@@ -167,12 +171,15 @@ const SYNONYMS: Readonly<Record<string, readonly string[]>> = {
   meeting: ["event"],
   event: ["meeting"],
   upcoming: ["next", "future"],
-  email: ["mail", "message"],
-  mail: ["email", "message"],
+  // An inbox holds email, and the integration is named for it: a person's own Gmail tool says
+  // "inbox" or "Gmail" where a person says "email" (2026-10-11's "list my recent emails").
+  email: ["mail", "message", "inbox", "gmail"],
+  mail: ["email", "message", "inbox", "gmail"],
   thread: ["conversation"],
   conversation: ["thread"],
-  latest: ["newest", "recent"],
-  recent: ["latest", "newest"],
+  latest: ["newest", "recent", "last"],
+  recent: ["latest", "newest", "last"],
+  newest: ["latest", "recent", "last"],
   contact: ["person", "people"],
   user: ["member", "person", "people"],
   people: ["person", "user", "contact", "member"],
@@ -202,13 +209,62 @@ const WRITE_VERBS = new Set(
 );
 
 /**
+ * Words that qualify which of a tool's results a person wants rather than which tool: "recent",
+ * "latest", "most", a count ("5", "10"). They rank a hit without deciding one (GRA-278): "list my
+ * recent emails" is a search of the inbox whether or not the search's description says "recent",
+ * and on 2026-10-11 the all-words rule cut `gmail__search-messages` for want of the word. A soft
+ * word that hits scores as any term does; one that misses costs nothing.
+ */
+const SOFT_WORDS: ReadonlySet<string> = new Set(
+  ["recent", "recently", "latest", "newest", "last", "most", "top", "first", "few", "several"]
+    .concat(["many", "every", "each", "today"])
+    .map(stem),
+);
+const NUMBER = /^\p{N}+$/u;
+
+const isSoft = (term: string): boolean => SOFT_WORDS.has(term) || NUMBER.test(term);
+
+/** A word in its plural form, as the stemmer sees one: it ends in "s" and stems to something else. */
+const isPlural = (word: string): boolean => word.endsWith("s") && stem(word) !== word;
+
+/**
+ * The words a person says in the singular for a whole mailbox: "read my email" is the inbox, where
+ * "read my spreadsheet" is one spreadsheet.
+ */
+const MAILBOX_WORDS: ReadonlySet<string> = new Set(["email", "mail", "inbox"].map(stem));
+
+/**
+ * A query's terms as `queryTerms` reads them, each marked `many` when the person asks for more than
+ * one: the word is plural ("emails"), or it is a mailbox word an owner word stands before with only
+ * soft words between ("my email", "my latest email").
+ */
+function queryContent(query: string): { term: string; many: boolean }[] {
+  const words = queryWords(query);
+  const keepAll = words.every((word) => FUNCTION_WORDS.has(word));
+  const seen = new Set<string>();
+  const out: { term: string; many: boolean }[] = [];
+  let owned = false;
+  for (const word of words) {
+    if (!keepAll && FUNCTION_WORDS.has(word)) {
+      owned = OWNER_WORDS.has(word);
+      continue;
+    }
+    const term = stem(word);
+    const many = isPlural(word) || (owned && MAILBOX_WORDS.has(term));
+    if (!isSoft(term)) owned = false;
+    if (seen.has(term)) continue;
+    seen.add(term);
+    out.push({ term, many });
+  }
+  return out;
+}
+
+/**
  * The terms of a query: its words less the function words (all of them kept when nothing else is
  * left, so "their" is searched rather than refused), each stemmed, duplicates dropped.
  */
 export function queryTerms(query: string): string[] {
-  const words = queryWords(query);
-  const content = words.filter((word) => !FUNCTION_WORDS.has(word));
-  return [...new Set((content.length > 0 ? content : words).map(stem))];
+  return queryContent(query).map(({ term }) => term);
 }
 
 /**
@@ -280,6 +336,14 @@ const MIN_PREFIX = 4;
 const fieldTerms = (text: string): Set<string> =>
   new Set(text.toLowerCase().split(WORD_SEPARATOR).filter(Boolean).map(stem));
 
+/**
+ * Another tool's wire name in a description ("messageId comes from gmail__search-messages"):
+ * dropped before the description is indexed (GRA-278), since its words are the other tool's job.
+ * They made `gmail__create-draft` a hit for "list" through "search", and every Gmail tool a hit
+ * for "get" through `gmail__get-message`.
+ */
+const WIRE_NAME_REFERENCE = /[\p{L}\p{N}-]+__[\p{L}\p{N}-]+/gu;
+
 function documentOf(
   tool: IndexedTool,
   vendorNames: ReadonlyMap<string, readonly string[]> | undefined,
@@ -288,7 +352,7 @@ function documentOf(
     name: fieldTerms(tool.name),
     vendor: fieldTerms([tool.vendor, ...(vendorNames?.get(tool.vendor) ?? [])].join(" ")),
     labels: fieldTerms(inputLabels(tool.inputSchema).join(" ")),
-    description: fieldTerms(tool.description),
+    description: fieldTerms(tool.description.replaceAll(WIRE_NAME_REFERENCE, " ")),
   };
 }
 
@@ -301,23 +365,70 @@ function strength(term: string, field: Set<string>): number {
   return 0;
 }
 
-/** The tool's score for the terms, or null when a term hits no field. */
-function scoreOf(document: Record<Field, Set<string>>, terms: readonly string[]): number | null {
+/** A term's score against every field: zero when it hits none. */
+function termScore(document: Record<Field, Set<string>>, term: string): number {
+  let score = 0;
+  for (const field of Object.keys(WEIGHTS) as Field[]) {
+    score += WEIGHTS[field] * strength(term, document[field]);
+  }
+  return score;
+}
+
+/**
+ * What a read verb that hits no field of a read-only tool scores: a hit, below any word's (GRA-278).
+ * "show", "read", "view" and "check" each ask for some read, and which read is the nouns' to say,
+ * so "show my emails" reaches the inbox search though the search's name says neither "show" nor a
+ * synonym of it. A write tool earns nothing this way.
+ */
+const READ_CLASS = 0.25;
+
+/** The tool's score for the terms, or null when a hard term hits no field. */
+function scoreOf(
+  document: Record<Field, Set<string>>,
+  terms: readonly { term: string; soft: boolean }[],
+  readOnly: boolean,
+): number | null {
   let total = 0;
-  for (const term of terms) {
-    let termScore = 0;
-    for (const field of Object.keys(WEIGHTS) as Field[]) {
-      termScore += WEIGHTS[field] * strength(term, document[field]);
-    }
-    if (termScore === 0) return null;
-    total += termScore;
+  for (const { term, soft } of terms) {
+    let score = termScore(document, term);
+    if (score === 0 && readOnly && READ_VERBS.has(term)) score = READ_CLASS;
+    if (score === 0 && !soft) return null;
+    total += score;
   }
   return total;
 }
 
-/** Whether the query asks to read: a read verb among its terms and no write verb. */
+/**
+ * Whether the tool's name answers a query term asked for in the plural with a plural (GRA-278):
+ * "recent emails" and "my email" ask for a list and `search-messages` is one, while "latest email"
+ * asks for one message and `get-message` reads one. Each such term scores a name hit again, so it
+ * orders the tools the words found and never finds one; a term asked for in the singular earns
+ * nothing.
+ */
+const AGREEMENT = WEIGHTS.name * EXACT;
+
+function agreement(name: string, terms: readonly { term: string; many: boolean }[]): number {
+  const words = name.toLowerCase().split(WORD_SEPARATOR).filter(Boolean);
+  let total = 0;
+  for (const { term, many } of terms) {
+    if (!many || isSoft(term)) continue;
+    const alternatives = STEMMED_SYNONYMS.get(term) ?? [];
+    const hit = words.find((n) => stem(n) === term || alternatives.includes(stem(n)));
+    if (hit !== undefined && isPlural(hit)) total += AGREEMENT;
+  }
+  return total;
+}
+
+/**
+ * Whether the query asks to read: a read verb or a soft word among its terms, and no write verb.
+ * A soft word asks which results ("recent charges", "my 5 latest emails"), so it reads too
+ * (GRA-278). A query with neither, "notion database rows", is left to the score.
+ */
 export function readsOnly(terms: readonly string[]): boolean {
-  return terms.some((term) => READ_VERBS.has(term)) && !terms.some((term) => WRITE_VERBS.has(term));
+  return (
+    terms.some((term) => READ_VERBS.has(term) || isSoft(term)) &&
+    !terms.some((term) => WRITE_VERBS.has(term))
+  );
 }
 
 /**
@@ -331,17 +442,24 @@ export function searchTools<T extends IndexedTool>(
   options: SearchOptions = {},
 ): ToolSearch<T> {
   const limit = options.limit ?? FIND_TOOL_LIMIT;
-  const terms = queryTerms(query);
-  if (terms.length === 0) return { hits: [], more: 0 };
+  const content = queryContent(query);
+  if (content.length === 0) return { hits: [], more: 0 };
+  const terms = content.map(({ term }) => term);
+  // Soft words rank and never decide, unless they are all the query has.
+  const allSoft = terms.every(isSoft);
+  const judged = content.map(({ term }) => ({ term, soft: !allSoft && isSoft(term) }));
   const reads = readsOnly(terms);
   const ranking = rankingWords(query);
   const scored: { tool: T; score: number }[] = [];
   for (const tool of tools) {
     const document = documentOf(tool, options.vendorNames);
-    const score = scoreOf(document, terms);
+    const score = scoreOf(document, judged, tool.readOnly === true);
     if (score === null) continue;
     const spelled = ranking.filter((word) => document.name.has(stem(word))).length;
-    scored.push({ tool, score: score + spelled * WEIGHTS.name * EXACT });
+    scored.push({
+      tool,
+      score: score + spelled * WEIGHTS.name * EXACT + agreement(tool.name, content),
+    });
   }
   scored.sort(
     (a, b) =>

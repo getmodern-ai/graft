@@ -15,6 +15,7 @@ import { createUpstreamFetch, type UpstreamFetch } from "@graft/proxy";
 import {
   jsonTextNotes,
   proveCheck,
+  proveOptionalDefaults,
   proveReplay,
   proveTestInput,
   readStockRecording,
@@ -41,7 +42,7 @@ import { runBuildLoop } from "./loop";
  *     through the real proxy, scrubbed of every vendor value with the test input (GRA-257), and
  *     written only through `redactRecording`); `test-input.json` is the recording's scrubbed input.
  *  3. The formatted tool is copied into a dot-directory inside the workspace (`INCOMING_PREFIX`),
- *     and must pass the harness's three proofs there as it stands, which is what CI runs.
+ *     and must pass the harness's four proofs there as it stands, which is what CI runs.
  *  4. Only then is it renamed into place: new, or, under `from`, in place of the current version,
  *     which is set aside first and put back if the rename fails (`swapInto`), so a failed repair
  *     leaves the tool it started from. The next boot appends the new version to the catalogue (the
@@ -381,11 +382,14 @@ export async function buildStockTool(options: BuildOptions): Promise<BuildResult
     // Read back as CI reads the workspace: the files as they will be committed.
     const [staged] = await readStockWorkspace(incoming);
     if (!staged) throw new Error("the staged tool did not read back");
-    say(`Proving ${wire} as the harness will: the check, the test input and the replay.`);
+    say(
+      `Proving ${wire} as the harness will: the check, the test input, its required inputs and the replay.`,
+    );
     const read = await readStockRecording(staged, incoming);
     const problems = [
       ...(await proveCheck(staged)),
       ...proveTestInput(staged),
+      ...proveOptionalDefaults(staged),
       ...(read.ok ? (await proveReplay(staged, read.recording)).problems : [read.problem]),
     ].map((problem) => redactValue(problem, rule).value);
     if (problems.length > 0) {
