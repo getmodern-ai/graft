@@ -76,7 +76,18 @@ function isHttpUrl(value: string): boolean {
 /** Every http(s) URL written in the goal or the hints — what the triage model may pick from. */
 export function urlsIn(text: string): string[] {
   const found = text.match(/https?:\/\/[^\s<>"'`)\]]+/g) ?? [];
-  return [...new Set(found.map((url) => url.replace(/[.,;:]+$/, "")).filter(isHttpUrl))];
+  return [...new Set(found.map(withoutTrailingPunctuation).filter(isHttpUrl))];
+}
+
+/**
+ * The sentence's own punctuation after a URL (`see https://x.test/docs.`), trimmed by index rather
+ * than by `/[.,;:]+$/`, which backtracks polynomially on a long run of them in a goal an agent wrote
+ * (CodeQL's polynomial-redos rule).
+ */
+function withoutTrailingPunctuation(url: string): string {
+  let end = url.length;
+  while (end > 0 && ".,;:".includes(url[end - 1] ?? "")) end -= 1;
+  return url.slice(0, end);
 }
 
 export type GoalTriage = { urls: string[]; reason: string; usage: ModelUsage };

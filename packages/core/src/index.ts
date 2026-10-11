@@ -559,6 +559,7 @@ export {
   updateToolDefinition,
   validateToolDefinition,
 } from "./tool/tool.service";
+export { withoutTrailingSlashes } from "./url.rules";
 export {
   DAY_MS,
   type SweepCause,

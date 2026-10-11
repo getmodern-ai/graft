@@ -1,5 +1,7 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 
+import { withoutTrailingSlashes } from "@graft/core";
+
 /**
  * The **handoff** URL for a pending action (CONTEXT.md, *Handoff*; ADR 0006): what a tool returns
  * when the harness cannot ask the person in place, and what the person opens in the console to
@@ -58,7 +60,7 @@ export function signHandoffToken(
 
 /** The URL the agent relays. `consoleUrl` may carry a path; a trailing slash is not doubled. */
 export function handoffUrl(consoleUrl: string, pendingActionId: string, token: string): string {
-  const base = consoleUrl.replace(/\/+$/, "");
+  const base = withoutTrailingSlashes(consoleUrl);
   const query = new URLSearchParams({ [HANDOFF_TOKEN_PARAM]: token });
   return `${base}${HANDOFF_PATH}/${encodeURIComponent(pendingActionId)}?${query}`;
 }

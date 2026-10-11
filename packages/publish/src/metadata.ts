@@ -117,7 +117,8 @@ export function createRegistryMetadataSource(
   return {
     lookup: async (name, version) => {
       // The registry takes a scoped name with its slash encoded and its `@` bare — what npm sends.
-      const packageUrl = `${registryUrl}/${name.replace("/", "%2F")}`;
+      // A valid name has one slash at most; `replaceAll` so the encoding holds for any string.
+      const packageUrl = `${registryUrl}/${name.replaceAll("/", "%2F")}`;
       const countUrl = `${downloadsUrl}/downloads/point/last-week/${name}`;
       const [doc, count] = await Promise.all([
         getJson<RegistryDocument>(packageUrl),

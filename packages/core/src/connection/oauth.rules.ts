@@ -1,4 +1,5 @@
 import type { ConnectionScheme } from "@graft/db/schema/connection";
+import { withoutTrailingSlashes } from "../url.rules";
 
 /**
  * What the console, the meta-tool and the server all say about an authorization-code connection
@@ -89,7 +90,7 @@ export const OAUTH_CONSOLE_CALLBACK_PATH = "/oauth/callback";
  * rather than written as the word `null`, so the reader's absence is the writer's absence.
  */
 export function oauthCallbackRedirect(consoleUrl: string, outcome: OAuthCallbackOutcome): string {
-  const base = consoleUrl.replace(/\/+$/, "");
+  const base = withoutTrailingSlashes(consoleUrl);
   const query = new URLSearchParams({ status: outcome.status });
   if (outcome.connectionId !== null) query.set("connectionId", outcome.connectionId);
   query.set("message", outcome.message);
@@ -119,7 +120,7 @@ export function oauthCallbackMessage(outcome: OAuthCallbackOutcome): OAuthCallba
 
 /** `GRAFT_AUTH_URL` plus the callback path — a trailing slash on the origin is not doubled. */
 export function oauthRedirectUri(authUrl: string): string {
-  return `${authUrl.replace(/\/+$/, "")}${OAUTH_CALLBACK_PATH}`;
+  return `${withoutTrailingSlashes(authUrl)}${OAUTH_CALLBACK_PATH}`;
 }
 
 /**
