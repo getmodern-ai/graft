@@ -564,11 +564,13 @@ export async function startSetupBuild(
  * connection), promoted into the agent's working set, and the record moved past `building` to
  * `result` naming it, with no job. The result step then runs it as it runs a built tool.
  *
- * One transaction under the record's lock, as `startSetupBuild` is, so a double click copies once
- * and moves once, and a choice from a tab that moved on changes nothing. The copy writes its files
- * and rows through its own seams, which take no lock on this record; a refusal after it (the tool
- * turned out to write) leaves whatever it copied in the toolbox and in no working set, as a
- * `run_tool` that copied and then failed would.
+ * Judged under the record's lock, as `startSetupBuild` is, then copied with no transaction held
+ * (the copy takes connections of its own, so holding one while it waits could starve the pool;
+ * Greptile on #218), then judged again under the lock before the promotion and the move, so a
+ * choice from a tab that moved on changes nothing. Two takes at once copy once (the copy's own
+ * rule: the later answers the earlier's tool) and move once. A refusal after the copy (the tool
+ * turned out to write, or the record changed) leaves whatever it copied in the toolbox and in no
+ * working set, as a `run_tool` that copied and then failed would.
  *
  * Refused `CONFLICT` as Build is (`setup_not_started`, `setup_step`, `connection_revoked`,
  * `connection_not_in_scope`, `job_running` unless `discardJob`), and with reasons of its own:
@@ -608,28 +610,31 @@ export async function takeSetupStockTool(
   input: { discardJob?: boolean; stockTool?: string },
   deps: SetupStockDeps,
 ): Promise<{ state: SetupState; agentId: string; promoted: boolean }> {
-  const taken = await ctx.db.transaction(async (tx) => {
+  const refuse = (reason: string, message: string, details: Record<string, unknown> = {}) =>
+    new ServiceError("CONFLICT", message, { details: { reason, ...details } });
+  // Everything a take is judged on, read under the record's lock: twice, before the copy and after.
+  const judge = async (tx: ServiceContext["db"], expectedTool: string | undefined) => {
     const scoped: ServiceContext = { db: tx };
     const record = await deps.setup.lockSetup(tx, principal.personId);
     const active = activeOf(await deps.agent.listAgents(tx, principal.personId));
     const agent = record.agentId
       ? active.find((candidate) => candidate.id === record.agentId)
       : undefined;
-    const refuse = (reason: string, message: string, details: Record<string, unknown> = {}) =>
-      new ServiceError("CONFLICT", message, { details: { reason, ...details } });
     if (!agent || !record.connectionId) {
       throw refuse("setup_not_started", "Setup has no agent and connection to add a tool to yet");
     }
     if (record.step !== "goal") {
       throw refuse("setup_step", "Setup is not on the task step", { step: record.step });
     }
-    if (input.stockTool !== undefined && record.stockTool !== input.stockTool) {
+    if (expectedTool !== undefined && record.stockTool !== expectedTool) {
       throw refuse("setup_step", "Setup changed in another tab; choose again", {
         step: record.step,
       });
     }
     const key = record.stockTool ? readyMadeKey(record.stockTool) : null;
-    if (!key) throw refuse("stock_tool_unplanned", "No ready-made tool is chosen");
+    if (!record.stockTool || !key) {
+      throw refuse("stock_tool_unplanned", "No ready-made tool is chosen");
+    }
     const scope = { personId: principal.personId, agentId: agent.id };
     const connectionId = record.connectionId;
     const connection = await deps.connection.findConnection(tx, principal.personId, connectionId);
@@ -663,9 +668,24 @@ export async function takeSetupStockTool(
         );
       }
     }
-    const ensured = await deps.ensureTool(scope, key, connectionId);
-    if (!ensured.ok) throw refuse(ensured.reason, ensured.message);
-    const { tool } = ensured;
+    return { scope, key, connectionId, stockTool: record.stockTool };
+  };
+
+  const before = await ctx.db.transaction((tx) => judge(tx, input.stockTool));
+  // Outside any transaction (Greptile on #218): the copy takes connections of its own from the
+  // pool, and a request holding one while it waits for another could starve the pool.
+  const ensured = await deps.ensureTool(before.scope, before.key, before.connectionId);
+  if (!ensured.ok) throw refuse(ensured.reason, ensured.message);
+  const { tool } = ensured;
+  const taken = await ctx.db.transaction(async (tx) => {
+    // Judged again, so a choice, a connection or an agent another tab changed meanwhile wins.
+    const after = await judge(tx, before.stockTool);
+    if (
+      after.connectionId !== before.connectionId ||
+      after.scope.agentId !== before.scope.agentId
+    ) {
+      throw refuse("setup_step", "Setup changed while the tool was being added; choose again");
+    }
     if (!tool.readOnly) {
       throw refuse(
         "tool_not_read_only",
@@ -675,13 +695,14 @@ export async function takeSetupStockTool(
     if (!tool.currentVersionId) {
       throw refuse("tool_has_no_version", "That tool has no version that runs yet");
     }
-    const change = await promoteTool(scoped, scope, tool.id, "agent", deps.workingSet);
+    const scoped: ServiceContext = { db: tx };
+    const change = await promoteTool(scoped, after.scope, tool.id, "agent", deps.workingSet);
     await deps.setup.saveSetup(tx, principal.personId, {
       step: "result",
       toolId: tool.id,
       acquireJobId: null,
     });
-    return { agentId: agent.id, promoted: change.changed };
+    return { agentId: after.scope.agentId, promoted: change.changed };
   });
   return { state: await getSetupState(ctx, principal, deps.setup, deps.agent), ...taken };
 }

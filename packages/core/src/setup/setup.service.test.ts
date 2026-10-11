@@ -1211,6 +1211,35 @@ describe("a ready-made tool instead of a build (GRA-276)", () => {
     expect(w.record()).toMatchObject({ stockTool: "gmail__list-labels" });
   });
 
+  it("copies with no transaction held, and moves nothing when the record changed meanwhile", async () => {
+    const w = await onGoal();
+    let inTransaction = false;
+    const transaction = fakeDb.transaction;
+    const watched = {
+      transaction: async <T>(fn: (tx: unknown) => Promise<T>) => {
+        inTransaction = true;
+        try {
+          return await transaction(fn);
+        } finally {
+          inTransaction = false;
+        }
+      },
+    };
+    vi.mocked(w.deps.ensureTool).mockImplementationOnce(async () => {
+      expect(inTransaction).toBe(false);
+      // Another tab chose another ready-made tool while this one was being copied.
+      await w.deps.setup.saveSetup(fakeDb as never, PRINCIPAL.personId, {
+        stockTool: "gmail__list-labels",
+      });
+      return { ok: true as const, tool: SEARCH };
+    });
+    await expect(
+      takeSetupStockTool({ db: watched } as unknown as ServiceContext, PRINCIPAL, {}, w.deps),
+    ).rejects.toMatchObject({ details: { reason: "setup_step" } });
+    expect(w.promoted).toEqual([]);
+    expect(w.record()).toMatchObject({ step: "goal", toolId: null });
+  });
+
   it("is planned beside its task, and cleared by a task to build and by another starter", async () => {
     const w = world({});
     await startSetup(ctx, PRINCIPAL, { harness: "claude" }, w.deps, w.agentDeps);
