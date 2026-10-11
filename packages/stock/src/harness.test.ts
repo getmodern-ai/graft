@@ -318,6 +318,13 @@ describe("the harness over required inputs", () => {
       const tool = fixture({ module: READ_MODULE.replace(top, `${top}\n${extra}`) });
       expect(proveOptionalDefaults(tool)).toEqual([]);
     }
+    for (const extra of [
+      '  const v = ctx && (input.q || "red");',
+      '  if (ctx && (input.q || "red") === "red") void 0;',
+    ]) {
+      const tool = fixture({ module: READ_MODULE.replace(top, `${top}\n${extra}`) });
+      expect(proveOptionalDefaults(tool)).toHaveLength(1);
+    }
   });
 
   it("does not read a comment, a string or a shadowing parameter as a fallback (Greptile on #216)", () => {
