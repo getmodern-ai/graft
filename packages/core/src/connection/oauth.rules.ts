@@ -6,8 +6,8 @@ import { withoutTrailingSlashes } from "../url.rules";
  * (ADR 0005), as pure functions: where the vendor sends the person back, which vendor hosts are
  * Google's, what the console shows for a connection between the person clicking Connect and the
  * tokens arriving. **Browser-safe, and the console depends on that** — this file imports one type
- * and nothing else, like `connection.rules.ts`; the PKCE and state code that needs `node:crypto` is
- * `oauth-consent.ts`, which the console never reaches.
+ * and `url.rules.ts`, which imports nothing, like `connection.rules.ts`; the PKCE and state code that
+ * needs `node:crypto` is `oauth-consent.ts`, which the console never reaches.
  */
 
 export const OAUTH_AUTHORIZATION_CODE = "oauth_authorization_code" satisfies ConnectionScheme;

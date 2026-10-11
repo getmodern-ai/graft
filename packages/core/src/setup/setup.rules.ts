@@ -6,7 +6,8 @@ import { withoutTrailingSlashes } from "../url.rules";
  * Setup's rules (CONTEXT.md, *Setup*; ADR 0024), **browser-safe**: the console's shell applies the
  * show rule on entry and the agents table draws the awaiting-harness state from the predicate,
  * while the server answers the same verdicts on `GET /api/setup`. Nothing here imports more than a
- * type, so one rule has two readers and cannot disagree with itself.
+ * type and `url.rules.ts`, which imports nothing, so one rule has two readers and cannot disagree
+ * with itself.
  *
  * Every function takes the fields it reads and nothing else, typed so that a server `Date` and the
  * wire's string both fit: the console holds `Jsonified` shapes, the server holds rows.

@@ -12,9 +12,11 @@ describe("urlsIn", () => {
   });
 
   it("trims a long run of trailing punctuation in linear time", () => {
-    const hostile = `https://docs.example/${",".repeat(1_000_000)}`;
+    // The run is followed by a character the trim keeps: the case `/[.,;:]+$/` was quadratic on,
+    // since a run that ends the string matched on its first try (Greptile on #212).
+    const hostile = `https://docs.example/${",".repeat(1_000_000)}x`;
     const started = performance.now();
-    expect(urlsIn(hostile)).toEqual(["https://docs.example/"]);
+    expect(urlsIn(`see ${hostile}, then ${hostile}.`)).toEqual([hostile]);
     expect(performance.now() - started).toBeLessThan(500);
   });
 });
