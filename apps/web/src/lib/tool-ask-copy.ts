@@ -46,7 +46,7 @@ function integrationSentence(answer: ToolAnswer, integrationName: string): strin
 
 export function toolAskSettledSentence(answer: ToolAnswer, integrationName: string): string {
   if (answer?.allow !== true) {
-    return "Declined. The no holds for this agent until withdrawn on its page.";
+    return "Declined. This agent will not run the tool, and that answer holds until you change it on the agent's page.";
   }
   const own =
     answer.askEveryCall === true

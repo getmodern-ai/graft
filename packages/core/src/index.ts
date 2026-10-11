@@ -294,6 +294,7 @@ export {
   type ProviderLinkStart,
   type ProviderLinkStarted,
   type ProviderResolution,
+  providerDisplayName,
   providerFor,
   providerLinkOf,
   providerListProblem,
