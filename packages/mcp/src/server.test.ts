@@ -1967,6 +1967,50 @@ describe("promote and demote", () => {
     }
   }, 30_000);
 
+  /** find_tool's hit passed straight back (GRA-278): `tool` as it came, the wire name. */
+  it("take a find_tool hit's tool as it is, and run_tool does too", async () => {
+    const b = await connect(TOKEN_B);
+    try {
+      const found = body(await b.call("find_tool", { query: "list items" }));
+      const [hit] = found.tools as { tool: string }[];
+      expect(hit?.tool).toBe(LIST_ITEMS);
+      if (!hit) return;
+      const promoted = body(await b.call("promote", { tool: hit.tool }));
+      expect(promoted).toMatchObject({ tool: LIST_ITEMS, promoted: true, changed: true });
+      expect(body(await b.call("run_tool", { tool: hit.tool }))).toEqual(VENDOR_BODY);
+      // A wire name in name alone is read as tool; both forms agreeing is accepted.
+      const demoted = body(await b.call("demote", { name: LIST_ITEMS }));
+      expect(demoted).toMatchObject({ tool: LIST_ITEMS, promoted: false, changed: true });
+      const both = body(
+        await b.call("promote", { tool: LIST_ITEMS, vendor: "demo", name: "list-items" }),
+      );
+      expect(both).toMatchObject({ tool: LIST_ITEMS, promoted: true });
+      await b.call("demote", { tool: LIST_ITEMS });
+    } finally {
+      await b.close();
+    }
+  }, 30_000);
+
+  it("refuse a tool named neither way, a malformed wire name, or two forms that disagree", async () => {
+    const b = await connect(TOKEN_B);
+    try {
+      for (const args of [
+        {},
+        { tool: "list-items" },
+        { tool: 7 },
+        { tool: LIST_ITEMS, vendor: "other" },
+      ]) {
+        for (const name of ["promote", "demote", "run_tool"]) {
+          const result = await b.call(name, args);
+          expect(result.isError, `${name} ${JSON.stringify(args)}`).toBe(true);
+          expect(body(result)).toMatchObject({ error: "refused", reason: "input_invalid" });
+        }
+      }
+    } finally {
+      await b.close();
+    }
+  });
+
   it("refuse a tool that is not in the toolbox — another person's included — as not found", async () => {
     const b = await connect(TOKEN_B);
     try {
