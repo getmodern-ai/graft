@@ -63,9 +63,14 @@ export function setupStages(step: SetupStep, starterId: string | null | undefine
   );
 }
 
-/** The eyebrow over a step's title: "Step 3 of 4 · Tool", or "Setup complete" on the done screen. */
+/**
+ * The eyebrow over a step's title: "Step 3 of 4 · Tool"; "Last step · Finish" on the done screen
+ * while Finish Setup is still to be pressed, since nothing is complete until the press (GRA-274);
+ * "Setup complete" once the record is.
+ */
 export function setupEyebrow(step: SetupStep, starterId: string | null | undefined): string {
-  if (setupDone(step)) return "Setup complete";
+  if (step === "completed") return "Setup complete";
+  if (setupDone(step)) return "Last step · Finish";
   const at = setupStageOf(step, starterId);
   return `Step ${at} of ${SETUP_STAGES.length} · ${SETUP_STAGES[at - 1]?.label ?? ""}`;
 }
