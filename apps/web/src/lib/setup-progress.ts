@@ -247,3 +247,21 @@ export function progressPart(card: Pick<ProgressCard, "kind" | "label">): number
       return 0;
   }
 }
+
+/**
+ * The building step's line under the integration's name (GRA-274): what the connection lets the
+ * agent do, read from the agent's integration approvals, never a claim the record does not hold.
+ * The tool Setup builds is read-only, but the connection is not, and the line for the
+ * integration's tools on the connect card may have let its writes run without asking.
+ * `undefined` is an approvals read not yet answered (or failed), which claims nothing.
+ */
+export function setupConnectedLine(
+  integrationName: string,
+  approval: { includesDestructive: boolean } | null | undefined,
+): string {
+  if (approval === undefined) return "Connected";
+  if (approval === null) return "Connected · a tool that writes asks you first";
+  return approval.includesDestructive
+    ? `Connected · every ${integrationName} tool runs without asking`
+    : `Connected · every ${integrationName} tool runs without asking, except one that deletes or overwrites`;
+}

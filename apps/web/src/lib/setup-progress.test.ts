@@ -12,7 +12,21 @@ import {
   SETUP_STAGE_EXPLANATION,
   SETUP_STAGE_LABEL,
   type SetupBuildStage,
+  setupConnectedLine,
 } from "./setup-progress";
+
+describe("setupConnectedLine", () => {
+  it("says what the agent was granted, never read-only (GRA-274)", () => {
+    expect(setupConnectedLine("Gmail", undefined)).toBe("Connected");
+    expect(setupConnectedLine("Gmail", null)).toBe("Connected · a tool that writes asks you first");
+    expect(setupConnectedLine("Gmail", { includesDestructive: false })).toBe(
+      "Connected · every Gmail tool runs without asking, except one that deletes or overwrites",
+    );
+    expect(setupConnectedLine("Gmail", { includesDestructive: true })).toBe(
+      "Connected · every Gmail tool runs without asking",
+    );
+  });
+});
 
 /**
  * The lines below are the shapes `@graft/mcp`'s `acquire/job.ts` writes (and Setup's first line
