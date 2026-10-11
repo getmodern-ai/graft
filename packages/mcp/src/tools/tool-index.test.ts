@@ -580,7 +580,9 @@ describe("owner words (GRA-269)", () => {
   ];
 
   it("ranks a tool whose name says my first, and makes no hit of it alone", () => {
-    expect(names(searchTools(tools, "acme issues"))[0]).toBe("comment-on-issue");
+    // Singular, so number agreement (GRA-278) leaves the owner word alone to decide.
+    expect(names(searchTools(tools, "acme issue"))[0]).toBe("comment-on-issue");
+    expect(names(searchTools(tools, "my acme issue"))[0]).toBe("list-my-issues");
     expect(names(searchTools(tools, "my acme issues"))[0]).toBe("list-my-issues");
     expect(names(searchTools(tools, "my acme teams"))).toEqual(["list-teams"]);
   });
@@ -707,5 +709,88 @@ describe("Apollo's stock tools (GRA-270)", () => {
     }));
     const [first] = searchTools(tools, query, { vendorNames }).hits;
     expect(first && `${first.vendor}__${first.name}`).toBe(wire);
+  });
+});
+
+/**
+ * The 2026-10-11 production run (GRA-278): a person with Gmail connected, their own
+ * `gmail__list-latest-inbox-conversations` in the toolbox, and every stock tool beside it, tiered
+ * as `find_tool` tiers them (`meta.ts`): the toolbox 1, stock of a connected integration 2, the
+ * rest 3. "list my recent emails" answered get-message, get-thread, create-draft, Outlook's search
+ * and Apollo's contacts, and cut both the person's tool and Gmail's search. The person's tool's
+ * description is written here as such a tool's would be; its words are the test's.
+ */
+describe("the 2026-10-11 queries, tiered as find_tool tiers them (GRA-278)", async () => {
+  const vendorNames = new Map(
+    STARTER_VENDORS.map((starter) => [starter.vendor, [starter.displayName]]),
+  );
+  const own: IndexedTool = {
+    vendor: "gmail",
+    name: "list-latest-inbox-conversations",
+    description: "Lists the latest conversations in the inbox with subject, sender and snippet.",
+    inputSchema: { type: "object", properties: { maxResults: { type: "integer" } } },
+    readOnly: true,
+    tier: 1,
+  };
+  const stock: IndexedTool[] = (await readStockWorkspace()).map((t) => ({
+    vendor: t.vendor,
+    name: t.name,
+    description: t.description,
+    inputSchema: t.inputSchema,
+    readOnly: t.annotations.readOnly,
+    tier: t.vendor === "gmail" ? 2 : 3,
+  }));
+  const top = (query: string) => searchTools([own, ...stock], query, { vendorNames }).hits;
+  const wire = (hit: IndexedTool) => `${hit.vendor}__${hit.name}`;
+
+  it.each([
+    "list my recent emails",
+    "recent emails",
+    "read my email",
+    "show me my 5 most recent emails",
+    "latest emails",
+    "search my gmail",
+  ])("\"%s\" answers the person's tool, then Gmail's search, and no write", (query) => {
+    const hits = top(query);
+    expect(hits.slice(0, 2).map(wire)).toEqual([
+      "gmail__list-latest-inbox-conversations",
+      "gmail__search-messages",
+    ]);
+    expect(hits.filter((hit) => hit.readOnly !== true).map(wire)).toEqual([]);
+  });
+});
+
+describe("soft words, read verbs, references and number (GRA-278)", () => {
+  const search = tool("demo", "search-messages", "Finds messages matching a query.", {
+    readOnly: true,
+  });
+  const get = tool("demo", "get-message", "Reads one message, the newest when no id is given.", {
+    readOnly: true,
+  });
+  const draft = tool(
+    "demo",
+    "create-draft",
+    "Saves a draft. Threads come from demo__search-messages.",
+    { readOnly: false },
+  );
+
+  it("ranks by a soft word without deciding on it, unless it is all the query has", () => {
+    expect(names(searchTools([search], "most recent messages"))).toEqual(["search-messages"]);
+    expect(names(searchTools([search], "10 messages"))).toEqual(["search-messages"]);
+    expect(names(searchTools([search, get], "newest"))).toEqual(["get-message"]);
+  });
+
+  it("reads a read verb as a weak hit on any read-only tool, never a write", () => {
+    expect(names(searchTools([search, draft], "view messages"))).toEqual(["search-messages"]);
+    expect(names(searchTools([draft], "view draft"))).toEqual([]);
+  });
+
+  it("does not index another tool's wire name in a description", () => {
+    expect(names(searchTools([draft], "search"))).toEqual([]);
+  });
+
+  it("prefers a plural name for a plural word, and leaves a singular word to the score", () => {
+    expect(names(searchTools([get, search], "messages"))[0]).toBe("search-messages");
+    expect(names(searchTools([get, search], "latest message"))[0]).toBe("get-message");
   });
 });
