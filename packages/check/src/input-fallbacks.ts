@@ -5,8 +5,9 @@ import ts from "typescript6";
  * syntax tree (the check's own TypeScript, as `string-literals.ts` parses): the left operand of a
  * `??` or `||` that is a read of the input parameter (`input.limit ?? 10`, `input?.limit || 10`,
  * `input["limit"] ?? 10`), and a destructuring default taken off it (`({ limit = 10 }: Input)`, or
- * `const { limit = 10 } = input`). A comment, a string and a nested function whose own parameter
- * shadows the input's name read nothing.
+ * `const { limit = 10 } = input`). A comment, a string, and a scope that binds the input's name
+ * again (a nested function's parameter, a block's own `const input`, a loop or `catch` variable)
+ * read nothing.
  *
  * The default export of the entry is followed, and nothing past it: a field handed to a helper and
  * defaulted there is not seen. `@graft/stock`'s harness reads this to find a required field the
@@ -37,7 +38,7 @@ export function inputFallbacksOf(
     return ts.isIdentifier(inner) && inner.text === name;
   };
   const visit = (node: ts.Node): void => {
-    if (node !== fn && ts.isFunctionLike(node) && shadows(node, name)) return;
+    if (node !== fn.body && shadows(node, name)) return;
     if (
       ts.isBinaryExpression(node) &&
       (node.operatorToken.kind === ts.SyntaxKind.QuestionQuestionToken ||
@@ -137,9 +138,39 @@ function unwrap(node: ts.Expression): ts.Expression {
   return current;
 }
 
-/** Does this function declare a parameter of the input's name, so `name` inside it is another? */
-function shadows(fn: ts.SignatureDeclaration, name: string): boolean {
-  return fn.parameters.some(
-    (parameter) => ts.isIdentifier(parameter.name) && parameter.name.text === name,
+/**
+ * Does this node open a scope that binds the input's name again, so `name` inside it is another
+ * value: a function's parameter, a block's own `const`, `let` or `var`, a loop's variable, a
+ * `catch` binding? The whole scope is skipped, which can only miss a fallback, never invent one.
+ */
+function shadows(node: ts.Node, name: string): boolean {
+  if (ts.isFunctionLike(node)) {
+    return node.parameters.some((parameter) => binds(parameter.name, name));
+  }
+  if (ts.isBlock(node) || ts.isCaseClause(node) || ts.isDefaultClause(node)) {
+    return node.statements.some(
+      (statement) =>
+        ts.isVariableStatement(statement) &&
+        statement.declarationList.declarations.some((d) => binds(d.name, name)),
+    );
+  }
+  if (ts.isForStatement(node) || ts.isForInStatement(node) || ts.isForOfStatement(node)) {
+    const init = node.initializer;
+    return (
+      init !== undefined &&
+      ts.isVariableDeclarationList(init) &&
+      init.declarations.some((d) => binds(d.name, name))
+    );
+  }
+  if (ts.isCatchClause(node)) {
+    return node.variableDeclaration !== undefined && binds(node.variableDeclaration.name, name);
+  }
+  return false;
+}
+
+function binds(binding: ts.BindingName, name: string): boolean {
+  if (ts.isIdentifier(binding)) return binding.text === name;
+  return binding.elements.some(
+    (element) => !ts.isOmittedExpression(element) && binds(element.name, name),
   );
 }

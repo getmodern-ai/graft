@@ -312,6 +312,10 @@ describe("the harness over required inputs", () => {
       '  // Never input.q ?? "red": q is required.',
       '  const note = "input.q ?? red";',
       '  const pick = (input: { q?: string }) => input.q ?? "red";',
+      '  const pickAll = ({ input }: { input: { q?: string } }) => input.q ?? "red";',
+      '  if (ctx) { const input = { q: undefined as string | undefined }; void (input.q ?? "red"); }',
+      '  for (const input of [{ q: "x" }]) void (input.q || "red");',
+      '  try { void 0; } catch (input) { void ((input as { q?: string }).q ?? "red"); }',
     ]) {
       const tool = fixture({ module: READ_MODULE.replace(top, `${top}\n${extra}`) });
       expect(proveOptionalDefaults(tool)).toEqual([]);
