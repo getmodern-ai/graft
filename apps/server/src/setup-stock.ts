@@ -107,7 +107,7 @@ export async function readyMadeChoice(
 export async function takePlannedStock(
   ctx: ServiceContext,
   principal: Principal,
-  input: { discardJob?: boolean },
+  input: { discardJob?: boolean; stockTool?: string },
   deps: SetupStockRouteDeps,
 ): Promise<SetupState> {
   const mcp = deps.mcp;

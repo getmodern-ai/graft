@@ -54,7 +54,16 @@ export type StarterTask = { goal: string; hints: string };
  * integration by its name (`<vendor>__<name>`'s second half), and the task it does in the person's
  * words, which the person reads as the card and the setup prompt reads as the tool's goal.
  */
-export type StarterReadyMade = { tool: string; goal: string };
+export type StarterReadyMade = {
+  tool: string;
+  goal: string;
+  /**
+   * The starter's tasks (its `goal` or a `moreTasks` entry) this tool does though their words
+   * differ, so the step does not offer them to build beside it (Greptile on #218). A task worded
+   * as `goal` is matched without being named here.
+   */
+  replaces?: readonly string[];
+};
 
 export type StarterVendor = {
   id: string;
@@ -146,7 +155,11 @@ export const STARTER_VENDORS = [
       },
     ],
     readyMade: [
-      { tool: "search-messages", goal: "Show me my latest inbox emails" },
+      {
+        tool: "search-messages",
+        goal: "Show me my latest inbox emails",
+        replaces: ["Show me my five latest inbox conversations"],
+      },
       { tool: "list-labels", goal: "List my Gmail labels" },
     ],
   },
@@ -223,7 +236,7 @@ export const STARTER_VENDORS = [
           "List the ten most recently modified Google Docs with Drive's files list endpoint, a GET, with `q=mimeType='application/vnd.google-apps.document'`, `orderBy=modifiedTime desc`, `pageSize=10` and `fields=files(name,modifiedTime,webViewLink)`, returning those three for each. The tool takes no input. Read only.",
       },
     ],
-    readyMade: [{ tool: "list-recent-files", goal: "Show me my most recently edited files" }],
+    readyMade: [{ tool: "list-recent-files", goal: "Show me my ten most recently edited files" }],
   },
   {
     id: "google-sheets",
@@ -252,7 +265,7 @@ export const STARTER_VENDORS = [
     outcome: "Your ten most recently edited spreadsheets, with when each changed and a link to it.",
     moreTasks: [],
     readyMade: [
-      { tool: "find-spreadsheets", goal: "Show me my most recently edited spreadsheets" },
+      { tool: "find-spreadsheets", goal: "Show me my ten most recently edited spreadsheets" },
     ],
   },
   {
@@ -308,7 +321,10 @@ export const STARTER_VENDORS = [
     // without input is the users list.
     moreTasks: [],
     readyMade: [
-      { tool: "search-pages-and-databases", goal: "Show me my recently edited Notion pages" },
+      {
+        tool: "search-pages-and-databases",
+        goal: "Show me my recently edited Notion pages and databases",
+      },
     ],
   },
   {
@@ -393,7 +409,7 @@ export const STARTER_VENDORS = [
     outcome: "Your ten most recent payments, with each one's amount and status.",
     moreTasks: [],
     readyMade: [
-      { tool: "list-payments", goal: "Show me my most recent payments" },
+      { tool: "list-payments", goal: "Show me my ten most recent payments" },
       { tool: "get-balance", goal: "Show me my Stripe balance" },
       { tool: "list-invoices", goal: "Show me my latest invoices" },
     ],
@@ -420,9 +436,9 @@ export const STARTER_VENDORS = [
     outcome: "Your ten latest emails, with who sent each and its first line.",
     moreTasks: [],
     readyMade: [
-      { tool: "search-messages", goal: "Show me my latest emails" },
-      { tool: "list-events", goal: "Show me what is on my calendar this week" },
+      { tool: "search-messages", goal: "Show me my ten latest emails" },
       { tool: "list-mail-folders", goal: "List my mail folders" },
+      { tool: "list-calendars", goal: "List my Outlook calendars" },
     ],
   },
   {
@@ -467,7 +483,7 @@ export const STARTER_VENDORS = [
     outcome: "Ten contacts from your Apollo team, with each one's title and company.",
     moreTasks: [],
     readyMade: [
-      { tool: "search-contacts", goal: "Show me my Apollo contacts" },
+      { tool: "search-contacts", goal: "Show me ten of my Apollo contacts" },
       { tool: "list-sequences", goal: "List my Apollo sequences" },
     ],
   },

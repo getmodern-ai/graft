@@ -11,10 +11,18 @@ export type ToolChoice = { kind: "ready"; tool: string } | { kind: "task"; text:
 /** The tasks offered to build: the starter's, less any a ready-made tool already does. */
 export function tasksBesideReadyMade(
   tasks: readonly string[],
-  readyMade: readonly { goal: string }[],
+  readyMade: readonly ReadyMadeTasks[],
 ): string[] {
-  const done = new Set(readyMade.map((tool) => tool.goal));
+  const done = new Set(readyMade.flatMap(tasksDoneBy));
   return tasks.filter((task) => !done.has(task));
+}
+
+/** What the offer says of a ready-made tool: its own task, and the starter's tasks it does. */
+type ReadyMadeTasks = { goal: string; replaces?: readonly string[] };
+
+/** Every task a ready-made tool does: its own, and those its curation names (`replaces`). */
+function tasksDoneBy(tool: ReadyMadeTasks): string[] {
+  return [tool.goal, ...(tool.replaces ?? [])];
 }
 
 /**
@@ -25,13 +33,13 @@ export function tasksBesideReadyMade(
  */
 export function initialToolChoice(
   record: { stockTool: string | null; goal: string | null } | null | undefined,
-  readyMade: readonly { tool: string; goal: string }[],
+  readyMade: readonly ({ tool: string } & ReadyMadeTasks)[],
   fallbackTask: string,
 ): ToolChoice {
   const held = record?.stockTool;
   if (held && readyMade.some((tool) => tool.tool === held)) return { kind: "ready", tool: held };
   const text = held ? fallbackTask : (record?.goal ?? fallbackTask);
-  const doing = readyMade.find((tool) => tool.goal === text.trim());
+  const doing = readyMade.find((tool) => tasksDoneBy(tool).includes(text.trim()));
   return doing ? { kind: "ready", tool: doing.tool } : { kind: "task", text };
 }
 

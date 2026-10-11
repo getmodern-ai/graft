@@ -7,18 +7,22 @@ import {
   toolStepDescription,
 } from "./setup-ready-made";
 
-const SEARCH = { tool: "gmail__search-messages", goal: "Show me my latest inbox emails" };
+const SEARCH = {
+  tool: "gmail__search-messages",
+  goal: "Show me my latest inbox emails",
+  replaces: ["Show me my five latest inbox conversations"],
+};
 const LABELS = { tool: "gmail__list-labels", goal: "List my Gmail labels" };
 const READY = [SEARCH, LABELS];
 
 describe("tasksBesideReadyMade", () => {
-  it("drops a task a ready-made tool already does, and keeps the rest in order", () => {
+  it("drops a task a ready-made tool already does, in its words or those it names, and keeps the rest", () => {
     expect(
       tasksBesideReadyMade(
         ["Show me my five latest inbox conversations", "List my Gmail labels", "Starred"],
         READY,
       ),
-    ).toEqual(["Show me my five latest inbox conversations", "Starred"]);
+    ).toEqual(["Starred"]);
     expect(tasksBesideReadyMade(["A"], [])).toEqual(["A"]);
   });
 });
@@ -48,6 +52,11 @@ describe("initialToolChoice", () => {
       tool: LABELS.tool,
     });
     expect(initialToolChoice(null, [], LABELS.goal)).toEqual({ kind: "task", text: LABELS.goal });
+    // A task in other words than the card's, which the curation names as done by it.
+    expect(initialToolChoice(null, READY, SEARCH.replaces[0] ?? "")).toEqual({
+      kind: "ready",
+      tool: SEARCH.tool,
+    });
   });
 });
 

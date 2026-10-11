@@ -601,7 +601,11 @@ export type SetupStockDeps = {
 export async function takeSetupStockTool(
   ctx: ServiceContext,
   principal: Principal,
-  input: { discardJob?: boolean },
+  /**
+   * `stockTool`, when given, is the choice the caller saved: taken only while the record still
+   * names it, so a choice another tab saved meanwhile is not taken for this one (`setup_step`).
+   */
+  input: { discardJob?: boolean; stockTool?: string },
   deps: SetupStockDeps,
 ): Promise<{ state: SetupState; agentId: string; promoted: boolean }> {
   const taken = await ctx.db.transaction(async (tx) => {
@@ -618,6 +622,11 @@ export async function takeSetupStockTool(
     }
     if (record.step !== "goal") {
       throw refuse("setup_step", "Setup is not on the task step", { step: record.step });
+    }
+    if (input.stockTool !== undefined && record.stockTool !== input.stockTool) {
+      throw refuse("setup_step", "Setup changed in another tab; choose again", {
+        step: record.step,
+      });
     }
     const key = record.stockTool ? readyMadeKey(record.stockTool) : null;
     if (!key) throw refuse("stock_tool_unplanned", "No ready-made tool is chosen");
@@ -833,6 +842,12 @@ export type SetupPlanMove = {
    */
   stockTool?: string | null;
   /**
+   * The record as the caller judged the move against (GRA-276, Greptile on #218): the ready-made
+   * route judges a choice against the starter or the connection it read, so the save is refused
+   * `setup_step` when another tab changed either, or the step, between that read and this lock.
+   */
+  expected?: { step: SetupStep; starterId: string | null; connectionId: string | null };
+  /**
    * The task is for a directory integration that is not a starter (Setup v2's directory): saved on
    * the vendor step with no starter, since the integration rides in the same request to be connected.
    */
@@ -853,6 +868,17 @@ export async function planSetup(
       new ServiceError("CONFLICT", "Setup has moved on from choosing an integration", {
         details: { reason: "setup_step", step: record.step },
       });
+    const want = move.expected;
+    if (
+      want &&
+      (record.step !== want.step ||
+        record.starterId !== want.starterId ||
+        record.connectionId !== want.connectionId)
+    ) {
+      throw new ServiceError("CONFLICT", "Setup changed in another tab; choose again", {
+        details: { reason: "setup_step", step: record.step },
+      });
+    }
     const patch: SetupPatch = {};
     if (move.starterId !== undefined) {
       if (record.step !== "vendor") throw stale();

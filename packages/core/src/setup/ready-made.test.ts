@@ -7,7 +7,12 @@ import {
   SETUP_READY_MADE_MAX,
   setupReadyMade,
 } from "./ready-made";
-import { STARTER_VENDORS, starterVendorOf } from "./starter-vendors";
+import {
+  STARTER_VENDORS,
+  type StarterVendor,
+  starterTasks,
+  starterVendorOf,
+} from "./starter-vendors";
 
 const entry = (name: string, readOnly = true, description = `${name}. More.`) => ({
   name,
@@ -29,11 +34,13 @@ describe("setupReadyMade", () => {
         tool: "gmail__search-messages",
         goal: "Show me my latest inbox emails",
         description: "Finds Gmail messages.",
+        replaces: ["Show me my five latest inbox conversations"],
       },
       {
         tool: "gmail__list-labels",
         goal: "List my Gmail labels",
         description: "Lists Gmail labels and their ids.",
+        replaces: [],
       },
     ]);
   });
@@ -51,12 +58,15 @@ describe("setupReadyMade", () => {
   });
 
   it("curates at most a row for every starter, each tool once, in the person's words", () => {
-    for (const starter of STARTER_VENDORS) {
+    for (const starter of STARTER_VENDORS as readonly StarterVendor[]) {
       const names = starter.readyMade.map((curated) => curated.tool);
       expect(new Set(names).size, starter.id).toBe(names.length);
       expect(names.length, starter.id).toBeLessThanOrEqual(SETUP_READY_MADE_MAX);
+      const tasks = starterTasks(starter).map((task) => task.goal);
       for (const curated of starter.readyMade) {
         expect(curated.goal, starter.id).not.toMatch(/__|\.$/);
+        // A task it does in other words names one the step would otherwise offer to build.
+        for (const task of curated.replaces ?? []) expect(tasks, starter.id).toContain(task);
       }
     }
   });

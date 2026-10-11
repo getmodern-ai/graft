@@ -1189,6 +1189,28 @@ describe("a ready-made tool instead of a build (GRA-276)", () => {
     expect((await takeSetupStockTool(ctx, PRINCIPAL, {}, failed.deps)).state.step).toBe("result");
   });
 
+  it("takes only the choice the caller saved, and saves only onto the record it judged", async () => {
+    const w = await onGoal({ stockTool: "gmail__list-labels" });
+    await expect(
+      takeSetupStockTool(ctx, PRINCIPAL, { stockTool: "gmail__search-messages" }, w.deps),
+    ).rejects.toMatchObject({ details: { reason: "setup_step" } });
+    expect(w.deps.ensureTool).not.toHaveBeenCalled();
+    await expect(
+      planSetup(
+        ctx,
+        PRINCIPAL,
+        {
+          goal: "Show me my latest inbox emails",
+          stockTool: "gmail__search-messages",
+          expected: { step: "goal", starterId: null, connectionId: "conn_other" },
+        },
+        w.deps.setup,
+        w.agentDeps,
+      ),
+    ).rejects.toMatchObject({ code: "CONFLICT", details: { reason: "setup_step" } });
+    expect(w.record()).toMatchObject({ stockTool: "gmail__list-labels" });
+  });
+
   it("is planned beside its task, and cleared by a task to build and by another starter", async () => {
     const w = world({});
     await startSetup(ctx, PRINCIPAL, { harness: "claude" }, w.deps, w.agentDeps);

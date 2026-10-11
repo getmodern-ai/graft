@@ -497,7 +497,15 @@ export type SetupNextBody = z.input<typeof setupNextBody>;
  * `POST /agents/:id/tools/:vendor/:name/run` (GRA-208): the tool's input, which the run holds to
  * the tool's own schema; absent, an empty object, for a tool that takes none.
  */
-const toolRunBody = z.strictObject({ input: z.unknown().optional() });
+const toolRunBody = z.strictObject({
+  input: z.unknown().optional(),
+  /**
+   * The connection to run over (GRA-276, Greptile on #218): Setup's result step names the record's,
+   * so a tool the person already held bound to another account runs over the one just connected.
+   * Held to the agent's scope, and for a stock copy to its hosts, as `run_tool`'s is.
+   */
+  connectionId: z.string().min(1).max(200).optional(),
+});
 /** The run's wire shape, as the console posts it. */
 export type ToolRunBody = z.input<typeof toolRunBody>;
 
@@ -1348,10 +1356,19 @@ export function createApi(options: ApiOptions): Hono {
     useLogger().set({ setup: { stockTool: body.tool } });
     const before = await getSetupState(ctx, principal, setupDeps, agentDeps);
     const entry = await readyMadeChoice(ctx, principal, before, body.tool, setupStockDeps);
+    // Saved only onto the record the choice was judged against (Greptile on #218).
     let state = await planSetup(
       ctx,
       principal,
-      { goal: entry.goal, stockTool: entry.tool },
+      {
+        goal: entry.goal,
+        stockTool: entry.tool,
+        expected: {
+          step: before.step,
+          starterId: before.setup?.starterId ?? null,
+          connectionId: before.setup?.connectionId ?? null,
+        },
+      },
       setupDeps,
       agentDeps,
     );
@@ -1372,7 +1389,12 @@ export function createApi(options: ApiOptions): Hono {
     }
     if (state.step !== "goal") return c.json(state);
     return c.json(
-      await takePlannedStock(ctx, principal, { discardJob: body.discardJob }, setupStockDeps),
+      await takePlannedStock(
+        ctx,
+        principal,
+        { discardJob: body.discardJob, stockTool: entry.tool },
+        setupStockDeps,
+      ),
     );
   });
 
@@ -1498,6 +1520,7 @@ export function createApi(options: ApiOptions): Hono {
         { agentId: c.req.param("id"), vendor: c.req.param("vendor"), name: c.req.param("name") },
         body.input ?? {},
         { agent: agentDeps, tool: toolDeps, workingSet: workingSetDeps, mcp: options.run },
+        body.connectionId ? { connectionId: body.connectionId } : {},
       ),
     );
   });

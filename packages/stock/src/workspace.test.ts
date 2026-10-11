@@ -45,8 +45,9 @@ describe("the stock workspace", () => {
  * Setup's ready-made tools (GRA-276): each starter's curated `readyMade` names a stock tool here
  * that the manifest says is read-only, and that runs with nothing the person has to look up
  * (GRA-217): every required input has a default, or is the starter's own run input, which the
- * result step pre-fills (Open-Meteo's city). The catalogue's annotations are the check's, which the
- * harness holds to the manifest's.
+ * result step pre-fills (Open-Meteo's city); and no input starts at an example, which the result
+ * step would send unchanged as if the person had chosen it (Outlook's 2020 dates, Greptile on #218).
+ * The catalogue's annotations are the check's, which the harness holds to the manifest's.
  */
 describe.each(
   STARTER_VENDORS.flatMap((starter) =>
@@ -61,7 +62,10 @@ describe.each(
       await readFile(join(STOCK_DIR, starter.vendor, source?.name ?? "", "manifest.json"), "utf8"),
     ) as {
       annotations?: { readOnly?: boolean };
-      inputSchema: { required?: string[]; properties?: Record<string, { default?: unknown }> };
+      inputSchema: {
+        required?: string[];
+        properties?: Record<string, { default?: unknown; examples?: unknown[] }>;
+      };
     };
     expect(manifest.annotations?.readOnly).toBe(true);
     const looked = (manifest.inputSchema.required ?? []).filter(
@@ -70,6 +74,11 @@ describe.each(
         field !== starter.runInput?.field,
     );
     expect(looked).toEqual([]);
+    const exampled = Object.entries(manifest.inputSchema.properties ?? {})
+      .filter(([, property]) => property.default === undefined && property.examples?.length)
+      .filter(([field]) => field !== starter.runInput?.field)
+      .map(([field]) => field);
+    expect(exampled).toEqual([]);
   });
 });
 

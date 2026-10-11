@@ -853,6 +853,7 @@ describe("Setup's ready-made tools (GRA-276)", () => {
           tool: WEATHER,
           goal: OPEN_METEO.goal,
           description: expect.stringMatching(/^Get the current weather in a city/),
+          replaces: [],
         },
       ],
     });
@@ -917,6 +918,14 @@ describe("Setup's ready-made tools (GRA-276)", () => {
     const taken = await read(await app.request("/api/setup/stock", post({ tool: WEATHER })));
     expect(taken).toMatchObject({ step: "result", setup: { stockTool: WEATHER } });
     expect(store.tools.get(taken.setup.toolId)).toMatchObject({ name: "current-weather" });
+    // The result step names the record's connection; one outside the scope is the run's refusal.
+    const run = await read(
+      await app.request(
+        `/api/agents/${taken.agent.id}/tools/open-meteo/current-weather/run`,
+        post({ input: { city: "Melbourne" }, connectionId: "conn_elsewhere" }),
+      ),
+    );
+    expect(run).toMatchObject({ ok: false, reason: "connection_not_in_scope" });
   });
 
   it("refuses a write, another integration's tool and a choice off the tool's steps, saving nothing", async () => {

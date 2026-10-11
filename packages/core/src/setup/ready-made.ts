@@ -32,6 +32,8 @@ export type SetupReadyMadeTool = {
   goal: string;
   /** The catalogue's description, its first sentence: what the tool reads, for the line under. */
   description: string;
+  /** The starter's tasks this tool does beside `goal` (`StarterReadyMade.replaces`). */
+  replaces: string[];
 };
 
 /** The wire name of a vendor's tool, `<vendor>__<name>`, as `@graft/mcp`'s `authoredToolName` spells it. */
@@ -72,6 +74,7 @@ export function setupReadyMade(
       tool: readyMadeWireName(starter.vendor, curated.tool),
       goal: curated.goal,
       description: firstSentence(entry.description),
+      replaces: [...(curated.replaces ?? [])],
     });
     if (offered.length === SETUP_READY_MADE_MAX) break;
   }
