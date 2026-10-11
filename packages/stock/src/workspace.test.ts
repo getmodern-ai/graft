@@ -1,8 +1,8 @@
-import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { isKebabCase, starterVendorFor } from "@graft/core";
+import { isKebabCase, STARTER_VENDORS, starterVendorFor } from "@graft/core";
 import { describe, expect, it } from "vitest";
 
 import { readStockWorkspace, STOCK_DIR } from "./workspace";
@@ -39,6 +39,38 @@ describe("the stock workspace", () => {
       });
     },
   );
+});
+
+/**
+ * Setup's ready-made tools (GRA-276): each starter's curated `readyMade` names a stock tool here
+ * that the manifest says is read-only, and that runs with nothing the person has to look up
+ * (GRA-217): every required input has a default, or is the starter's own run input, which the
+ * result step pre-fills (Open-Meteo's city). The catalogue's annotations are the check's, which the
+ * harness holds to the manifest's.
+ */
+describe.each(
+  STARTER_VENDORS.flatMap((starter) =>
+    starter.readyMade.map((curated) => [`${starter.vendor}__${curated.tool}`, starter] as const),
+  ),
+)("Setup's ready-made %s", (wire, starter) => {
+  const source = sources.find((candidate) => `${candidate.vendor}__${candidate.name}` === wire);
+
+  it("is in the workspace, read-only, and needs nothing looked up", async () => {
+    expect(source, `${wire} is not a stock tool`).toBeDefined();
+    const manifest = JSON.parse(
+      await readFile(join(STOCK_DIR, starter.vendor, source?.name ?? "", "manifest.json"), "utf8"),
+    ) as {
+      annotations?: { readOnly?: boolean };
+      inputSchema: { required?: string[]; properties?: Record<string, { default?: unknown }> };
+    };
+    expect(manifest.annotations?.readOnly).toBe(true);
+    const looked = (manifest.inputSchema.required ?? []).filter(
+      (field) =>
+        manifest.inputSchema.properties?.[field]?.default === undefined &&
+        field !== starter.runInput?.field,
+    );
+    expect(looked).toEqual([]);
+  });
 });
 
 describe("readStockWorkspace", () => {

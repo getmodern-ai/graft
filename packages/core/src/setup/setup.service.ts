@@ -19,8 +19,11 @@ import { grantBuildApproval } from "../approval/approval.service";
 import type { ConnectionDeps } from "../connection/connection.deps";
 import type { ServiceContext } from "../context";
 import { ServiceError } from "../errors";
-import { mintAgentToken, type Principal } from "../tenancy";
+import { type AgentScope, mintAgentToken, type Principal } from "../tenancy";
+import type { WorkingSetDeps } from "../working-set/working-set.deps";
+import { promoteTool } from "../working-set/working-set.service";
 import { setupHarnessOf } from "./harness";
+import { readyMadeKey } from "./ready-made";
 import type { SetupDeps } from "./setup.deps";
 import {
   currentSetupStep,
@@ -61,6 +64,11 @@ export type SetupOutput = {
   starterId: string | null;
   /** The task chosen before connecting (Setup v2), built once the connection lands. */
   goal: string | null;
+  /**
+   * The ready-made tool chosen instead (GRA-276), by its wire name: copied in, rather than built,
+   * once the connection lands. `goal` then holds the task it does, in the person's words.
+   */
+  stockTool: string | null;
   pendingActionId: string | null;
   connectionId: string | null;
   acquireJobId: string | null;
@@ -79,6 +87,7 @@ export function toSetupOutput(row: SetupRow): SetupOutput {
     agentId: row.agentId,
     starterId: row.starterId,
     goal: row.goal,
+    stockTool: row.stockTool,
     pendingActionId: row.pendingActionId,
     connectionId: row.connectionId,
     acquireJobId: row.acquireJobId,
@@ -539,10 +548,133 @@ export async function startSetupBuild(
       step: "building",
       acquireJobId: created.id,
       toolId: null,
+      // A Build is the person choosing to build: a ready-made tool chosen before is not theirs now.
+      stockTool: null,
     });
     return created;
   });
   return { state: await getSetupState(ctx, principal, deps.setup, deps.agent), job };
+}
+
+/**
+ * **A ready-made tool instead of a build** (GRA-276; ADR 0024 as amended 2026-10-11; ADR 0025). The
+ * record's `stockTool`, chosen on the tool screen (before connecting) or the task step, is taken as
+ * Setup's first tool: the person's tool of that name, or the stock tool copied into their toolbox
+ * as `promote` copies it (`ensureTool`, `@graft/mcp`'s `ensureToolForAgent`, bound to the record's
+ * connection), promoted into the agent's working set, and the record moved past `building` to
+ * `result` naming it, with no job. The result step then runs it as it runs a built tool.
+ *
+ * One transaction under the record's lock, as `startSetupBuild` is, so a double click copies once
+ * and moves once, and a choice from a tab that moved on changes nothing. The copy writes its files
+ * and rows through its own seams, which take no lock on this record; a refusal after it (the tool
+ * turned out to write) leaves whatever it copied in the toolbox and in no working set, as a
+ * `run_tool` that copied and then failed would.
+ *
+ * Refused `CONFLICT` as Build is (`setup_not_started`, `setup_step`, `connection_revoked`,
+ * `connection_not_in_scope`, `job_running` unless `discardJob`), and with reasons of its own:
+ * `stock_tool_unplanned` (no ready-made tool chosen), `stock_tool_other_integration` (the tool is
+ * another integration's than the connection's), the copy's own (`ensureTool`'s, such as
+ * `tool_not_found`), `tool_not_read_only` (the result step runs only a read-only tool) and
+ * `tool_has_no_version`.
+ */
+export type SetupStockTool = {
+  id: string;
+  vendor: string;
+  readOnly: boolean;
+  currentVersionId: string | null;
+};
+
+export type SetupStockDeps = {
+  setup: SetupDeps;
+  agent: AgentDeps;
+  connection: Pick<ConnectionDeps, "findConnection">;
+  acquireJob: Pick<AcquireJobDeps, "findAcquireJob">;
+  workingSet: WorkingSetDeps;
+  /** The person's tool of that name, or the stock tool copied in, bound to the connection. */
+  ensureTool: (
+    scope: AgentScope,
+    key: { vendor: string; name: string },
+    connectionId: string,
+  ) => Promise<{ ok: true; tool: SetupStockTool } | { ok: false; reason: string; message: string }>;
+};
+
+export async function takeSetupStockTool(
+  ctx: ServiceContext,
+  principal: Principal,
+  input: { discardJob?: boolean },
+  deps: SetupStockDeps,
+): Promise<{ state: SetupState; agentId: string; promoted: boolean }> {
+  const taken = await ctx.db.transaction(async (tx) => {
+    const scoped: ServiceContext = { db: tx };
+    const record = await deps.setup.lockSetup(tx, principal.personId);
+    const active = activeOf(await deps.agent.listAgents(tx, principal.personId));
+    const agent = record.agentId
+      ? active.find((candidate) => candidate.id === record.agentId)
+      : undefined;
+    const refuse = (reason: string, message: string, details: Record<string, unknown> = {}) =>
+      new ServiceError("CONFLICT", message, { details: { reason, ...details } });
+    if (!agent || !record.connectionId) {
+      throw refuse("setup_not_started", "Setup has no agent and connection to add a tool to yet");
+    }
+    if (record.step !== "goal") {
+      throw refuse("setup_step", "Setup is not on the task step", { step: record.step });
+    }
+    const key = record.stockTool ? readyMadeKey(record.stockTool) : null;
+    if (!key) throw refuse("stock_tool_unplanned", "No ready-made tool is chosen");
+    const scope = { personId: principal.personId, agentId: agent.id };
+    const connectionId = record.connectionId;
+    const connection = await deps.connection.findConnection(tx, principal.personId, connectionId);
+    if (!connection || connection.revokedAt) {
+      throw refuse(
+        "connection_revoked",
+        `${connection?.displayName ?? "The connection"} is revoked, so no tool can run over it; choose an integration again`,
+        { connectionId },
+      );
+    }
+    if (!(await getAgentScope(scoped, scope, deps.agent)).includes(connectionId)) {
+      throw refuse(
+        "connection_not_in_scope",
+        `The connection is no longer in ${agent.name}'s scope, so no tool can run over it`,
+        { connectionId },
+      );
+    }
+    if (key.vendor !== connection.vendor) {
+      throw refuse(
+        "stock_tool_other_integration",
+        `That ready-made tool is for another integration than ${connection.displayName}`,
+      );
+    }
+    if (record.acquireJobId && !input.discardJob) {
+      const held = await deps.acquireJob.findAcquireJob(tx, scope, record.acquireJobId);
+      if (held && (held.status === "queued" || held.status === "running")) {
+        throw refuse(
+          "job_running",
+          "The job Setup started is still building a tool; a ready-made one leaves it behind",
+          { acquireJobId: held.id },
+        );
+      }
+    }
+    const ensured = await deps.ensureTool(scope, key, connectionId);
+    if (!ensured.ok) throw refuse(ensured.reason, ensured.message);
+    const { tool } = ensured;
+    if (!tool.readOnly) {
+      throw refuse(
+        "tool_not_read_only",
+        "That tool can change things in the integration, and Setup's first tool only reads",
+      );
+    }
+    if (!tool.currentVersionId) {
+      throw refuse("tool_has_no_version", "That tool has no version that runs yet");
+    }
+    const change = await promoteTool(scoped, scope, tool.id, "agent", deps.workingSet);
+    await deps.setup.saveSetup(tx, principal.personId, {
+      step: "result",
+      toolId: tool.id,
+      acquireJobId: null,
+    });
+    return { agentId: agent.id, promoted: change.changed };
+  });
+  return { state: await getSetupState(ctx, principal, deps.setup, deps.agent), ...taken };
 }
 
 /**
@@ -567,7 +699,8 @@ export type SetupBuildMove =
   | { kind: "built"; acquireJobId: string; toolId: string }
   | { kind: "retry"; acquireJobId: string }
   | { kind: "continue"; acquireJobId: string }
-  | { kind: "finish"; acquireJobId: string };
+  /** `acquireJobId` null for a ready-made tool (GRA-276), which reached the result with no job. */
+  | { kind: "finish"; acquireJobId: string | null };
 
 /** Apply a `SetupBuildMove` under the record's lock, and answer the state as it now stands. */
 export async function moveSetupBuild(
@@ -694,6 +827,12 @@ export type SetupPlanMove = {
   starterId?: string | null;
   goal?: string | null;
   /**
+   * The ready-made tool chosen instead of a task to build (GRA-276), by its wire name, saved beside
+   * `goal`, the task it does; the caller judged it one the step offers. A `goal` without it is a
+   * task to build, and clears any ready-made tool chosen before.
+   */
+  stockTool?: string | null;
+  /**
    * The task is for a directory integration that is not a starter (Setup v2's directory): saved on
    * the vendor step with no starter, since the integration rides in the same request to be connected.
    */
@@ -721,13 +860,17 @@ export async function planSetup(
         throw new ServiceError("NOT_FOUND", "No starter integration has that id");
       }
       patch.starterId = move.starterId;
-      if (move.starterId !== record.starterId) patch.goal = null;
+      if (move.starterId !== record.starterId) {
+        patch.goal = null;
+        patch.stockTool = null;
+      }
     }
     if (move.goal !== undefined) {
       const starter = patch.starterId !== undefined ? patch.starterId : record.starterId;
       const onVendor = record.step === "vendor" && (starter || move.withoutStarter);
       if (!(record.step === "goal" || onVendor)) throw stale();
       patch.goal = move.goal?.trim() ? move.goal.trim() : null;
+      patch.stockTool = move.stockTool ?? null;
     }
     await deps.saveSetup(tx, principal.personId, patch);
   });

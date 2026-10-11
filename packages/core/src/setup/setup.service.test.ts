@@ -18,9 +18,11 @@ import {
   planSetup,
   type SetupBuildDeps,
   type SetupBuildMove,
+  type SetupStockDeps,
   skipSetup,
   startSetup,
   startSetupBuild,
+  takeSetupStockTool,
 } from "./setup.service";
 
 /**
@@ -61,6 +63,7 @@ function world(options: { agents?: AgentRow[]; work?: { connections: number; too
     agentId: null,
     starterId: null,
     goal: null,
+    stockTool: null,
     pendingActionId: null,
     connectionId: null,
     acquireJobId: null,
@@ -1042,5 +1045,166 @@ describe("the plan, chosen before connecting (Setup v2)", () => {
     await expect(w.plan({ starterId: "gmail" })).rejects.toBeInstanceOf(ServiceError);
     // A task for a connection the record already names is saved on the goal step.
     expect((await w.plan({ goal: "List my calendars" })).setup?.goal).toBe("List my calendars");
+  });
+});
+
+describe("a ready-made tool instead of a build (GRA-276)", () => {
+  type Tool = { id: string; vendor: string; readOnly: boolean; currentVersionId: string | null };
+  const SEARCH: Tool = {
+    id: "tool_search",
+    vendor: "gmail",
+    readOnly: true,
+    currentVersionId: "v_1",
+  };
+
+  /** A record on the goal step over a Gmail connection, with `stockTool` chosen as given. */
+  async function onGoal(
+    options: {
+      stockTool?: string | null;
+      tool?: Tool | null;
+      vendor?: string;
+      revoked?: boolean;
+      jobStatus?: "queued" | "failed";
+    } = {},
+  ) {
+    const w = world({});
+    await startSetup(ctx, PRINCIPAL, { harness: "claude" }, w.deps, w.agentDeps);
+    await w.deps.saveSetup(fakeDb as never, PRINCIPAL.personId, {
+      step: "goal",
+      connectionId: "conn_1",
+      goal: "Show me my latest inbox emails",
+      stockTool: options.stockTool === undefined ? "gmail__search-messages" : options.stockTool,
+      ...(options.jobStatus ? { acquireJobId: "job_1" } : {}),
+    });
+    const tool = options.tool === undefined ? SEARCH : options.tool;
+    const promoted: string[] = [];
+    const deps = {
+      setup: w.deps,
+      agent: w.agentDeps,
+      connection: {
+        findConnection: vi.fn(async () => ({
+          id: "conn_1",
+          vendor: options.vendor ?? "gmail",
+          displayName: "Gmail",
+          revokedAt: options.revoked ? NOW : null,
+        })),
+      },
+      acquireJob: {
+        findAcquireJob: vi.fn(async (_db: unknown, _scope: unknown, id: string) => ({
+          id,
+          status: options.jobStatus,
+        })),
+      },
+      workingSet: {
+        findAuthoredToolById: vi.fn(async () => tool),
+        insertWorkingSetEntry: vi.fn(async (_db: unknown, entry: { toolId: string }) => {
+          if (promoted.includes(entry.toolId)) return null;
+          promoted.push(entry.toolId);
+          return entry;
+        }),
+        insertWorkingSetChange: vi.fn(async () => {}),
+        newId: () => "change_1",
+        now: () => NOW,
+      },
+      ensureTool: vi.fn(async () =>
+        tool
+          ? { ok: true as const, tool }
+          : { ok: false as const, reason: "tool_not_found", message: "No such tool." },
+      ),
+    } as unknown as SetupStockDeps;
+    return { ...w, deps, promoted };
+  }
+
+  it("copies the tool in bound to the connection, promotes it, and moves the record to the result with no job", async () => {
+    const w = await onGoal();
+    const taken = await takeSetupStockTool(ctx, PRINCIPAL, {}, w.deps);
+    expect(w.deps.ensureTool).toHaveBeenCalledWith(
+      { personId: "person_1", agentId: "agent_new" },
+      { vendor: "gmail", name: "search-messages" },
+      "conn_1",
+    );
+    expect(w.promoted).toEqual(["tool_search"]);
+    expect(taken).toMatchObject({ agentId: "agent_new", promoted: true });
+    expect(taken.state.step).toBe("result");
+    expect(taken.state.setup).toMatchObject({
+      toolId: "tool_search",
+      acquireJobId: null,
+      stockTool: "gmail__search-messages",
+      goal: "Show me my latest inbox emails",
+    });
+    // The result step's Continue then moves on with no job to name.
+    const { state } = await moveSetupBuild(
+      ctx,
+      PRINCIPAL,
+      { kind: "finish", acquireJobId: null },
+      w.deps.setup,
+      w.agentDeps,
+    );
+    expect(state.step).toBe("finish");
+  });
+
+  it("refuses off the task step, with nothing chosen, another integration's tool and a revoked connection, copying nothing", async () => {
+    const off = await onGoal();
+    await off.deps.setup.saveSetup(fakeDb as never, PRINCIPAL.personId, { step: "vendor" });
+    const unplanned = await onGoal({ stockTool: null });
+    const other = await onGoal({ vendor: "slack" });
+    const revoked = await onGoal({ revoked: true });
+    for (const [w, reason] of [
+      [off, "setup_step"],
+      [unplanned, "stock_tool_unplanned"],
+      [other, "stock_tool_other_integration"],
+      [revoked, "connection_revoked"],
+    ] as const) {
+      await expect(takeSetupStockTool(ctx, PRINCIPAL, {}, w.deps)).rejects.toMatchObject({
+        code: "CONFLICT",
+        details: { reason },
+      });
+      expect(w.deps.ensureTool).not.toHaveBeenCalled();
+    }
+  });
+
+  it("refuses a tool that writes, one with no version and one the copy cannot find, leaving the record on the task step", async () => {
+    for (const [tool, reason] of [
+      [{ ...SEARCH, readOnly: false }, "tool_not_read_only"],
+      [{ ...SEARCH, currentVersionId: null }, "tool_has_no_version"],
+      [null, "tool_not_found"],
+    ] as const) {
+      const w = await onGoal({ tool });
+      await expect(takeSetupStockTool(ctx, PRINCIPAL, {}, w.deps)).rejects.toMatchObject({
+        details: { reason },
+      });
+      expect(w.promoted).toEqual([]);
+      expect(w.record()).toMatchObject({ step: "goal", toolId: null });
+    }
+  });
+
+  it("asks before leaving a running job behind, and takes over a failed one without asking", async () => {
+    const running = await onGoal({ jobStatus: "queued" });
+    await expect(takeSetupStockTool(ctx, PRINCIPAL, {}, running.deps)).rejects.toMatchObject({
+      details: { reason: "job_running", acquireJobId: "job_1" },
+    });
+    const { state } = await takeSetupStockTool(ctx, PRINCIPAL, { discardJob: true }, running.deps);
+    expect(state.setup).toMatchObject({ step: "result", acquireJobId: null });
+    const failed = await onGoal({ jobStatus: "failed" });
+    expect((await takeSetupStockTool(ctx, PRINCIPAL, {}, failed.deps)).state.step).toBe("result");
+  });
+
+  it("is planned beside its task, and cleared by a task to build and by another starter", async () => {
+    const w = world({});
+    await startSetup(ctx, PRINCIPAL, { harness: "claude" }, w.deps, w.agentDeps);
+    const plan = (move: Parameters<typeof planSetup>[2]) =>
+      planSetup(ctx, PRINCIPAL, move, w.deps, w.agentDeps);
+    await plan({ starterId: "gmail" });
+    const chosen = await plan({
+      goal: "Show me my latest inbox emails",
+      stockTool: "gmail__search-messages",
+    });
+    expect(chosen.setup).toMatchObject({ stockTool: "gmail__search-messages" });
+    expect((await plan({ goal: "Show me my unread emails" })).setup?.stockTool).toBeNull();
+    await plan({ goal: "List my Gmail labels", stockTool: "gmail__list-labels" });
+    expect((await plan({ starterId: "slack" })).setup).toMatchObject({
+      goal: null,
+      stockTool: null,
+    });
   });
 });

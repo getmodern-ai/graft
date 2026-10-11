@@ -49,6 +49,13 @@ export type StarterRunInput = {
 /** One task the tool step offers: the person's words, and what the model is told beside them. */
 export type StarterTask = { goal: string; hints: string };
 
+/**
+ * One ready-made tool the tool step offers (GRA-276; ADR 0025): a stock tool of the starter's
+ * integration by its name (`<vendor>__<name>`'s second half), and the task it does in the person's
+ * words, which the person reads as the card and the setup prompt reads as the tool's goal.
+ */
+export type StarterReadyMade = { tool: string; goal: string };
+
 export type StarterVendor = {
   id: string;
   /** The connection's vendor slug (`validateVendor`), and the tool's. */
@@ -84,6 +91,14 @@ export type StarterVendor = {
    * take their place as stock lands.
    */
   moreTasks: readonly StarterTask[];
+  /**
+   * The integration's stock tools the tool step offers before any task to build (GRA-276), the
+   * curated task's best match first: each a read that runs with nothing the person has to look up
+   * (GRA-217's rule, held by `@graft/stock`'s workspace test), offered only while the catalogue
+   * holds it as read-only (`setupReadyMade`). A task a ready-made tool already does is not offered
+   * to build beside it.
+   */
+  readyMade: readonly StarterReadyMade[];
   /** What the person will see once the tool runs, one sentence, for the integration step. */
   outcome: string;
 };
@@ -112,7 +127,7 @@ export const STARTER_VENDORS = [
     hints:
       "List the five most recent conversations in the inbox with the threads list endpoint, one GET of `users/me/threads` with `maxResults=5` and `labelIds=INBOX`, returning each thread's `id` and its `snippet`, the line of text Gmail shows for it. Make no other call. The tool takes no input. Read only.",
     runInput: null,
-    outcome: "Your five latest inbox conversations, with the first line of each.",
+    outcome: "Your latest inbox emails, with who sent each and its first line.",
     moreTasks: [
       {
         goal: "Show me my unread emails",
@@ -129,6 +144,10 @@ export const STARTER_VENDORS = [
         hints:
           "List the mailbox's labels with the labels list endpoint, one GET of `users/me/labels`, returning each label's `name` and `type` (system or user). The tool takes no input. Read only.",
       },
+    ],
+    readyMade: [
+      { tool: "search-messages", goal: "Show me my latest inbox emails" },
+      { tool: "list-labels", goal: "List my Gmail labels" },
     ],
   },
   {
@@ -162,6 +181,11 @@ export const STARTER_VENDORS = [
         hints:
           "List the calendars the person can see with the calendar list endpoint, a GET of `users/me/calendarList`, returning each calendar's `summary`, whether it is `primary`, and its `timeZone`. The tool takes no input. Read only.",
       },
+    ],
+    readyMade: [
+      { tool: "list-events", goal: "Show me what is on my calendar this week" },
+      { tool: "find-free-time", goal: "Find my free time this week" },
+      { tool: "list-calendars", goal: "List my calendars" },
     ],
   },
   {
@@ -199,6 +223,7 @@ export const STARTER_VENDORS = [
           "List the ten most recently modified Google Docs with Drive's files list endpoint, a GET, with `q=mimeType='application/vnd.google-apps.document'`, `orderBy=modifiedTime desc`, `pageSize=10` and `fields=files(name,modifiedTime,webViewLink)`, returning those three for each. The tool takes no input. Read only.",
       },
     ],
+    readyMade: [{ tool: "list-recent-files", goal: "Show me my most recently edited files" }],
   },
   {
     id: "google-sheets",
@@ -226,6 +251,9 @@ export const STARTER_VENDORS = [
     runInput: null,
     outcome: "Your ten most recently edited spreadsheets, with when each changed and a link to it.",
     moreTasks: [],
+    readyMade: [
+      { tool: "find-spreadsheets", goal: "Show me my most recently edited spreadsheets" },
+    ],
   },
   {
     id: "slack",
@@ -257,6 +285,7 @@ export const STARTER_VENDORS = [
           "List the public channels the connected account is a member of with the `users.conversations` method, a GET, with `types=public_channel`, `exclude_archived=true` and `limit=20`, returning the name and the topic of each. Slack answers 200 with `ok: false` on an error, so treat that as a failure naming Slack's `error`. The tool takes no input. Read only.",
       },
     ],
+    readyMade: [{ tool: "list-channels", goal: "List the public channels in my workspace" }],
   },
   {
     id: "notion",
@@ -278,6 +307,9 @@ export const STARTER_VENDORS = [
     // Notion lists pages only through its search, a POST (the note on `goal`), so its one read
     // without input is the users list.
     moreTasks: [],
+    readyMade: [
+      { tool: "search-pages-and-databases", goal: "Show me my recently edited Notion pages" },
+    ],
   },
   {
     id: "github",
@@ -305,6 +337,9 @@ export const STARTER_VENDORS = [
         hints:
           "List up to ten of the authenticated user's open pull requests with the issue search endpoint, a GET of `/search/issues` with `q=is:pr is:open author:@me` and `per_page=10`, returning the title, the repository and the URL of each. The tool takes no input. Read only.",
       },
+    ],
+    readyMade: [
+      { tool: "list-my-repositories", goal: "Show me the repositories I updated most recently" },
     ],
   },
   {
@@ -335,6 +370,10 @@ export const STARTER_VENDORS = [
           "List ten deals with the deals list endpoint, a GET and not the search, with `limit=10` and the `dealname`, `amount`, `dealstage` and `closedate` properties, returning those for each. The tool takes no input. Read only.",
       },
     ],
+    readyMade: [
+      { tool: "list-pipelines", goal: "List my deal pipelines and their stages" },
+      { tool: "list-owners", goal: "List the owners in my CRM" },
+    ],
   },
   {
     id: "stripe",
@@ -353,6 +392,11 @@ export const STARTER_VENDORS = [
     runInput: null,
     outcome: "Your ten most recent payments, with each one's amount and status.",
     moreTasks: [],
+    readyMade: [
+      { tool: "list-payments", goal: "Show me my most recent payments" },
+      { tool: "get-balance", goal: "Show me my Stripe balance" },
+      { tool: "list-invoices", goal: "Show me my latest invoices" },
+    ],
   },
   {
     id: "microsoft-outlook",
@@ -375,6 +419,11 @@ export const STARTER_VENDORS = [
     runInput: null,
     outcome: "Your ten latest emails, with who sent each and its first line.",
     moreTasks: [],
+    readyMade: [
+      { tool: "search-messages", goal: "Show me my latest emails" },
+      { tool: "list-events", goal: "Show me what is on my calendar this week" },
+      { tool: "list-mail-folders", goal: "List my mail folders" },
+    ],
   },
   {
     id: "linear",
@@ -393,6 +442,11 @@ export const STARTER_VENDORS = [
     runInput: null,
     outcome: "Your open Linear issues, with each one's state.",
     moreTasks: [],
+    readyMade: [
+      { tool: "list-my-issues", goal: "Show me my open Linear issues" },
+      { tool: "list-projects", goal: "List my Linear projects" },
+      { tool: "list-teams", goal: "List the teams in my Linear workspace" },
+    ],
   },
   {
     id: "apollo",
@@ -412,6 +466,10 @@ export const STARTER_VENDORS = [
     runInput: null,
     outcome: "Ten contacts from your Apollo team, with each one's title and company.",
     moreTasks: [],
+    readyMade: [
+      { tool: "search-contacts", goal: "Show me my Apollo contacts" },
+      { tool: "list-sequences", goal: "List my Apollo sequences" },
+    ],
   },
   {
     id: "open-meteo",
@@ -434,6 +492,9 @@ export const STARTER_VENDORS = [
         hints:
           "The tool takes a city name as the input `city`, looks up the city's coordinates with Open-Meteo's geocoding API, and returns tomorrow's highest and lowest temperature and chance of rain there from the forecast API's daily values. Read only.",
       },
+    ],
+    readyMade: [
+      { tool: "current-weather", goal: "Tell me the weather right now in a city I name" },
     ],
   },
 ] as const satisfies readonly StarterVendor[];
