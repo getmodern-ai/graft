@@ -126,16 +126,23 @@ function collectBindingDefaults(pattern: ts.ObjectBindingPattern, found: Set<str
 }
 
 /**
- * Is this `||` evaluated for its truth alone: climbing through parentheses and the `||`, `&&` and
- * `!` around it, does it end in the condition of an `if`, a loop or a `?:`, or pass a `!` or the
- * left of a `&&` on the way? On the right of a `&&` it is the expression's value, and the climb goes
- * on. A test makes no field optional, so it is not counted as a fallback.
+ * Is this `||` evaluated for its truth alone: climbing through parentheses, type wrappers and the
+ * `||`, `&&` and `!` around it, does it end in the condition of an `if`, a loop or a `?:`, or pass
+ * a `!` or the left of a `&&` on the way? On the right of a `&&` it is the expression's value, and
+ * the climb goes on. A test makes no field optional, so it is not counted as a fallback.
  */
 function isBooleanTest(node: ts.BinaryExpression): boolean {
   let child: ts.Node = node;
   let parent = node.parent;
   while (parent) {
-    if (ts.isParenthesizedExpression(parent)) {
+    // Parentheses and the type wrappers `unwrap` sees through change nothing about how it is used.
+    if (
+      ts.isParenthesizedExpression(parent) ||
+      ts.isAsExpression(parent) ||
+      ts.isSatisfiesExpression(parent) ||
+      ts.isNonNullExpression(parent) ||
+      ts.isTypeAssertionExpression(parent)
+    ) {
       child = parent;
       parent = parent.parent;
       continue;

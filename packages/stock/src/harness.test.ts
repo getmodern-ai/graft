@@ -314,6 +314,9 @@ describe("the harness over required inputs", () => {
       '  if (!(input.q || "red")) void 0;',
       "  while (input.q || false) break;",
       "  void (input.q || input.other ? 1 : 2);",
+      "  if ((ctx && (input.q || input.other)) satisfies unknown) void 0;",
+      "  if ((input.q || input.other) as unknown) void 0;",
+      '  if (!(input.q || "red")!) void 0;',
     ]) {
       const tool = fixture({ module: READ_MODULE.replace(top, `${top}\n${extra}`) });
       expect(proveOptionalDefaults(tool)).toEqual([]);
