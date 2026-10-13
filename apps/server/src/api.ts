@@ -21,6 +21,7 @@ import {
   listAgents,
   listApprovals,
   listConnections,
+  listDonePendingActions,
   listOpenPendingActions,
   listTools,
   listToolVersionOrigins,
@@ -33,7 +34,12 @@ import {
   moveSetupOn,
   orNotFound,
   type PendingActionDeps,
+  type PendingActionDoneState,
+  type PendingActionSubject,
   type Principal,
+  pendingActionDoneState,
+  pendingActionFinishedAt,
+  pendingActionSubject,
   planSetup,
   reconnectConnection,
   registerConnection,
@@ -66,6 +72,7 @@ import type { DbOrTx } from "@graft/db";
 import type { PendingActionRow } from "@graft/db/repo/pending-action";
 import type { AuthoredToolRow } from "@graft/db/repo/tool";
 import { agentScopeMode } from "@graft/db/schema/agent";
+import type { PendingActionClosedReason } from "@graft/db/schema/pending-action";
 import { setupHarness } from "@graft/db/schema/setup";
 import type { UsageOutcome } from "@graft/db/schema/usage";
 import type { WorkingSetPromotedBy } from "@graft/db/schema/working-set";
@@ -334,6 +341,29 @@ export type PendingActionCard = {
   consumedAt: Date | null;
   url: string;
 };
+
+/**
+ * A finished ask as the console's Done list shows it (GRA-292): the card less its link, which a
+ * finished ask has no use for, plus how it finished and when (`@graft/core`'s
+ * `pendingActionDoneState` and `pendingActionFinishedAt`), the revoke that closed it if one did,
+ * and what it was about (`pendingActionSubject`), so a Change action reads the approval standing
+ * now through `/approvals` or `/vendor-approvals` rather than the answer recorded here.
+ */
+export type DonePendingActionCard = Omit<PendingActionCard, "url"> & {
+  state: PendingActionDoneState;
+  closedReason: PendingActionClosedReason | null;
+  finishedAt: Date;
+  subject: PendingActionSubject;
+};
+
+/** `GET /pending-actions?state=done`'s answer: a page, and where the next starts (null on the last). */
+export type DonePendingActionsOutput = {
+  pendingActions: DonePendingActionCard[];
+  nextCursor: string | null;
+};
+
+/** `GET /pending-actions`' `state`: `open` (the inbox, and the default) or `done`. */
+const pendingActionsState = z.enum(["open", "done"]).default("open");
 
 /**
  * The person's answer to a `tool`, `build` or `scope` ask: `allow`; for a tool ask, whether it
@@ -1760,13 +1790,57 @@ export function createApi(options: ApiOptions): Hono {
     return c.json(result);
   });
 
-  /** The console's inbox: every open action across the person's agents, newest first, each with its link. */
+  /**
+   * The console's inbox: every open action across the person's agents, newest first, each with its
+   * link. `?state=done` is Requests › Done instead (GRA-292): the answered, expired and
+   * revoke-closed asks, newest finish first, `limit` at a time from `cursor`
+   * (`DonePendingActionsOutput`). The agents are read once for the page, revoked ones included.
+   */
   api.get("/pending-actions", async (c) => {
     const principal = await principalOf(c.req.raw.headers);
-    const rows = await listOpenPendingActions(ctx, principal, pendingActionDeps);
-    return c.json({
-      pendingActions: await Promise.all(rows.map((row) => card(row, principal))),
-    });
+    const state = pendingActionsState.safeParse(c.req.query("state"));
+    if (!state.success) {
+      throw new ServiceError("BAD_REQUEST", "state is open or done");
+    }
+    if (state.data === "open") {
+      const rows = await listOpenPendingActions(ctx, principal, pendingActionDeps);
+      return c.json({
+        pendingActions: await Promise.all(rows.map((row) => card(row, principal))),
+      });
+    }
+    const limit = c.req.query("limit");
+    const page = await listDonePendingActions(
+      ctx,
+      principal,
+      { cursor: c.req.query("cursor") ?? null, limit: limit === undefined ? null : Number(limit) },
+      pendingActionDeps,
+    );
+    const agents = new Map(
+      (await listAgents(ctx, principal, agentDeps)).map((agent) => [agent.id, agent]),
+    );
+    const output: DonePendingActionsOutput = {
+      pendingActions: page.rows.map((row) => {
+        const agent = agents.get(row.agentId);
+        return {
+          id: row.id,
+          agentId: row.agentId,
+          agent: agent ? { id: agent.id, name: agent.name } : null,
+          kind: row.kind,
+          payload: row.payload,
+          expiresAt: row.expiresAt,
+          createdAt: row.createdAt,
+          answeredAt: row.answeredAt,
+          answer: row.answer,
+          consumedAt: row.consumedAt,
+          state: pendingActionDoneState(row),
+          closedReason: row.closedReason,
+          finishedAt: pendingActionFinishedAt(row),
+          subject: pendingActionSubject(row),
+        };
+      }),
+      nextCursor: page.nextCursor,
+    };
+    return c.json(output);
   });
 
   /**

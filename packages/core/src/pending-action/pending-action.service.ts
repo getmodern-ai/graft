@@ -1,9 +1,10 @@
-import type { PendingActionRow } from "@graft/db/repo/pending-action";
+import type { DonePendingActionCursor, PendingActionRow } from "@graft/db/repo/pending-action";
 
 import type { ServiceContext } from "../context";
 import { orNotFound, ServiceError } from "../errors";
 import type { AgentScope, Principal } from "../tenancy";
 import type { PendingActionDeps } from "./pending-action.deps";
+import { pendingActionFinishedAt } from "./pending-action.rules";
 
 /**
  * Pending actions (ADR 0006): the durable record behind a handoff. A meta-tool creates one with an
@@ -80,6 +81,76 @@ export async function listOpenPendingActions(
   deps: PendingActionDeps,
 ): Promise<PendingActionRow[]> {
   return deps.listOpenPendingActions(ctx.db, principal.personId, deps.now());
+}
+
+/** A page of the Done list when the console names no size, and the most it may name. */
+export const DONE_PENDING_ACTIONS_PAGE = 50;
+export const MAX_DONE_PENDING_ACTIONS_PAGE = 100;
+
+export type DonePendingActionsPage = {
+  rows: PendingActionRow[];
+  /** Where the next page starts, opaque to the console; null on the last page. */
+  nextCursor: string | null;
+};
+
+/**
+ * The console's Done list (GRA-292): answered, expired and revoke-closed asks across the person's
+ * agents, newest finish first, a page at a time. One row past the page is read to know whether
+ * another page exists, so the last page answers no cursor rather than a cursor to an empty page.
+ * The cursor names the page's last row by its finish and id (`DonePendingActionCursor`), which
+ * stays put while asks finish meanwhile (the repo's `finishedAt` says why).
+ */
+export async function listDonePendingActions(
+  ctx: ServiceContext,
+  principal: Principal,
+  input: { cursor?: string | null; limit?: number | null },
+  deps: PendingActionDeps,
+): Promise<DonePendingActionsPage> {
+  const limit = input.limit ?? DONE_PENDING_ACTIONS_PAGE;
+  if (!Number.isInteger(limit) || limit < 1 || limit > MAX_DONE_PENDING_ACTIONS_PAGE) {
+    throw new ServiceError(
+      "BAD_REQUEST",
+      `A page of finished asks holds between 1 and ${MAX_DONE_PENDING_ACTIONS_PAGE}`,
+    );
+  }
+  const after = input.cursor ? decodeDoneCursor(input.cursor) : null;
+  const read = await deps.listDonePendingActions(ctx.db, principal.personId, {
+    now: deps.now(),
+    limit: limit + 1,
+    after,
+  });
+  const rows = read.slice(0, limit);
+  const last = rows.at(-1);
+  return {
+    rows,
+    nextCursor:
+      read.length > limit && last
+        ? encodeDoneCursor({ finishedAt: pendingActionFinishedAt(last), id: last.id })
+        : null,
+  };
+}
+
+export function encodeDoneCursor(cursor: DonePendingActionCursor): string {
+  return Buffer.from(
+    JSON.stringify({ t: cursor.finishedAt.toISOString(), id: cursor.id }),
+  ).toString("base64url");
+}
+
+/** The cursor back; anything that is not one this server wrote is a `BAD_REQUEST`, never a first page. */
+export function decodeDoneCursor(cursor: string): DonePendingActionCursor {
+  try {
+    const parsed: unknown = JSON.parse(Buffer.from(cursor, "base64url").toString("utf8"));
+    if (parsed && typeof parsed === "object") {
+      const { t, id } = parsed as Record<string, unknown>;
+      const finishedAt = typeof t === "string" ? new Date(t) : null;
+      if (finishedAt && !Number.isNaN(finishedAt.getTime()) && typeof id === "string" && id) {
+        return { finishedAt, id };
+      }
+    }
+  } catch {
+    // Falls through to the refusal.
+  }
+  throw new ServiceError("BAD_REQUEST", "That cursor is not one this list wrote");
 }
 
 /**

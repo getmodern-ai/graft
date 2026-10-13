@@ -59,9 +59,11 @@ import {
 } from "./connection";
 import {
   answerPendingAction,
+  closePendingActionsForAgent,
   consumePendingAction,
   expirePendingActionsForConnection,
   findPendingAction,
+  listDonePendingActions,
   listPendingActionsByKind,
   lockPendingActionKey,
   settleAnsweredToolActions,
@@ -126,6 +128,25 @@ const SCOPE = { personId: "person_1", agentId: "agent_1" };
 /** The one shape every agent-scoped predicate takes: `agent_id IN (agents of this person named this)`. */
 const SCOPED_AGENT =
   /"agent_id" in \(select "id" from "agent" where \("agent"\."id" = \$\d+ and "agent"\."person_id" = \$\d+\)\)/;
+
+/** Every column of `pending_action`, as drizzle lists them in a bare `select()`. */
+const PENDING_ACTION_COLUMNS = [
+  "id",
+  "agent_id",
+  "kind",
+  "payload",
+  "connection_id",
+  "expires_at",
+  "answered_at",
+  "answer",
+  "consumed_at",
+  "closed_reason",
+  "owner",
+  "created_at",
+  "updated_at",
+]
+  .map((column) => `"${column}"`)
+  .join(", ");
 
 const only = () => {
   expect(statements).toHaveLength(1);
@@ -900,6 +921,69 @@ describe("person-scoped statements take the person", () => {
     expect(s.sql.slice(s.sql.indexOf(" where "), s.sql.indexOf(" returning"))).not.toContain(
       "payload",
     );
+  });
+
+  it("closing a connection's open asks records the revoke as the reason (GRA-292)", async () => {
+    await expirePendingActionsForConnection(
+      db,
+      "person_1",
+      "conn_1",
+      new Date("2026-09-09T00:00:00Z"),
+    );
+    const s = only();
+    expect(s.sql).toMatch(
+      /^update "pending_action" set "expires_at" = \$1, "consumed_at" = \$2, "closed_reason" = \$3,/,
+    );
+    expect(s.params[2]).toBe("connection_revoked");
+  });
+
+  /** An agent's revoke closes the asks it left open (GRA-292): agent-scoped, both clocks and the reason. */
+  it("closing an agent's open asks takes both ids of the scope and records the revoke", async () => {
+    const at = new Date("2026-09-09T00:00:00Z");
+    await closePendingActionsForAgent(db, SCOPE, at);
+    const s = only();
+    expect(s.sql).toMatch(
+      /^update "pending_action" set "expires_at" = \$1, "consumed_at" = \$2, "closed_reason" = \$3,/,
+    );
+    expect(s.sql).toMatch(SCOPED_AGENT);
+    expect(s.sql).toContain('"pending_action"."consumed_at" is null');
+    expect(s.sql).toContain('"pending_action"."expires_at" > $');
+    expect(s.params).toEqual(expect.arrayContaining(["agent_revoked", "agent_1", "person_1"]));
+  });
+
+  /** The Done list (GRA-292): under the person, answered or past expiry, newest finish first, keyset-paged. */
+  it("the Done list renders under the person, finished on one clock, ordered and limited", async () => {
+    await listDonePendingActions(db, "person_1", {
+      now: new Date("2026-09-09T00:00:00Z"),
+      limit: 51,
+    });
+    const s = only();
+    expect(s.sql).toBe(
+      `select ${PENDING_ACTION_COLUMNS} from "pending_action" where ("pending_action"."agent_id" in (select "id" from "agent" where "agent"."person_id" = $1) and ("pending_action"."answered_at" is not null or "pending_action"."expires_at" <= $2)) order by coalesce("pending_action"."answered_at", "pending_action"."expires_at") desc, "pending_action"."id" desc limit $3`,
+    );
+    expect(s.params).toEqual(["person_1", "2026-09-09T00:00:00.000Z", 51]);
+  });
+
+  it("the Done list's cursor is a row comparison on the order's own key", async () => {
+    await listDonePendingActions(db, "person_1", {
+      now: new Date("2026-09-09T00:00:00Z"),
+      limit: 51,
+      after: { finishedAt: new Date("2026-09-08T12:00:00Z"), id: "pa_9" },
+    });
+    const s = only();
+    expect(s.sql).toContain(
+      ' and (coalesce("pending_action"."answered_at", "pending_action"."expires_at"), "pending_action"."id") < ($3, $4))',
+    );
+    expect(s.sql).toContain(
+      'order by coalesce("pending_action"."answered_at", "pending_action"."expires_at") desc, "pending_action"."id" desc limit $5',
+    );
+    expect(s.params).toEqual([
+      "person_1",
+      "2026-09-09T00:00:00.000Z",
+      "2026-09-08T12:00:00.000Z",
+      "pa_9",
+      51,
+    ]);
   });
 
   it("the vendor-wide integration approval delete reaches only the person's agents", async () => {

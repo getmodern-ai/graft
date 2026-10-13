@@ -1,0 +1,1 @@
+ALTER TABLE "pending_action" ADD COLUMN "closed_reason" text;

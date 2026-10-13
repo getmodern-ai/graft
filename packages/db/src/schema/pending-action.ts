@@ -6,6 +6,14 @@ import { owned } from "./columns";
 import { connection } from "./connection";
 
 /**
+ * Why an ask was closed before anyone answered it (GRA-292): a revoke of the connection it is
+ * about, or of the agent that asked. Null on an ask that ran to its expiry, and on every ask closed
+ * before the column existed, which nobody can now tell apart from an expiry.
+ */
+export const pendingActionClosedReason = ["connection_revoked", "agent_revoked"] as const;
+export type PendingActionClosedReason = (typeof pendingActionClosedReason)[number];
+
+/**
  * A **pending action**: the durable record behind a handoff URL (ADR 0006) — an approval the
  * person was not there to answer, a connection the agent proposed, a credential to re-enter. The
  * agent's turn ends; the person answers from the console hours later; the waiting tool resumes
@@ -39,6 +47,11 @@ export const pendingAction = pgTable(
     answeredAt: timestamp("answered_at"),
     answer: jsonb("answer").$type<Record<string, unknown>>(),
     consumedAt: timestamp("consumed_at"),
+    /**
+     * Set with the two clocks when a revoke closes the ask (`repo/pending-action.ts`), so the
+     * console's Done list says "closed" rather than "expired". `expires_at` still carries the moment.
+     */
+    closedReason: text("closed_reason", { enum: pendingActionClosedReason }),
     ...owned(),
   },
   (table) => [

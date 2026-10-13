@@ -414,7 +414,8 @@ export async function updateAgentLimits(
  * Revoke: every token stops resolving at once — the static one because `findAgentByTokenHash`
  * filters on `revoked_at` in the statement, an MCP client's because the door's read joins the same
  * column (ADR 0018) — and the client's token rows are stamped in the same transaction so the record
- * says so. The row and its history stay. Null for no such agent, or one already revoked.
+ * says so, as are the asks it left open, closed with the revoke as their reason (GRA-292). The row
+ * and its history stay. Null for no such agent, or one already revoked.
  */
 export async function revokeAgent(
   ctx: ServiceContext,
@@ -426,11 +427,9 @@ export async function revokeAgent(
   const row = await ctx.db.transaction(async (tx) => {
     const revoked = await deps.revokeAgent(tx, principal.personId, agentId, now);
     if (!revoked) return null;
-    await deps.revokeMcpTokensForAgent(
-      tx,
-      { personId: principal.personId, agentId: revoked.id },
-      now,
-    );
+    const scope = { personId: principal.personId, agentId: revoked.id };
+    await deps.revokeMcpTokensForAgent(tx, scope, now);
+    await deps.closePendingActionsForAgent(tx, scope, now);
     return revoked;
   });
   return row ? toAgentOutput(row) : null;

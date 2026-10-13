@@ -399,14 +399,27 @@ export {
   type PendingActionDeps,
 } from "./pending-action/pending-action.deps";
 export {
+  type PendingActionDoneState,
+  type PendingActionSubject,
+  pendingActionDoneState,
+  pendingActionFinishedAt,
+  pendingActionSubject,
+} from "./pending-action/pending-action.rules";
+export {
   answerPendingAction,
   type CreatePendingActionInput,
   consumePendingAction,
   createPendingAction,
   DEFAULT_PENDING_ACTION_TTL_MS,
+  DONE_PENDING_ACTIONS_PAGE,
+  type DonePendingActionsPage,
+  decodeDoneCursor,
+  encodeDoneCursor,
   getPendingAction,
   getPendingActionForPerson,
+  listDonePendingActions,
   listOpenPendingActions,
+  MAX_DONE_PENDING_ACTIONS_PAGE,
   MAX_PENDING_ACTION_TTL_MS,
 } from "./pending-action/pending-action.service";
 export {

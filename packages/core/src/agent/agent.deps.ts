@@ -16,6 +16,7 @@ import {
 } from "@graft/db/repo/agent";
 import { findConnectionsByIds } from "@graft/db/repo/connection";
 import { findAgentByMcpAccessTokenHash, revokeMcpTokensForAgent } from "@graft/db/repo/mcp-oauth";
+import { closePendingActionsForAgent } from "@graft/db/repo/pending-action";
 
 /**
  * The agent module's test seam: the repositories it reads and writes, the clock and the id source.
@@ -37,6 +38,8 @@ export type AgentDeps = {
   revokeAgent: typeof revokeAgent;
   /** Revoking an agent revokes every token an MCP client holds for it (ADR 0018), in the same transaction. */
   revokeMcpTokensForAgent: typeof revokeMcpTokensForAgent;
+  /** And closes every ask it left open, recording the revoke as why (GRA-292). */
+  closePendingActionsForAgent: typeof closePendingActionsForAgent;
   /** The consent naming an existing agent records which client it was connected from (ADR 0018). */
   setAgentConnectedVia: typeof setAgentConnectedVia;
   replaceAgentConnections: typeof replaceAgentConnections;
@@ -67,6 +70,7 @@ export const defaultAgentDeps: AgentDeps = {
   updateAgent,
   revokeAgent,
   revokeMcpTokensForAgent,
+  closePendingActionsForAgent,
   setAgentConnectedVia,
   replaceAgentConnections,
   addAgentConnection,

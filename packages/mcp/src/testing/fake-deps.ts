@@ -436,6 +436,7 @@ export function createFakeDeps(store: FakeStore): FakeDeps {
     // authorization server's own suite in `@graft/core` drives the OAuth path over its own fakes.
     findAgentByMcpAccessTokenHash: async () => null,
     revokeMcpTokensForAgent: async () => 0,
+    closePendingActionsForAgent: async () => [],
     issueAgentToken: async (_db, personId, agentId, token, replacing = null) => {
       const row = store.agents.get(agentId);
       if (!row || row.personId !== personId) return null;
@@ -1245,6 +1246,7 @@ export function createFakeDeps(store: FakeStore): FakeDeps {
         answeredAt: input.answeredAt ?? null,
         answer: input.answer ?? null,
         consumedAt: input.consumedAt ?? null,
+        closedReason: input.closedReason ?? null,
         owner: "person",
         createdAt: input.createdAt ?? store.now(),
         updatedAt: input.updatedAt ?? store.now(),
@@ -1266,6 +1268,21 @@ export function createFakeDeps(store: FakeStore): FakeDeps {
           (row) => ownsAction(personId, row) && row.answeredAt === null && row.expiresAt > now,
         )
         .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime() || b.id.localeCompare(a.id)),
+    /** The Done list's predicates and keyset (GRA-292): answered or past expiry, after the cursor. */
+    listDonePendingActions: async (_db, personId, args) => {
+      const finished = (row: PendingActionRow) => (row.answeredAt ?? row.expiresAt).getTime();
+      return [...store.pendingActions.values()]
+        .filter(
+          (row) =>
+            ownsAction(personId, row) &&
+            (row.answeredAt !== null || row.expiresAt <= args.now) &&
+            (!args.after ||
+              finished(row) < args.after.finishedAt.getTime() ||
+              (finished(row) === args.after.finishedAt.getTime() && row.id < args.after.id)),
+        )
+        .sort((a, b) => finished(b) - finished(a) || (b.id < a.id ? -1 : b.id > a.id ? 1 : 0))
+        .slice(0, args.limit);
+    },
     answerPendingAction: async (_db, personId, id, args) => {
       const row = store.pendingActions.get(id);
       if (!ownsAction(personId, row) || !row) return null;

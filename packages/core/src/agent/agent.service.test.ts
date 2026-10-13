@@ -67,6 +67,7 @@ function fakeDeps(overrides: Partial<AgentDeps> = {}): AgentDeps {
     updateAgent: vi.fn(async (_db, _p, _a, patch) => ({ ...row, ...patch })),
     revokeAgent: vi.fn(async () => ({ ...row, revokedAt: NOW })),
     revokeMcpTokensForAgent: vi.fn(async () => 0),
+    closePendingActionsForAgent: vi.fn(async () => []),
     issueAgentToken: vi.fn(async (_db, _p, _a, token) => ({ ...awaitingRow, ...token })),
     setAgentConnectedVia: vi.fn(async (_db, _p, _a, via) => ({
       ...row,
@@ -264,10 +265,22 @@ describe("revokeAgent", () => {
     expect(result?.revokedAt).toEqual(NOW);
   });
 
+  /** GRA-292: so the Done list reads them as closed by the revoke, not as expired a day later. */
+  it("closes the asks the agent left open, at the same moment and in the same transaction", async () => {
+    const deps = fakeDeps();
+    await revokeAgent(ctx, PRINCIPAL, "agent_1", deps);
+    expect(deps.closePendingActionsForAgent).toHaveBeenCalledWith(
+      fakeDb,
+      { personId: "person_1", agentId: "agent_1" },
+      NOW,
+    );
+  });
+
   it("touches no token when there is no such agent, or it is revoked already", async () => {
     const deps = fakeDeps({ revokeAgent: vi.fn(async () => null) });
     await expect(revokeAgent(ctx, PRINCIPAL, "missing", deps)).resolves.toBeNull();
     expect(deps.revokeMcpTokensForAgent).not.toHaveBeenCalled();
+    expect(deps.closePendingActionsForAgent).not.toHaveBeenCalled();
   });
 });
 

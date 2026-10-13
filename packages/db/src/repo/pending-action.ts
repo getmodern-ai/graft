@@ -1,4 +1,4 @@
-import { and, desc, eq, gt, inArray, isNotNull, isNull, sql } from "drizzle-orm";
+import { and, desc, eq, gt, inArray, isNotNull, isNull, lte, or, type SQL, sql } from "drizzle-orm";
 
 import type { DbOrTx } from "../index";
 import { agent } from "../schema/agent";
@@ -96,6 +96,48 @@ export async function listOpenPendingActions(
       ),
     )
     .orderBy(desc(pendingAction.createdAt), desc(pendingAction.id));
+}
+
+/**
+ * When a finished ask finished: the answer's moment when it was answered, else its expiry, which a
+ * revoke's close stamps to the moment of the revoke. Once an ask is finished this cannot move: an
+ * answer needs `expires_at` ahead of it, and a close needs it ahead of the revoke, so neither lands
+ * on an expired ask, and a close of an answered ask moves `expires_at` behind an `answered_at` that
+ * wins the coalesce. A newly finished ask therefore sorts at the top, never between pages, which is
+ * what keeps the Done list's cursor stable.
+ */
+const finishedAt: SQL<Date> = sql<Date>`coalesce(${pendingAction.answeredAt}, ${pendingAction.expiresAt})`;
+
+/** Where the next page of the Done list starts: strictly after this row, in the list's order. */
+export type DonePendingActionCursor = { finishedAt: Date; id: string };
+
+/**
+ * The console's Done list (GRA-292): the person's asks that were answered, expired or closed by a
+ * revoke, newest finish first, keyset-paged on `(finishedAt, id)` so the cursor names a row rather
+ * than an offset. `now` is a parameter, as the open list's is, so the two lists split the person's
+ * asks on one clock. The cursor's moment is bound through the column's own encoder so it compares
+ * exactly as the stored value does.
+ */
+export async function listDonePendingActions(
+  db: DbOrTx,
+  personId: string,
+  args: { now: Date; limit: number; after?: DonePendingActionCursor | null },
+): Promise<PendingActionRow[]> {
+  const after = args.after
+    ? sql`(${finishedAt}, ${pendingAction.id}) < (${sql.param(args.after.finishedAt, pendingAction.expiresAt)}, ${args.after.id})`
+    : undefined;
+  return db
+    .select()
+    .from(pendingAction)
+    .where(
+      and(
+        inArray(pendingAction.agentId, personAgentIds(db, personId)),
+        or(isNotNull(pendingAction.answeredAt), lte(pendingAction.expiresAt, args.now)),
+        after,
+      ),
+    )
+    .orderBy(desc(finishedAt), desc(pendingAction.id))
+    .limit(args.limit);
 }
 
 /**
@@ -228,8 +270,9 @@ export async function listPendingActionsByKind(
  * take (`consumePendingAction`) reads no clock at all — an answer may be taken after its expiry,
  * which is the whole point of a durable record (ADR 0006) — so a per-call yes already given would
  * still be grantable after reconnection unless `consumed_at` is stamped too (GRA-23's known edge,
- * closed by GRA-28). A closed ask therefore reads as expired to the console and as taken to the
- * agent; the next call asks afresh, which after a revoke is right.
+ * closed by GRA-28). A closed ask therefore reads as finished to the console and as taken to the
+ * agent; the next call asks afresh, which after a revoke is right. `closed_reason` says it was the
+ * revoke, so the Done list does not call it expired (GRA-292).
  */
 export async function expirePendingActionsForConnection(
   db: DbOrTx,
@@ -239,11 +282,35 @@ export async function expirePendingActionsForConnection(
 ): Promise<PendingActionRow[]> {
   return db
     .update(pendingAction)
-    .set({ expiresAt: at, consumedAt: at })
+    .set({ expiresAt: at, consumedAt: at, closedReason: "connection_revoked" })
     .where(
       and(
         eq(pendingAction.connectionId, connectionId),
         inArray(pendingAction.agentId, personAgentIds(db, personId)),
+        isNull(pendingAction.consumedAt),
+        gt(pendingAction.expiresAt, at),
+      ),
+    )
+    .returning();
+}
+
+/**
+ * An agent's revoke closes every ask it left open (GRA-292), as a connection's revoke closes the
+ * asks about it and with the same two clocks: the person can no longer answer an ask for an agent
+ * whose token stopped resolving, and nothing will take the answer. `closed_reason` says why, so the
+ * Done list reads it as closed by the revoke rather than as an expiry a day later.
+ */
+export async function closePendingActionsForAgent(
+  db: DbOrTx,
+  scope: AgentScope,
+  at: Date,
+): Promise<PendingActionRow[]> {
+  return db
+    .update(pendingAction)
+    .set({ expiresAt: at, consumedAt: at, closedReason: "agent_revoked" })
+    .where(
+      and(
+        inArray(pendingAction.agentId, scopedAgentIds(db, scope)),
         isNull(pendingAction.consumedAt),
         gt(pendingAction.expiresAt, at),
       ),
