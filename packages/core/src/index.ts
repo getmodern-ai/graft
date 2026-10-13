@@ -205,6 +205,16 @@ export {
   widenProviderConnectionHosts,
 } from "./connection/connection.service";
 export {
+  type ConnectionAccessDeps,
+  defaultConnectionAccessDeps,
+} from "./connection/connection-access.deps";
+export {
+  type AgentConnectionAccess,
+  type ConnectionAccess,
+  type ConnectionAccessToolApproval,
+  getConnectionAccess,
+} from "./connection/connection-access.service";
+export {
   DIRECTORY_PAGE_LIMIT,
   type DirectoryCategory,
   type DirectoryConnectKind,

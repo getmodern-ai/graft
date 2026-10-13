@@ -3,15 +3,18 @@ import {
   type AgentDeps,
   type ApprovalDeps,
   answerPendingAction,
+  type ConnectionAccessDeps,
   type ConnectionDeps,
   createAgent,
   defaultAcquireJobDeps,
+  defaultConnectionAccessDeps,
   defaultSetupDeps,
   deletePersonModelKey,
   GOAL_MAX_LENGTH,
   getAgent,
   getAgentScope,
   getConnection,
+  getConnectionAccess,
   getPendingActionForPerson,
   getPersonModelKey,
   type IntegrationDirectory,
@@ -236,6 +239,11 @@ export type ApiDeps = {
    * so a harness that never reaches `/setup` binds nothing; a suite that does passes fakes.
    */
   setup?: SetupDeps;
+  /**
+   * The integration page's access view (GRA-296). Optional, and `defaultConnectionAccessDeps` when
+   * absent, so a harness that never reads it binds nothing.
+   */
+  connectionAccess?: ConnectionAccessDeps;
 };
 
 export type ApiOptions = {
@@ -1679,6 +1687,28 @@ export function createApi(options: ApiOptions): Hono {
       createdAt: row.createdAt,
     }));
     return c.json({ calls });
+  });
+
+  /**
+   * Which agents may use the connection and what each may run without asking (GRA-296): every
+   * active agent of the person's with its scope, its last call against the vendor and its answers
+   * for the vendor's tools, the vendor and this connection (`ConnectionAccess`). One read for the
+   * integration page's Agents view, in a fixed number of statements, rather than the agent-scoped
+   * approval reads once per agent. 404 for a connection that is not the person's.
+   */
+  api.get("/connections/:id/access", async (c) => {
+    const principal = await principalOf(c.req.raw.headers);
+    const access = orNotFound(
+      await getConnectionAccess(
+        ctx,
+        principal,
+        c.req.param("id"),
+        options.deps.connectionAccess ?? defaultConnectionAccessDeps,
+        { executeToolName },
+      ),
+      "Connection not found",
+    );
+    return c.json({ access });
   });
 
   /**
