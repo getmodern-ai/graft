@@ -4,9 +4,9 @@ import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 
 import { CloseIcon, StarsIcon, WarningIcon } from "@/components/icons";
+import { IntegrationMark } from "@/components/marks";
 import { DiscardJobDialog } from "@/components/setup/discard-job-dialog";
 import { SetupFooter } from "@/components/setup/setup-footer";
-import { SetupLogo } from "@/components/setup/setup-logo";
 import { SetupStepHeader } from "@/components/setup/setup-step-header";
 import { TaskPicker } from "@/components/setup/task-picker";
 import { useSetupMutation } from "@/components/setup/use-setup-mutation";
@@ -74,7 +74,13 @@ export function ToolStep({
   const back = useSetupMutation(chooseSetupStarter);
   const name = starter?.displayName ?? app?.name ?? "the integration";
   const logo = (className: string) => (
-    <SetupLogo starterId={starterId} url={app?.logoUrl} tile={false} className={className} />
+    <IntegrationMark
+      slug={starterId ?? app?.slug}
+      name={starter?.displayName ?? app?.name}
+      logoUrl={app?.logoUrl}
+      tile="none"
+      className={className}
+    />
   );
   const harness = state.setup?.harness ? setupHarnessOf(state.setup.harness).label : null;
   const who = harness ?? state.agent?.name ?? "your agent";

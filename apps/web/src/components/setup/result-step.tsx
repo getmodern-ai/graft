@@ -3,10 +3,10 @@ import { useEffect, useRef, useState } from "react";
 import { CodeBlock } from "@/components/code-block";
 import { CheckCircleIcon, ErrorIcon, RefreshIcon, WarningIcon } from "@/components/icons";
 import { Loader } from "@/components/loader";
+import { IntegrationMark } from "@/components/marks";
 import { SetupAppCard } from "@/components/setup/setup-app-card";
 import { SetupDisclosure } from "@/components/setup/setup-disclosure";
 import { SetupFooter } from "@/components/setup/setup-footer";
-import { SetupLogo } from "@/components/setup/setup-logo";
 import { useSetupMutation } from "@/components/setup/use-setup-mutation";
 import { StatusChip } from "@/components/status-chip";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -143,9 +143,9 @@ function ToolRun({
       >
         <SetupAppCard
           media={
-            <SetupLogo
-              starterId={tool.vendor}
-              url={cachedDirectoryLogo(queryClient, tool.vendor)}
+            <IntegrationMark
+              slug={tool.vendor}
+              logoUrl={cachedDirectoryLogo(queryClient, tool.vendor)}
             />
           }
           name={<code className="font-mono font-normal text-base">{tool.wireName}</code>}
