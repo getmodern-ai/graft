@@ -81,12 +81,13 @@ import {
 import {
   findAuthoredToolForUpdate,
   findToolVersion,
+  listAuthoredToolsForVendor,
   listToolVersionOrigins,
   listToolVersions,
   lockAuthoredToolName,
   setCurrentToolVersion,
 } from "./tool";
-import { listUsage, listUsageForVendor } from "./usage";
+import { lastRunByToolForPerson, listUsage, listUsageForVendor } from "./usage";
 import {
   deleteWorkingSetEntriesForConnection,
   deleteWorkingSetEntry,
@@ -539,6 +540,36 @@ describe("person-scoped statements take the person", () => {
     expect(s.sql).toContain('"agent"."person_id" = $');
     expect(s.sql).toContain('"authored_tool"."vendor" = $');
     expect(s.params).toEqual(["person_1", "demo", "execute__conn_1", 10]);
+  });
+
+  /**
+   * An integration's last run per tool (GRA-293), across the person's agents: under both owners,
+   * the agent's and the tool's, dry runs and refusals left out, the newest line per tool.
+   */
+  it("a vendor's last run per tool, through both owners, no dry run, no refusal", async () => {
+    await lastRunByToolForPerson(db, "person_1", { vendor: "gmail" });
+    const s = only();
+    expect(s.sql).toMatch(/^select distinct on \("usage_ledger"\."tool_id"\) /);
+    expect(s.sql).toContain(
+      'inner join "agent" on "usage_ledger"."agent_id" = "agent"."id" inner join "authored_tool" on "usage_ledger"."tool_id" = "authored_tool"."id"',
+    );
+    expect(s.sql).toContain(
+      'where ("agent"."person_id" = $1 and "authored_tool"."person_id" = $2 and "authored_tool"."vendor" = $3 and "usage_ledger"."dry_run" = $4 and "usage_ledger"."outcome" <> $5)',
+    );
+    expect(s.sql).toMatch(
+      /order by "usage_ledger"\."tool_id", "usage_ledger"\."created_at" desc, "usage_ledger"\."id" desc$/,
+    );
+    expect(s.params).toEqual(["person_1", "person_1", "gmail", false, "refused"]);
+  });
+
+  /** An integration's tools (GRA-293): the person's rows of one vendor, versionless included. */
+  it("a vendor's tools, under the person", async () => {
+    await listAuthoredToolsForVendor(db, "person_1", "gmail");
+    const s = only();
+    expect(s.sql).toMatch(
+      /^select .* from "authored_tool" where \("authored_tool"\."person_id" = \$1 and "authored_tool"\."vendor" = \$2\) order by "authored_tool"\."name" asc$/,
+    );
+    expect(s.params).toEqual(["person_1", "gmail"]);
   });
 
   it("a connection read", async () => {

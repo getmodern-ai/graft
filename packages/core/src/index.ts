@@ -536,6 +536,15 @@ export {
   requirePerson,
   type SessionLike,
 } from "./tenancy";
+export {
+  defaultIntegrationToolsDeps,
+  type IntegrationToolsDeps,
+} from "./tool/integration-tools.deps";
+export {
+  type IntegrationTool,
+  type IntegrationToolLastRun,
+  listIntegrationTools,
+} from "./tool/integration-tools.service";
 export { defaultToolDeps, type ToolDeps } from "./tool/tool.deps";
 export {
   activateToolVersion,

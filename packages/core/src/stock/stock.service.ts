@@ -189,7 +189,7 @@ export async function describeStockVersion(
 export async function listStockToolsForVendor(
   ctx: ServiceContext,
   vendor: string,
-  deps: StockDeps,
+  deps: Pick<StockDeps, "listCurrentStockToolsForVendor">,
 ): Promise<StockToolSummary[]> {
   return (await deps.listCurrentStockToolsForVendor(ctx.db, vendor)).map(({ tool, version }) => ({
     name: tool.name,
