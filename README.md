@@ -419,6 +419,6 @@ this repository. The licensing decision record under [`docs/adr/`](docs/adr) say
 
 ## Listings
 
-Graft's MCP server is listed on M8ven, which scores servers on their published tool definitions.
+Graft's MCP server is listed on M8ven, a trust index that grades a server on its code, how far it has been verified and its reputation.
 
 [![M8ven Score](https://m8ven.ai/badge/mcp/getmodern-ai-graft-17dvr6?v=a59a00705afc5d3edd3a6e225d470821)](https://m8ven.ai/mcp/getmodern-ai-graft-17dvr6?s=readme)
