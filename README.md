@@ -416,3 +416,9 @@ Graft as a dependency once its API is stable (ADR 0011).
 The core is Apache-2.0 ([`LICENSE`](LICENSE)). The Hermes skill and any harness plugin are MIT
 ([`skills/LICENSE`](skills/LICENSE)). The hosted form's backings are a private package and not in
 this repository. The licensing decision record under [`docs/adr/`](docs/adr) says why.
+
+## Listings
+
+Graft's MCP server is listed on M8ven, which scores servers on their published tool definitions.
+
+[![M8ven Score](https://m8ven.ai/badge/mcp/getmodern-ai-graft-17dvr6?v=a59a00705afc5d3edd3a6e225d470821)](https://m8ven.ai/mcp/getmodern-ai-graft-17dvr6?s=readme)
