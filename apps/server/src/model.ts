@@ -20,6 +20,7 @@ import {
   type ProviderModelConfig,
   type ProviderModelDeps,
   parseScript,
+  readScriptConnectionProposal,
 } from "@graft/model";
 import type { ModelTelemetryBacking } from "@graft/observability";
 import type { CredentialVault } from "@graft/vault";
@@ -128,7 +129,14 @@ export async function createModel(input: CreateModelInput): Promise<ModelSetup> 
     const raw = await (input.readScript ?? ((path) => readFile(path, "utf8")))(
       env.GRAFT_MODEL_SCRIPT,
     );
-    fixed = createScriptedModel(parseScript(JSON.parse(raw)));
+    const script: unknown = JSON.parse(raw);
+    // A script may name what a connection proposal from an API's docs answers (GRA-299); absent,
+    // the scripted backing guesses from the documentation's host.
+    const connectionProposal = readScriptConnectionProposal(script);
+    fixed = createScriptedModel(
+      parseScript(script),
+      connectionProposal === undefined ? {} : { connectionProposal },
+    );
     fixedSummary = `scripted (${env.GRAFT_MODEL_SCRIPT})`;
   } else if (env.GRAFT_MODEL_BACKEND === "provider") {
     if (!env.GRAFT_MODEL_PROVIDER || !env.GRAFT_MODEL_API_KEY) {

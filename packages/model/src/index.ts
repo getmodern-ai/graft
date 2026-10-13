@@ -21,6 +21,11 @@ export {
   wireOf,
 } from "./answer";
 export {
+  CONNECTION_PROPOSAL_INPUT_MAX_CHARS,
+  CONNECTION_PROPOSAL_TIMEOUT_MS,
+  type ConnectionProposalOptions,
+} from "./propose-connection";
+export {
   GOAL_PROPOSAL_MAX,
   GOAL_PROPOSAL_MAX_LENGTH,
   GOAL_PROPOSAL_TIMEOUT_MS,
@@ -55,12 +60,15 @@ export {
   createScriptedModel,
   DEFAULT_SCRIPTED_USAGE,
   parseScript,
+  readScriptConnectionProposal,
   SCRIPTED_MODEL_NAME,
   ScriptExhaustedError,
   type ScriptedConversationRecord,
   type ScriptedModel,
+  type ScriptedModelOptions,
   type ScriptedStep,
   ScriptMismatchError,
+  scriptedConnectionProposal,
   scriptedGoalProposals,
   scriptedGoals,
 } from "./scripted";
@@ -76,6 +84,11 @@ export {
   ANSWERS_FOR,
   answerAllowed,
   type ConnectionBrief,
+  type ConnectionProposalAnswer,
+  type ConnectionProposalOutcome,
+  type ConnectionProposalPage,
+  type ConnectionProposalRequest,
+  type ConnectionProposalScheme,
   type DocPage,
   type DryRunSummary,
   type GoalProposal,
@@ -98,6 +111,7 @@ export {
   type ProofReadMethod,
   type ProofReadTarget,
   proofReadLabel,
+  type RawConnectionProposal,
   type StartingPoint,
   type StockToolBrief,
 } from "./types";

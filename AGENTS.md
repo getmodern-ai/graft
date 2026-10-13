@@ -1308,6 +1308,25 @@ or a throw, so a timeout does not hide the chips for the hour. It is its own rou
 once; `components/setup/goal-suggestions.tsx` asks it after, keyed by the connection outside
 `["setup"]`, and draws outline `Button` chips that fill the field, or nothing.
 
+**A connection can be proposed from an API's docs, for the console's Flow C** (GRA-299). The person
+names an integration and pastes a link to its API docs; `POST /api/connection-proposals`
+(`ConnectionProposalBody`: `{ name, docsUrl }`) starts a short job and answers `{ id }`, `GET
+/api/connection-proposals/:id` answers `ConnectionProposalState` (`status` running, ready or failed;
+`stage` one of `@graft/mcp`'s `DOCS_PROPOSAL_STAGES`, the checklist's four lines; `found` filling in;
+`proposal` in `request_connection`'s shape once ready; `failure` with a reason word once failed), and
+`GET /api/connection-proposals` answers `ConnectionProposalAvailability`, unavailable with the
+variables to set wherever `acquireConfigured` says no. The work is `proposeConnectionFromDocs`
+(`packages/mcp/src/proposal-from-docs.ts`): the pasted page alone through `readWebPage`, bounded in
+windows and characters, then `ModelAdapter.proposeConnection` (`@graft/model`'s
+`propose-connection.ts`: the triage model, strict output, one attempt, a bound, traced as
+`propose_connection` under `connect:<personId>`, routed to the person's own key; the scripted backing
+answers a script's `connectionProposal` or a guess from the docs' host), then `normaliseProposal`, so
+a private host is `host_not_public` as it is for an agent's proposal, then each host resolved once (a
+private answer refused, a name that does not resolve listed in `unresolvedHosts`). The jobs live in
+the process (`apps/server/src/connection-proposals.ts`) for 15 minutes, one in flight per person
+(`proposal_running`); a restart loses one, and another person's id is a 404. The settled job is logged
+as counts and kinds, never the name, the link, the pages or the proposal.
+
 **The result step runs the tool, and the finish step connects the harness** (GRA-208; ADR 0024,
 `apps/server/src/setup-finish.ts` and `tool-run.ts`). `GET /api/setup/tool` answers
 `SetupToolContext`: the record's agent and harness, the connection, the job's goal and status (with
