@@ -1206,14 +1206,17 @@ export function createApi(options: ApiOptions): Hono {
     useLogger().set({ directory: { query: query.slice(0, 100), category: category ?? null } });
     const cursor = c.req.query("cursor");
     const limit = Number.parseInt(c.req.query("limit") ?? "", 10);
-    return c.json(
-      await searchSetupDirectory(setupDirectory(), {
-        query: query.slice(0, 200),
-        ...(category ? { category: category.slice(0, 100) } : {}),
-        ...(cursor ? { cursor: cursor.slice(0, 500) } : {}),
-        limit: Number.isFinite(limit) ? limit : 24,
-      }),
-    );
+    const page = await searchSetupDirectory(setupDirectory(), {
+      query: query.slice(0, 200),
+      ...(category ? { category: category.slice(0, 100) } : {}),
+      ...(cursor ? { cursor: cursor.slice(0, 500) } : {}),
+      limit: Number.isFinite(limit) ? limit : 24,
+    });
+    // What the search found, beside what was asked: a query with `total: 0` is an integration
+    // someone wanted that the directory does not have (GRA-281). On the wide event only; the query
+    // is a person's words and stays out of product analytics.
+    useLogger().set({ directory: { total: page.total, shown: page.entries.length } });
+    return c.json(page);
   });
 
   api.post("/setup/starter", async (c) => {
