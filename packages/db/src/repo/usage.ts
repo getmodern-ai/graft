@@ -1,4 +1,4 @@
-import { and, desc, eq, gte, inArray, max, or } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, isNotNull, max, or, sql } from "drizzle-orm";
 
 import type { DbOrTx } from "../index";
 import { agent } from "../schema/agent";
@@ -91,4 +91,48 @@ export async function listUsageForVendor(
     .orderBy(desc(usageLedger.createdAt), desc(usageLedger.id))
     .limit(args.limit);
   return rows.map(({ usage, agentName }) => ({ ...usage, agentName }));
+}
+
+/**
+ * When the person's agents last called each vendor, in one statement — the integrations list's
+ * "last used" (GRA-291), by `listUsageForVendor`'s rule over every vendor at once: a line is a
+ * vendor's when its tool row carries the vendor, or when its wire name is one the caller names (a
+ * connection's `execute__<id>`, which has no toolbox row). A row answers either a `vendor` with
+ * `toolName` null, or, for a line with no tool row, the matched `toolName` with `vendor` null; the
+ * caller maps a name back to its connection's vendor.
+ */
+export async function lastUsedAtByVendor(
+  db: DbOrTx,
+  personId: string,
+  args: { toolNames: readonly string[] },
+): Promise<{ vendor: string | null; toolName: string | null; lastUsedAt: Date }[]> {
+  const unboundName = sql<
+    string | null
+  >`case when ${authoredTool.vendor} is null then ${usageLedger.toolName} end`;
+  const rows = await db
+    .select({
+      vendor: authoredTool.vendor,
+      toolName: unboundName,
+      lastUsedAt: max(usageLedger.createdAt),
+    })
+    .from(usageLedger)
+    .innerJoin(agent, eq(usageLedger.agentId, agent.id))
+    .leftJoin(authoredTool, eq(usageLedger.toolId, authoredTool.id))
+    .where(
+      and(
+        eq(agent.personId, personId),
+        or(
+          isNotNull(authoredTool.vendor),
+          args.toolNames.length > 0
+            ? inArray(usageLedger.toolName, [...args.toolNames])
+            : undefined,
+        ),
+      ),
+    )
+    .groupBy(authoredTool.vendor, unboundName);
+  return rows.flatMap((row) =>
+    row.lastUsedAt
+      ? [{ vendor: row.vendor, toolName: row.toolName, lastUsedAt: row.lastUsedAt }]
+      : [],
+  );
 }

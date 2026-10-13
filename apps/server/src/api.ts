@@ -5,6 +5,7 @@ import {
   answerPendingAction,
   type ConnectionDeps,
   createAgent,
+  createIntegrationDeps,
   defaultAcquireJobDeps,
   defaultSetupDeps,
   deletePersonModelKey,
@@ -14,6 +15,7 @@ import {
   getConnection,
   getPendingActionForPerson,
   getPersonModelKey,
+  type IntegrationDeps,
   type IntegrationDirectory,
   isOAuthAuthorizationCode,
   issueConsoleAgentToken,
@@ -21,6 +23,7 @@ import {
   listAgents,
   listApprovals,
   listConnections,
+  listIntegrations,
   listOpenPendingActions,
   listTools,
   listToolVersionOrigins,
@@ -231,6 +234,11 @@ export type ApiDeps = {
   pendingAction: PendingActionDeps;
   /** The person's own model key (GRA-31, ADR 0014) — the vault's encrypt half rides inside. */
   modelKey: ModelKeyDeps;
+  /**
+   * The integrations list's four reads (GRA-291). Optional, and the real reads under
+   * `connection.providers` when absent; a suite that reaches `/integrations` passes fakes.
+   */
+  integration?: IntegrationDeps;
   /**
    * The person's Setup record (ADR 0024; GRA-204). Optional, and `defaultSetupDeps` when absent,
    * so a harness that never reaches `/setup` binds nothing; a suite that does passes fakes.
@@ -1541,6 +1549,23 @@ export function createApi(options: ApiOptions): Hono {
   api.get("/connections", async (c) => {
     const principal = await principalOf(c.req.raw.headers);
     return c.json({ connections: await listConnections(ctx, principal, connectionDeps) });
+  });
+
+  /**
+   * The integrations list (GRA-291): one row per vendor the person holds a live connection of, with
+   * its connections and their states, the active agents whose scope reaches any of them, the live
+   * tool count, the last call and the worst connection's reason for needing the person
+   * (`@graft/core`'s `IntegrationOutput`). Four statements whatever the person holds.
+   */
+  api.get("/integrations", async (c) => {
+    const principal = await principalOf(c.req.raw.headers);
+    const integrations = await listIntegrations(
+      ctx,
+      principal,
+      { executeToolName },
+      options.deps.integration ?? createIntegrationDeps(connectionDeps.providers),
+    );
+    return c.json({ integrations });
   });
 
   /**

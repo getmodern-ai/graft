@@ -4,6 +4,7 @@ import {
   type ConnectionDeps,
   createGatewayProvider,
   DEFAULT_PROVIDERS,
+  type IntegrationDeps,
   keyringProvider,
   type LedgerDeps,
   type PendingActionDeps,
@@ -354,6 +355,30 @@ function ledgerDeps(): LedgerDeps {
   };
 }
 
+/** Two connections of one vendor and one of another, reached by one agent (GRA-291). */
+function integrationDeps(): IntegrationDeps {
+  return {
+    listConnections: vi.fn(async () => [
+      connectionRow,
+      { ...connectionRow, id: "conn_2", displayName: "Demo (work)" },
+      { ...connectionRow, id: "conn_3", vendor: "other", displayName: "Other" },
+    ]),
+    listActiveAgentReach: vi.fn(async () => [
+      {
+        agentId: "agent_1",
+        agentName: "hermes",
+        connectedViaClientName: null,
+        connectionId: "conn_2",
+      },
+    ]),
+    countLiveToolsByVendor: vi.fn(async () => [{ vendor: "demo", count: 2 }]),
+    lastUsedAtByVendor: vi.fn(async () => [
+      { vendor: null, toolName: "execute__conn_1", lastUsedAt: NOW },
+    ]),
+    providers: DEFAULT_PROVIDERS,
+  };
+}
+
 function workingSetDeps(): WorkingSetDeps {
   return {
     listWorkingSet: vi.fn(async () => [workingSetEntry]),
@@ -449,6 +474,7 @@ function harness(
     approval: approvalDeps(),
     pendingAction: pendingActionDeps(),
     modelKey: fakeModelKeyDeps({ now: () => NOW }),
+    integration: integrationDeps(),
   };
   // The process's `tools/list_changed` notifier as the API sees it (GRA-69): what a revoke tells.
   const notifier = { changed: vi.fn() };
@@ -737,6 +763,7 @@ describe("the session door", () => {
       ["/api/agents", undefined],
       ["/api/agents", json({ name: "x" })],
       ["/api/connections", undefined],
+      ["/api/integrations", undefined],
     ] as const) {
       const res = await app.request(path, init);
       expect(res.status, path).toBe(401);
@@ -1099,6 +1126,45 @@ describe("the working-set history", () => {
     const { app } = harness(null);
     const res = await app.request("/api/agents/agent_1/working-set/changes");
     expect(res.status).toBe(401);
+  });
+});
+
+describe("integrations (GRA-291)", () => {
+  it("answers one row per vendor, two connections of one vendor on one row, under the person", async () => {
+    const { app, deps } = harness({ user: { id: "person_1" } });
+    const res = await app.request("/api/integrations");
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      integrations: {
+        vendor: string;
+        connections: { id: string; state: string }[];
+        agents: { id: string }[];
+        toolCount: number;
+        lastUsedAt: string | null;
+        needsAttention: { reason: string; connectionId: string } | null;
+      }[];
+    };
+    expect(body.integrations.map((row) => row.vendor)).toEqual(["demo", "other"]);
+    const [demo] = body.integrations;
+    expect(demo?.connections).toHaveLength(2);
+    expect(demo?.agents.map((agent) => agent.id)).toEqual(["agent_1"]);
+    expect(demo?.toolCount).toBe(2);
+    expect(demo?.lastUsedAt).toBe(NOW.toISOString());
+    // The fixture row has no credential entered, so the row needs the person.
+    expect(demo?.needsAttention).toEqual({ reason: "awaiting_credential", connectionId: "conn_1" });
+    expect(JSON.stringify(body)).not.toContain("ciphertext");
+    for (const read of [
+      deps.integration.listConnections,
+      deps.integration.listActiveAgentReach,
+      deps.integration.countLiveToolsByVendor,
+      deps.integration.lastUsedAtByVendor,
+    ]) {
+      expect(read).toHaveBeenCalledTimes(1);
+      expect(vi.mocked(read).mock.calls[0]?.[1]).toBe("person_1");
+    }
+    expect(vi.mocked(deps.integration.lastUsedAtByVendor).mock.calls[0]?.[2]).toEqual({
+      toolNames: ["execute__conn_1", "execute__conn_2", "execute__conn_3"],
+    });
   });
 });
 
