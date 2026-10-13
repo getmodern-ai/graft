@@ -1,4 +1,4 @@
-import type { AgentListOutput, AgentOutput, AgentScopeMode } from "@graft/core";
+import type { AgentListAnswer, AgentListOutput, AgentOutput, AgentScopeMode } from "@graft/core";
 import type {
   ScopeBody,
   ToolOutput,
@@ -32,7 +32,7 @@ export const agentKeys = {
 
 export const agentsQuery = queryOptions({
   queryKey: agentKeys.all,
-  queryFn: () => api<{ agents: AgentListItem[] }>("/agents"),
+  queryFn: () => api<Jsonified<AgentListAnswer>>("/agents"),
 });
 
 export const agentQuery = (agentId: string) =>

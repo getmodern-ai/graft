@@ -465,6 +465,18 @@ export function createFakeDeps(store: FakeStore): FakeDeps {
           workingSetCount: [...store.workingSet.values()].filter(
             (entry) => entry.agentId === row.id,
           ).length,
+          connectionIds:
+            row.scopeMode === "all"
+              ? [...store.connections.values()]
+                  .filter((connection) => connection.personId === personId)
+                  .map((connection) => connection.id)
+                  .sort()
+              : [...(store.agentConnections.get(row.id) ?? [])].sort(),
+          lastActiveAt:
+            store.usage
+              .filter((usage) => usage.agentId === row.id && !usage.dryRun)
+              .map((usage) => usage.createdAt)
+              .sort((a, b) => b.getTime() - a.getTime())[0] ?? null,
         })),
     updateAgent: async (_db, personId, agentId, patch) => {
       const row = store.agents.get(agentId);

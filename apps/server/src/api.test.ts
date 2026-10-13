@@ -189,7 +189,9 @@ function agentDeps(): AgentDeps {
     findAgentForUpdate: vi.fn(async () => agentRow),
     findAgentByTokenHash: vi.fn(async () => agentRow),
     findAgentByMcpAccessTokenHash: vi.fn(async () => null),
-    listAgents: vi.fn(async () => [{ ...agentRow, workingSetCount: 0 }]),
+    listAgents: vi.fn(async () => [
+      { ...agentRow, workingSetCount: 0, connectionIds: [], lastActiveAt: null },
+    ]),
     updateAgent: vi.fn(async (_db, _p, _a, patch) => ({ ...agentRow, ...patch })),
     revokeAgent: vi.fn(async () => ({ ...agentRow, revokedAt: NOW })),
     revokeMcpTokensForAgent: vi.fn(async () => 0),
@@ -799,16 +801,32 @@ describe("the session door", () => {
 });
 
 describe("agents", () => {
-  it("lists active and revoked agents with their working-set counts under the person", async () => {
+  it("lists active and revoked agents with their working-set counts, scope and last activity under the person", async () => {
     const { app, deps } = harness({ user: { id: "person_1" } });
     vi.mocked(deps.agent.listAgents).mockResolvedValue([
-      { ...agentRow, workingSetCount: 3 },
-      { ...agentRow, id: "revoked", revokedAt: NOW, workingSetCount: 1 },
+      { ...agentRow, workingSetCount: 3, connectionIds: ["conn_1"], lastActiveAt: null },
+      {
+        ...agentRow,
+        id: "revoked",
+        revokedAt: NOW,
+        workingSetCount: 1,
+        connectionIds: [],
+        lastActiveAt: NOW,
+      },
     ]);
     const normal = (await (await app.request("/api/agents")).json()) as {
-      agents: { id: string; workingSetCount: number }[];
+      agents: {
+        id: string;
+        workingSetCount: number;
+        connectionIds: string[];
+        lastActiveAt: string | null;
+      }[];
+      hasRunTool: boolean;
     };
     expect(normal.agents.map((agent) => agent.id)).toEqual([agentRow.id, "revoked"]);
+    expect(normal.agents.map((agent) => agent.connectionIds)).toEqual([["conn_1"], []]);
+    expect(normal.agents.map((agent) => agent.lastActiveAt)).toEqual([null, NOW.toISOString()]);
+    expect(normal.hasRunTool).toBe(true);
     expect(normal.agents.map((agent) => agent.workingSetCount)).toEqual([3, 1]);
     expect(deps.agent.listAgents).toHaveBeenCalledWith(fakeDb, "person_1");
   });

@@ -89,7 +89,9 @@ function world(options: { agents?: AgentRow[]; work?: { connections: number; too
       agents.push(row);
       return row;
     }),
-    listAgents: vi.fn(async () => agents.map((row) => ({ ...row, workingSetCount: 0 }))),
+    listAgents: vi.fn(async () =>
+      agents.map((row) => ({ ...row, workingSetCount: 0, connectionIds: [], lastActiveAt: null })),
+    ),
     findAgent: vi.fn(async (_db, _p, id) => agents.find((row) => row.id === id) ?? null),
     issueAgentToken: vi.fn(async (_db, _p, id, token, replacing = null) => {
       const index = agents.findIndex((row) => row.id === id);

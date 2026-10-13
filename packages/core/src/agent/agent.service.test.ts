@@ -13,6 +13,7 @@ import {
   createAgentAwaitingHarness,
   createAgentForClient,
   issueAwaitingAgentToken,
+  listAgents,
   revokeAgent,
   setAgentScope,
   toAgentOutput,
@@ -63,7 +64,9 @@ function fakeDeps(overrides: Partial<AgentDeps> = {}): AgentDeps {
     findAgentForUpdate: vi.fn(async () => row),
     findAgentByTokenHash: vi.fn(async () => row),
     findAgentByMcpAccessTokenHash: vi.fn(async () => null),
-    listAgents: vi.fn(async () => [{ ...row, workingSetCount: 0 }]),
+    listAgents: vi.fn(async () => [
+      { ...row, workingSetCount: 0, connectionIds: [], lastActiveAt: null },
+    ]),
     updateAgent: vi.fn(async (_db, _p, _a, patch) => ({ ...row, ...patch })),
     revokeAgent: vi.fn(async () => ({ ...row, revokedAt: NOW })),
     revokeMcpTokensForAgent: vi.fn(async () => 0),
@@ -206,6 +209,53 @@ describe("createAgent", () => {
       message: "Connection not found: conn_other",
     });
     expect(deps.insertAgent).not.toHaveBeenCalled();
+  });
+});
+
+describe("listAgents", () => {
+  it("carries each row's scope and last activity, and derives hasRunTool from the list with no second read", async () => {
+    const ranAt = new Date("2026-10-01T10:00:00Z");
+    const deps = fakeDeps({
+      listAgents: vi.fn(async () => [
+        { ...row, workingSetCount: 2, connectionIds: ["conn_a", "conn_b"], lastActiveAt: null },
+        {
+          ...row,
+          id: "agent_2",
+          scopeMode: "listed" as const,
+          revokedAt: NOW,
+          workingSetCount: 0,
+          connectionIds: ["conn_b"],
+          lastActiveAt: ranAt,
+        },
+      ]),
+    });
+    const answer = await listAgents(ctx, PRINCIPAL, deps);
+    expect(deps.listAgents).toHaveBeenCalledTimes(1);
+    expect(deps.listAgents).toHaveBeenCalledWith(fakeDb, "person_1");
+    expect(answer.hasRunTool).toBe(true);
+    expect(
+      answer.agents.map(({ id, scopeMode, connectionIds, lastActiveAt }) => ({
+        id,
+        scopeMode,
+        connectionIds,
+        lastActiveAt,
+      })),
+    ).toEqual([
+      {
+        id: row.id,
+        scopeMode: row.scopeMode,
+        connectionIds: ["conn_a", "conn_b"],
+        lastActiveAt: null,
+      },
+      { id: "agent_2", scopeMode: "listed", connectionIds: ["conn_b"], lastActiveAt: ranAt },
+    ]);
+    expect(answer.agents[0]).not.toHaveProperty("tokenHash");
+  });
+
+  it("answers hasRunTool false when no agent has a call that was not a dry run, and for no agents", async () => {
+    expect((await listAgents(ctx, PRINCIPAL, fakeDeps())).hasRunTool).toBe(false);
+    const none = fakeDeps({ listAgents: vi.fn(async () => []) });
+    expect(await listAgents(ctx, PRINCIPAL, none)).toEqual({ agents: [], hasRunTool: false });
   });
 });
 

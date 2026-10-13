@@ -133,14 +133,28 @@ const only = () => {
 };
 
 describe("agent-scoped reads take both ids of the scope in the statement", () => {
-  it("counts each agent's working set in the person's list statement", async () => {
+  /**
+   * The console's list (GRA-290): one statement for every agent of the person, each figure a
+   * subquery correlated to the person-scoped row, so the read costs the same for one agent or
+   * fifty. The scope's subquery names the person by parameter on the connection table, as
+   * `listScopeConnectionIds` does, and reads the mode and the list off the outer row.
+   */
+  it("reads each agent's working-set count, resolved scope and last activity in the person's list statement", async () => {
     await listAgents(db, "person_1");
     const s = only();
     expect(s.sql).toContain(
       '(select count(*) from "working_set" where "working_set"."agent_id" = "agent"."id")',
     );
-    expect(s.sql).toContain('where "agent"."person_id" = $1');
-    expect(s.params).toEqual(["person_1"]);
+    expect(s.sql).toContain(
+      `(select coalesce(array_agg("connection"."id" order by "connection"."id"), '{}') from "connection" where ("connection"."person_id" = $1 and ("agent"."scope_mode" = $2 or "connection"."id" in (select "connection_id" from "agent_connection" where "agent_connection"."agent_id" = "agent"."id"))))`,
+    );
+    expect(s.sql).toContain(
+      '(select max("usage_ledger"."created_at") from "usage_ledger" where ("usage_ledger"."agent_id" = "agent"."id" and "usage_ledger"."dry_run" = $3))',
+    );
+    expect(s.sql).toMatch(
+      /from "agent" where "agent"\."person_id" = \$4 order by "agent"\."created_at" asc, "agent"\."id" asc$/,
+    );
+    expect(s.params).toEqual(["person_1", "all", false, "person_1"]);
   });
 
   it("the working set", async () => {

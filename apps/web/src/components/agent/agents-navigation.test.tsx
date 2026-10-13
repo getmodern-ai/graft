@@ -113,7 +113,10 @@ beforeEach(() => {
       const body = options?.body ? JSON.parse(String(options.body)) : undefined;
       requests.push({ url, method, body });
       if (url === "/api/agents") {
-        return Response.json({ agents: [{ ...current, workingSetCount: 1 }] });
+        return Response.json({
+          agents: [{ ...current, workingSetCount: 1, connectionIds: [], lastActiveAt: null }],
+          hasRunTool: false,
+        });
       }
       if (url === "/api/connections") {
         return Response.json({

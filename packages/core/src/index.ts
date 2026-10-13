@@ -46,6 +46,7 @@ export {
   AGENT_NAME_MAX_LENGTH,
   type AgentConnectedViaOutput,
   type AgentLimitsPatch,
+  type AgentListAnswer,
   type AgentListOutput,
   type AgentOutput,
   type AgentScopeMode,

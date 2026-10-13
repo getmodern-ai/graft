@@ -56,7 +56,25 @@ export type AgentOutput = {
   updatedAt: Date;
 };
 
-export type AgentListOutput = AgentOutput & { workingSetCount: number };
+/**
+ * An agent as the console's list draws it (GRA-290): `connectionIds` is the scope as it resolves
+ * under `scopeMode`, as `getAgentScope` answers it, and `lastActiveAt` the agent's last call that
+ * was not a dry run, null for none.
+ */
+export type AgentListOutput = AgentOutput & {
+  workingSetCount: number;
+  connectionIds: string[];
+  lastActiveAt: Date | null;
+};
+
+/**
+ * `GET /api/agents`: every agent of the person's, revoked included, and whether any of them has
+ * ever run a tool for real (the empty Home's checklist). `hasRunTool` is derived from the list
+ * rather than read again: the list holds every agent the person has, and a ledger row cannot
+ * outlive its agent (`usage_ledger.agent_id` cascades), so "some agent was last active" is "the
+ * person has a non-dry-run ledger row".
+ */
+export type AgentListAnswer = { agents: AgentListOutput[]; hasRunTool: boolean };
 
 export function toAgentOutput(row: AgentRow): AgentOutput {
   return {
@@ -377,9 +395,15 @@ export async function listAgents(
   ctx: ServiceContext,
   principal: Principal,
   deps: AgentDeps,
-): Promise<AgentListOutput[]> {
+): Promise<AgentListAnswer> {
   const rows = await deps.listAgents(ctx.db, principal.personId);
-  return rows.map((row) => ({ ...toAgentOutput(row), workingSetCount: row.workingSetCount }));
+  const agents = rows.map((row) => ({
+    ...toAgentOutput(row),
+    workingSetCount: row.workingSetCount,
+    connectionIds: row.connectionIds,
+    lastActiveAt: row.lastActiveAt,
+  }));
+  return { agents, hasRunTool: agents.some((agent) => agent.lastActiveAt !== null) };
 }
 
 export async function getAgent(

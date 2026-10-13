@@ -1182,6 +1182,10 @@ and every row's menu has View agent, revoked rows included; the detail drawer is
 page keeps scope and limit editors, the working set, approvals, history and standalone revocation;
 revoked records are read-only. `GET /api/agents` includes `workingSetCount`, counted against each
 person-scoped agent in the same statement; the table shows count/cap with Cando's status dot.
+Since GRA-290 the same one statement also answers each agent's `connectionIds` (the scope as it
+resolves under its mode, `listScopeConnectionIds`'s rule) and `lastActiveAt` (its last ledger row
+that was not a dry run), and the answer is `AgentListAnswer`, `{ agents, hasRunTool }`, the flag
+derived from the list in `@graft/core`'s `listAgents` with no second read.
 
 **Setup is one record per person and three routes** (GRA-204; ADR 0024). The `setup` table
 (`packages/db/src/schema/setup.ts`, migration 0012) keys on the person: the step reached, the
