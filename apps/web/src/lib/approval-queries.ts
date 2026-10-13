@@ -1,4 +1,5 @@
 import type { ApprovalRow, VendorApprovalRow } from "@graft/db/repo/approval";
+import type { BuildApprovalOutput } from "@graft/server/api";
 import { queryOptions } from "@tanstack/react-query";
 
 import { api, type Jsonified } from "./api";
@@ -18,6 +19,7 @@ export type VendorApproval = Jsonified<VendorApprovalRow>;
 export const approvalKeys = {
   ofAgent: (agentId: string) => ["approvals", agentId] as const,
   vendorsOfAgent: (agentId: string) => ["vendor-approvals", agentId] as const,
+  buildsOfAgent: (agentId: string) => ["build-approvals", agentId] as const,
 };
 
 export const vendorApprovalsQuery = (agentId: string) =>
@@ -33,6 +35,28 @@ export const vendorApprovalsQuery = (agentId: string) =>
 export function withdrawVendorApproval(agentId: string, vendor: string) {
   return api<{ vendorApproval: VendorApproval }>(
     `/vendor-approvals/${encodeURIComponent(vendor)}?agentId=${encodeURIComponent(agentId)}`,
+    { method: "DELETE" },
+  );
+}
+
+/**
+ * An agent's build approval for one connection (ADR 0008 as amended 2026-09-18; GRA-295): `acquire`
+ * works against it without asking. Withdrawing makes the next `acquire` ask again.
+ */
+export type BuildApproval = Jsonified<BuildApprovalOutput>;
+
+export const buildApprovalsQuery = (agentId: string) =>
+  queryOptions({
+    queryKey: approvalKeys.buildsOfAgent(agentId),
+    queryFn: () =>
+      api<{ buildApprovals: BuildApproval[] }>(
+        `/agents/${encodeURIComponent(agentId)}/build-approvals`,
+      ),
+  });
+
+export function withdrawBuildApproval(agentId: string, connectionId: string) {
+  return api<{ buildApproval: { agentId: string; connectionId: string } }>(
+    `/agents/${encodeURIComponent(agentId)}/build-approvals/${encodeURIComponent(connectionId)}`,
     { method: "DELETE" },
   );
 }

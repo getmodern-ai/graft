@@ -20,6 +20,7 @@ import {
   type LedgerDeps,
   listAgents,
   listApprovals,
+  listBuildApprovals,
   listConnections,
   listOpenPendingActions,
   listTools,
@@ -60,6 +61,7 @@ import {
   type ToolDeps,
   updateAgentLimits,
   type WorkingSetDeps,
+  withdrawBuildApproval,
   withdrawVendorApproval,
 } from "@graft/core";
 import type { DbOrTx } from "@graft/db";
@@ -628,6 +630,17 @@ export type ToolVersionOutput = {
 export type ToolboxToolOutput = ToolOutput & {
   lineage: StockLineage;
   versions: ToolVersionOutput[];
+};
+
+/**
+ * One build approval on the agent's page (ADR 0008 as amended 2026-09-18; GRA-295): the connection
+ * `acquire` may work against without asking, the integration it names, and when it was granted.
+ */
+export type BuildApprovalOutput = {
+  connectionId: string;
+  vendor: string;
+  displayName: string;
+  grantedAt: Date;
 };
 
 /** One promoted tool in an agent's working set, with the tool — the console's working-set view (ADR 0003). */
@@ -1495,6 +1508,42 @@ export function createApi(options: ApiOptions): Hono {
       };
     });
     return c.json({ changes });
+  });
+
+  /**
+   * The agent's build approvals, one per connection, for the agent's page to list and withdraw
+   * (ADR 0008 as amended 2026-09-18). Granted only from an answer (the build ask, a connection's
+   * `approveBuild`, Setup's Build), never here. A revoked agent's still answer, as its history does.
+   */
+  api.get("/agents/:id/build-approvals", async (c) => {
+    const principal = await principalOf(c.req.raw.headers);
+    const agent = orNotFound(
+      await getAgent(ctx, principal, c.req.param("id"), agentDeps),
+      "Agent not found",
+    );
+    const rows = await listBuildApprovals(
+      ctx,
+      { personId: principal.personId, agentId: agent.id },
+      approvalDeps,
+    );
+    const buildApprovals: BuildApprovalOutput[] = rows.map((row) => ({
+      connectionId: row.connectionId,
+      vendor: row.vendor,
+      displayName: row.displayName,
+      grantedAt: row.grantedAt,
+    }));
+    return c.json({ buildApprovals });
+  });
+
+  /** Withdraw one: the agent's next `acquire` against the connection asks again. */
+  api.delete("/agents/:id/build-approvals/:connectionId", async (c) => {
+    const principal = await principalOf(c.req.raw.headers);
+    const scope = { personId: principal.personId, agentId: c.req.param("id") };
+    const row = orNotFound(
+      await withdrawBuildApproval(ctx, scope, c.req.param("connectionId"), approvalDeps),
+      "No build approval for this connection and agent",
+    );
+    return c.json({ buildApproval: { agentId: row.agentId, connectionId: row.connectionId } });
   });
 
   api.put("/agents/:id/scope", async (c) => {

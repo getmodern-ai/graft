@@ -9,9 +9,11 @@ import {
   allowVendorWhenConnecting,
   decideToolCall,
   grantBuildApproval,
+  listBuildApprovals,
   revokeApproval,
   setApproval,
   setAskEveryCall,
+  withdrawBuildApproval,
   withdrawVendorApproval,
 } from "./approval.service";
 
@@ -90,6 +92,8 @@ function fakeDeps(overrides: Partial<ApprovalDeps> = {}): ApprovalDeps {
     deleteApproval: vi.fn(async () => approval),
     findBuildApproval: vi.fn(async () => null),
     insertBuildApproval: vi.fn(async () => build),
+    listBuildApprovals: vi.fn(async () => []),
+    deleteBuildApproval: vi.fn(async () => null),
     findVendorApproval: vi.fn(async () => null),
     listVendorApprovals: vi.fn(async () => []),
     upsertVendorApproval: vi.fn(async (_db, _scope, input) => ({ ...vendorApproval, ...input })),
@@ -539,5 +543,21 @@ describe("withdrawVendorApproval", () => {
       vendorApproval,
     );
     expect(deps.deleteVendorApproval).toHaveBeenCalledWith(ctx.db, SCOPE, "hubspot");
+  });
+});
+
+describe("build approvals on the agent's page", () => {
+  it("lists the agent's rows through the scoped read", async () => {
+    const listing = { ...build, vendor: "hubspot", displayName: "HubSpot" };
+    const deps = fakeDeps({ listBuildApprovals: vi.fn(async () => [listing]) });
+    await expect(listBuildApprovals(ctx, SCOPE, deps)).resolves.toEqual([listing]);
+    expect(deps.listBuildApprovals).toHaveBeenCalledWith(ctx.db, SCOPE);
+  });
+
+  it("withdraws the agent's row for the connection, and answers null when none stood", async () => {
+    const deps = fakeDeps({ deleteBuildApproval: vi.fn(async () => build) });
+    await expect(withdrawBuildApproval(ctx, SCOPE, "conn_1", deps)).resolves.toEqual(build);
+    expect(deps.deleteBuildApproval).toHaveBeenCalledWith(ctx.db, SCOPE, "conn_1");
+    await expect(withdrawBuildApproval(ctx, SCOPE, "conn_1", fakeDeps())).resolves.toBeNull();
   });
 });

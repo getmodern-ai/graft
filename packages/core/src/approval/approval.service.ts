@@ -1,4 +1,9 @@
-import type { ApprovalRow, BuildApprovalRow, VendorApprovalRow } from "@graft/db/repo/approval";
+import type {
+  ApprovalRow,
+  BuildApprovalListing,
+  BuildApprovalRow,
+  VendorApprovalRow,
+} from "@graft/db/repo/approval";
 import type { ApprovalDecision } from "@graft/db/schema/approval";
 
 import type { ServiceContext } from "../context";
@@ -321,6 +326,32 @@ export async function getBuildApproval(
   deps: ApprovalDeps,
 ): Promise<BuildApprovalRow | null> {
   return deps.findBuildApproval(ctx.db, scope, connectionId);
+}
+
+/**
+ * What the agent's page lists of the agent's build approvals: one row per connection `acquire` may
+ * work against without asking, with the integration it names (ADR 0008 as amended 2026-09-18).
+ */
+export async function listBuildApprovals(
+  ctx: ServiceContext,
+  scope: AgentScope,
+  deps: ApprovalDeps,
+): Promise<BuildApprovalListing[]> {
+  return deps.listBuildApprovals(ctx.db, scope);
+}
+
+/**
+ * Withdraw the agent's build approval for a connection, from the agent's page: the next `acquire`
+ * against it asks again, as if never granted. Tools already built are untouched; their own
+ * approvals are a separate answer. Null when none stood.
+ */
+export async function withdrawBuildApproval(
+  ctx: ServiceContext,
+  scope: AgentScope,
+  connectionId: string,
+  deps: ApprovalDeps,
+): Promise<BuildApprovalRow | null> {
+  return deps.deleteBuildApproval(ctx.db, scope, connectionId);
 }
 
 /**

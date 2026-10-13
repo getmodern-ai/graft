@@ -30,10 +30,12 @@ import {
   carryApprovalsToVersion,
   deleteApproval,
   deleteApprovalsForVendor,
+  deleteBuildApproval,
   deleteVendorApproval,
   deleteVendorApprovalsForVendor,
   findApproval,
   findVendorApproval,
+  listBuildApprovals,
   listVendorApprovals,
   updateAskEveryCall,
   upsertVendorApproval,
@@ -207,6 +209,27 @@ describe("agent-scoped reads take both ids of the scope in the statement", () =>
     expect(s.sql).toContain('"vendor_approval"."vendor" = $1');
     expect(s.sql).toMatch(SCOPED_AGENT);
     expect(s.params).toEqual(["hubspot", "agent_1", "person_1"]);
+  });
+
+  /** ADR 0008 as amended 2026-09-18 (GRA-295): the agent's page lists and withdraws build approvals. */
+  it("the agent's build approvals, each joined to the person's own connection", async () => {
+    await listBuildApprovals(db, SCOPE);
+    const s = only();
+    expect(s.sql).toMatch(/^select .* from "build_approval" inner join "connection" on/);
+    expect(s.sql).toContain(
+      '("connection"."id" = "build_approval"."connection_id" and "connection"."person_id" = $1)',
+    );
+    expect(s.sql).toMatch(SCOPED_AGENT);
+    expect(s.params).toEqual(["person_1", "agent_1", "person_1"]);
+  });
+
+  it("withdrawing a build approval", async () => {
+    await deleteBuildApproval(db, SCOPE, "conn_1");
+    const s = only();
+    expect(s.sql).toMatch(/^delete from "build_approval"/);
+    expect(s.sql).toContain('"build_approval"."connection_id" = $1');
+    expect(s.sql).toMatch(SCOPED_AGENT);
+    expect(s.params).toEqual(["conn_1", "agent_1", "person_1"]);
   });
 
   /**

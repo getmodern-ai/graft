@@ -90,10 +90,12 @@ export {
   grantBuildApproval,
   isForVersion,
   listApprovals,
+  listBuildApprovals,
   listVendorApprovals,
   revokeApproval,
   setApproval,
   setAskEveryCall,
+  withdrawBuildApproval,
   withdrawVendorApproval,
 } from "./approval/approval.service";
 export {
