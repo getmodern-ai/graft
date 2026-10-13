@@ -1,4 +1,5 @@
-import type { SocialProviderName } from "@graft/auth";
+import type { SetFirstPasswordOutcome, SocialProviderName } from "@graft/auth";
+import { MAX_PASSWORD_LENGTH, MIN_PASSWORD_LENGTH } from "@graft/auth/password.rules";
 import {
   type AgentDeps,
   type ApprovalDeps,
@@ -208,7 +209,19 @@ export type { AgentToolRunOutput } from "./tool-run";
 export type AuthHandle = {
   handler: (request: Request) => Promise<Response>;
   getSession: (headers: Headers) => Promise<SessionLike>;
+  /**
+   * `@graft/auth`'s `setFirstPassword` over the session's headers (GRA-298), behind
+   * `POST /me/password`. Optional so a harness that never sets a password binds nothing; absent,
+   * the route refuses saying so.
+   */
+  setFirstPassword?: (headers: Headers, newPassword: string) => Promise<SetFirstPasswordOutcome>;
 };
+
+/** `POST /me/password`'s body: the new password, held to Better Auth's lengths (GRA-298). */
+const setPasswordBody = z.object({
+  newPassword: z.string().min(MIN_PASSWORD_LENGTH).max(MAX_PASSWORD_LENGTH),
+});
+export type SetPasswordBody = z.input<typeof setPasswordBody>;
 
 /**
  * How a person may sign in at this deployment (GRA-81): email and password always, and the
@@ -997,6 +1010,29 @@ export function createApi(options: ApiOptions): Hono {
   api.delete("/me/model-key", async (c) => {
     const principal = await principalOf(c.req.raw.headers);
     return c.json({ deleted: await deletePersonModelKey(ctx, principal, modelKeyDeps) });
+  });
+
+  /**
+   * A first password for a person who signed up with Google or GitHub (GRA-298; ADR 0020), so the
+   * email door opens for them too. Better Auth keeps this server-only, so it is here, behind the
+   * session and the origin check; a person who already holds a password is refused 409 and changes
+   * it at Better Auth's own `/change-password` with the current one. The lengths are checked
+   * before Better Auth is asked, so the refusal is this API's shape.
+   */
+  api.post("/me/password", async (c) => {
+    await principalOf(c.req.raw.headers);
+    const body = await parseBody(c.req.raw, setPasswordBody);
+    if (!options.auth.setFirstPassword) {
+      throw new ServiceError("BAD_REQUEST", "This server cannot set a password");
+    }
+    const outcome = await options.auth.setFirstPassword(c.req.raw.headers, body.newPassword);
+    if (outcome === "password_exists") {
+      throw new ServiceError(
+        "CONFLICT",
+        "You already have a password. Change it with your current one instead.",
+      );
+    }
+    return c.json({ set: true });
   });
 
   /**

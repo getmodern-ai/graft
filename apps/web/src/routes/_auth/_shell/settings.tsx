@@ -8,13 +8,17 @@ import {
   PageHeaderTitle,
 } from "@/components/page/page-header";
 import { ModelKeySettings } from "@/components/settings/model-key-settings";
+import { PasswordRow } from "@/components/settings/password-row";
+import { SettingsCard, SettingsRowGroup } from "@/components/settings/settings-card";
+import { SettingsSection } from "@/components/settings/settings-section";
 import { useScreenTitle } from "@/components/shell/screen-title";
 import { modelKeyQuery } from "@/lib/model-key-queries";
 
 /**
- * The person's settings — one section today, the model key (ADR 0014), in Cando's settings row
- * family (GRA-47). Anything a person sets about themselves rather than about an agent or a
- * connection goes here, as another `SettingsSection` under the same header.
+ * The person's settings — the account (how they sign in; GRA-298's password row) and the model key
+ * (ADR 0014), in Cando's settings row family (GRA-47). Anything a person sets about themselves
+ * rather than about an agent or a connection goes here, as another `SettingsSection` under the
+ * same header; another way of signing in is another row in Account's group.
  *
  * The header stays where Cando's settings shell puts its section title, in the page, because the
  * console has one settings screen and no settings sidebar to carry the navigation instead.
@@ -28,16 +32,24 @@ function SettingsRoute() {
   useScreenTitle("Settings");
 
   return (
-    // `gap-6`: a header over one region, and the 24px Cando's settings column puts between sections.
+    // `gap-6`: a header over its sections, and the 24px Cando's settings column puts between sections.
     <PageContainer size="medium" className="gap-6">
       <PageHeader>
         <PageHeaderContent>
           <PageHeaderTitle>Settings</PageHeaderTitle>
           <PageHeaderDescription>
-            What is yours across every agent: the model your acquire jobs run on.
+            What is yours across every agent: how you sign in, and the model your acquire jobs run
+            on.
           </PageHeaderDescription>
         </PageHeaderContent>
       </PageHeader>
+      <SettingsSection heading="Account">
+        <SettingsCard>
+          <SettingsRowGroup>
+            <PasswordRow />
+          </SettingsRowGroup>
+        </SettingsCard>
+      </SettingsSection>
       <ModelKeySettings />
     </PageContainer>
   );

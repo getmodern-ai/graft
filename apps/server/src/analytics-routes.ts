@@ -54,6 +54,7 @@ export const TRACKED_ROUTES: ReadonlyArray<TrackedRoute> = [
   { method: "POST", path: /^\/pending-actions\/[^/]+\/answer$/, event: "approval_answered" },
   { method: "PUT", path: /^\/me\/model-key$/, event: "model_key_set" },
   { method: "DELETE", path: /^\/me\/model-key$/, event: "model_key_removed" },
+  { method: "POST", path: /^\/me\/password$/, event: "password_set" },
   {
     method: "POST",
     path: /^\/setup\/start$/,

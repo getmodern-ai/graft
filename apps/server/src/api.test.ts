@@ -2460,3 +2460,73 @@ describe("the public setup prompt", () => {
     expect((await app.request("/api/setup-prompt?harness=claude")).status).toBe(404);
   });
 });
+
+/**
+ * `POST /me/password` (GRA-298): a first password for a social-only account, never one set over an
+ * existing password. The fake stands in for `@graft/auth`'s `setFirstPassword` with Better Auth's
+ * rule, a person who holds a password answered `password_exists`; the Postgres suite drives the
+ * real one.
+ */
+describe("setting a first password", () => {
+  const passwordHarness = (personId: string, holdsPassword: Set<string>) => {
+    const setFirstPassword = vi.fn(async (_headers: Headers, _newPassword: string) => {
+      if (holdsPassword.has(personId)) return "password_exists" as const;
+      holdsPassword.add(personId);
+      return "set" as const;
+    });
+    const session = { user: { id: personId } };
+    const { app } = harness(session, {
+      auth: {
+        handler: async () => new Response("auth", { status: 200 }),
+        getSession: async () => session,
+        setFirstPassword,
+      },
+    });
+    return { app, setFirstPassword };
+  };
+
+  it("sets one for an account that signed up with a provider and has none", async () => {
+    const holds = new Set<string>();
+    const { app, setFirstPassword } = passwordHarness("person_social", holds);
+    const res = await app.request("/api/me/password", json({ newPassword: "long-enough-pw" }));
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ set: true });
+    expect(setFirstPassword).toHaveBeenCalledWith(expect.any(Headers), "long-enough-pw");
+    expect(holds.has("person_social")).toBe(true);
+  });
+
+  it("refuses 409 for an account that already holds a password, and changes nothing", async () => {
+    const holds = new Set(["person_pw"]);
+    const { app } = passwordHarness("person_pw", holds);
+    const res = await app.request("/api/me/password", json({ newPassword: "long-enough-pw" }));
+    expect(res.status).toBe(409);
+    expect(await res.json()).toMatchObject({
+      error: "CONFLICT",
+      message: expect.stringContaining("already have a password"),
+    });
+  });
+
+  it("refuses a password outside Better Auth's lengths before asking it", async () => {
+    const { app, setFirstPassword } = passwordHarness("person_social", new Set());
+    const short = await app.request("/api/me/password", json({ newPassword: "short" }));
+    expect(short.status).toBe(400);
+    const long = await app.request("/api/me/password", json({ newPassword: "x".repeat(129) }));
+    expect(long.status).toBe(400);
+    expect(setFirstPassword).not.toHaveBeenCalled();
+  });
+
+  it("needs a session and the console's origin", async () => {
+    const signedOut = harness(null).app;
+    expect(
+      (await signedOut.request("/api/me/password", json({ newPassword: "long-enough-pw" }))).status,
+    ).toBe(401);
+    const { app, setFirstPassword } = passwordHarness("person_social", new Set());
+    const foreign = await app.request("/api/me/password", {
+      method: "POST",
+      headers: { "content-type": "application/json", origin: "https://evil.example" },
+      body: JSON.stringify({ newPassword: "long-enough-pw" }),
+    });
+    expect(foreign.status).toBe(403);
+    expect(setFirstPassword).not.toHaveBeenCalled();
+  });
+});

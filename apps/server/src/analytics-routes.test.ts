@@ -11,6 +11,7 @@ describe("routeEvent", () => {
     expect(routeEvent("POST", "/api/pending-actions/pa_1/answer?x=1")).toBe("approval_answered");
     expect(routeEvent("PUT", "/api/me/model-key")).toBe("model_key_set");
     expect(routeEvent("DELETE", "/api/me/model-key")).toBe("model_key_removed");
+    expect(routeEvent("POST", "/api/me/password")).toBe("password_set");
     expect(routeEvent("POST", "/api/mcp-oauth/consent")).toBe("mcp_client_consented");
     expect(routeEvent("POST", "/api/setup/start")).toBe("setup_started");
     expect(routeEvent("POST", "/api/setup/skip")).toBe("setup_skipped");

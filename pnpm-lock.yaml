@@ -253,6 +253,9 @@ importers:
       '@base-ui/react':
         specifier: 'catalog:'
         version: 1.8.0(@types/react@19.3.0)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
+      '@graft/auth':
+        specifier: workspace:*
+        version: link:../../packages/auth
       '@graft/core':
         specifier: workspace:*
         version: link:../../packages/core
@@ -290,9 +293,6 @@ importers:
         specifier: 'catalog:'
         version: 3.7.0
     devDependencies:
-      '@graft/auth':
-        specifier: workspace:*
-        version: link:../../packages/auth
       '@graft/config':
         specifier: workspace:*
         version: link:../../packages/config
