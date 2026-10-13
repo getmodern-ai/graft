@@ -29,9 +29,10 @@ https://your-graft.example/mcp
 ```
 
 The product discovers Graft's own authorization server from that endpoint, registers itself, and
-sends you to the console to consent. The consent mints the agent the connector will be, reaching
-every connection of yours unless you narrow it to a list (ADR 0018, ADR 0007). Revoking that agent
-ends it.
+sends you to the console to consent. The consent mints the agent the connector will be, or hands
+it the agent Setup minted for it, and you choose what it reaches: every connection of yours, the
+default for Claude and ChatGPT, or a list. A client Graft does not vouch for starts with nothing
+ticked, so pick there before you finish (ADR 0018, ADR 0007). Revoking that agent ends it.
 
 **Hermes, OpenClaw and any other MCP client** carry a per-agent bearer token instead, minted in the
 console and shown once. Hermes takes it under `mcp_servers` in `~/.hermes/config.yaml`, OpenClaw
@@ -115,9 +116,10 @@ agent's **working set**: bounded by a cap and an idle window, and shared with no
   reconnected account is followed without a rebuild.
 - **A file moves between tools as a blob, never through the model** (ADR 0023). A tool that
   downloads an attachment writes it with `ctx.blob.write` and answers `blob://<id>`; the next tool
-  reads the ref with `ctx.blob.read`. The ref is the whole of what the model, the harness or you
-  ever see of the bytes. A blob is the agent's own, lives 24 hours, and is the one thing the system
-  deletes.
+  reads the ref with `ctx.blob.read`. The ref is what travels in results and inputs, so the bytes
+  go from tool to tool and not through a model turn; that is the pattern the authoring skill
+  teaches and the eval's blob scenario checks, not a filter on what a tool may return. A blob is
+  the agent's own, lives 24 hours, and is the one thing the system deletes.
 
 ## What an acquisition does
 
@@ -419,6 +421,7 @@ this repository. The licensing decision record under [`docs/adr/`](docs/adr) say
 
 ## Listings
 
-Graft's MCP server is listed on M8ven, a trust index that grades a server on its code, how far it has been verified and its reputation.
+Graft's MCP server is listed on M8ven, a trust index that grades a server on its code, how far
+it has been verified and its reputation.
 
 [![M8ven Score](https://m8ven.ai/badge/mcp/getmodern-ai-graft-17dvr6?v=a59a00705afc5d3edd3a6e225d470821)](https://m8ven.ai/mcp/getmodern-ai-graft-17dvr6?s=readme)
