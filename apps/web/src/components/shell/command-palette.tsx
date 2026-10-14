@@ -20,12 +20,12 @@ import {
   NAVIGATION_ITEMS,
   type PaletteItem,
 } from "@/lib/command-palette";
-import { NAV_ITEMS } from "@/lib/main-sidebar-nav-items";
+import { SCREEN_NAV_ITEMS } from "@/lib/main-sidebar-nav-items";
 
 /**
  * The command palette: ⌘K (Ctrl+K) from anywhere in the shell, or the sidebar's Search row, opens
  * a centred dialog of grouped rows; the arrow keys move, Enter opens, Escape closes (the Figma
- * "App v2" Search frames, GRA-289). Today it lists the four screens the sidebar names; the Search
+ * "App v2" Search frames, GRA-289). Today it lists the screens the sidebar names; the Search
  * ticket adds rows through `lib/command-palette.ts`, which owns the filter and the grouping.
  *
  * The open state is a context rather than Base UI's detached-trigger handle, so nothing outside
@@ -80,7 +80,7 @@ export function CommandPaletteTrigger() {
   );
 }
 
-const SCREEN_ICONS = new Map(NAV_ITEMS.map((item) => [item.to, item.icon]));
+const SCREEN_ICONS = new Map(SCREEN_NAV_ITEMS.map((item) => [item.to, item.icon]));
 
 export function CommandPalette() {
   const open = React.useContext(OpenContext);
