@@ -57,6 +57,8 @@ export const TRACKED_ROUTES: ReadonlyArray<TrackedRoute> = [
   { method: "POST", path: /^\/agents$/, event: "agent_created" },
   { method: "POST", path: /^\/agents\/[^/]+\/revoke$/, event: "agent_revoked" },
   { method: "PUT", path: /^\/agents\/[^/]+\/scope$/, event: "scope_changed" },
+  { method: "PUT", path: /^\/connections\/[^/]+\/agents\/[^/]+$/, event: "scope_changed" },
+  { method: "DELETE", path: /^\/connections\/[^/]+\/agents\/[^/]+$/, event: "scope_changed" },
   { method: "POST", path: /^\/mcp-oauth\/consent$/, event: "mcp_client_consented" },
   { method: "POST", path: /^\/connections$/, event: "connection_created" },
   // The console connect (GRA-304): what the answer said to do next and the access chosen.

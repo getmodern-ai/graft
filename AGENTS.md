@@ -623,7 +623,14 @@ the mode, and `listAgentIdsForConnection` — the agents a revoke announces to �
 usable row in scope and answers `connected`. The console draws the mode as a `Select` — `All
 connections` first, `Selected connections` revealing the picker — through `components/agent/scope-mode-field.tsx`
 in the create dialog and the consent card; the labels and the write's body are
-`src/lib/scope-mode.ts`, tested.
+`src/lib/scope-mode.ts`, tested. **One connection is turned on or off for one agent by its own
+write** (GRA-294): `PUT` and `DELETE /api/connections/:id/agents/:agentId` are
+`addConnectionToAgentScope` and `removeConnectionFromAgentScope`, each under the agent's row lock in
+one transaction, answering `AgentScopeToggleOutput`; a removal from an agent on `all` materialises
+`listed` without that connection, so later connections stop arriving, and answers `materialised:
+true`. Every scope write but a grant to an agent on `all` tells the agent's session after the
+commit. The agent page's switches are `src/lib/scope-toggles.ts` (`turnLater`, `turnConnection`),
+tested against the server's model.
 
 **A tool follows its vendor's reconnected connection** (GRA-122; ADR 0007 as amended 2026-09-20).
 `authored_tool.default_connection_id` is the row the tool was authored against, and a run resolves
@@ -1538,8 +1545,11 @@ recent calls are a disclosure in the body, not the banded `CardFooter`. A notice
 an `Alert`; a labelled control with a sentence beside it is an `Item` (`components/ui/item.tsx`,
 ported with the rest); nothing draws its own `rounded-* border` frame. The settings screen is
 Cando's row family, ported to `components/settings/` — `SettingsSection` (an `h2`), `SettingsCard`,
-`SettingsRowGroup` with inset dividers, and the `SettingsRow` variants — with one section, Model,
-carrying the key's behaviour as rows. A failed **query** toasts once with a working Retry
+`SettingsRowGroup` with inset dividers, and the `SettingsRow` variants — with one section, Building tools:
+the Model row, which `GET /api/me/model` and `lib/model-status.ts` decide (GRA-297: the
+deployment's model *Included*, *Your key*, *Needs a key* under the hosted form with no fixed
+model, *Not configured* under the open form with none, where a key would not be routed), above
+the key's behaviour as rows. A failed **query** toasts once with a working Retry
 (`lib/query-error-retry.ts`, keyed to the query hash so a second failure replaces rather than
 stacks, dismissed on the next success) beside the mutation toast; a read that fails before a screen
 draws toasts *and* shows the route boundary, as Cando's does. A screen-level empty is the `Empty`
