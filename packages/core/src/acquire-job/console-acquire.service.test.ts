@@ -83,7 +83,11 @@ function world(
       findAgentForUpdate: vi.fn(async () => agentRow),
       listScopeConnectionIds: vi.fn(async () => options.scope ?? ["conn_1"]),
     },
-    connection: { findConnection, providers: DEFAULT_PROVIDERS },
+    connection: {
+      findConnection,
+      findConnectionForUpdate: vi.fn(async () => connectionRow),
+      providers: DEFAULT_PROVIDERS,
+    },
     approval: {
       findConnection,
       insertBuildApproval: vi.fn(async (_db: unknown, row: Record<string, unknown>) => {
@@ -130,6 +134,13 @@ describe("startConsoleAcquire", () => {
       }),
     ]);
     expect(w.deps.agent.findAgentForUpdate).toHaveBeenCalledWith(fakeDb, "person_1", "agent_1");
+    // The connection is read locked, so a revoke deleting build approvals cannot interleave
+    // between the read and the grant (Greptile on #237).
+    expect(w.deps.connection.findConnectionForUpdate).toHaveBeenCalledWith(
+      fakeDb,
+      "person_1",
+      "conn_1",
+    );
   });
 
   it("is not found for an agent or a connection that is not the person's", async () => {

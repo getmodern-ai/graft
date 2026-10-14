@@ -1312,7 +1312,8 @@ once; `components/setup/goal-suggestions.tsx` asks it after, keyed by the connec
 amended 2026-10-14; `apps/server/src/connection-acquire.ts`). `POST /api/connections/:id/acquire`
 (`ConnectionAcquireBody`: `{ agentId, goal }`) is `@graft/core`'s `startConsoleAcquire`, one
 transaction with no Setup record: the agent read locked (`findAgentForUpdate`; revoked is
-`agent_revoked`), the connection the person's, not revoked, usable and in the agent's scope
+`agent_revoked`), the connection read locked too (`findConnectionForUpdate`, so a revoke's
+deletion of build approvals cannot interleave), the person's, not revoked, usable and in the agent's scope
 (`connection_revoked`, `connection_unusable`, `connection_not_in_scope`), `grantBuildApproval`
 and `createAcquireJob` with Setup's first line and `setupBuildHints`; then the runner is kicked.
 It answers `ConnectionAcquireJob` (`acquire_status`'s shape plus `connectionId`, `agent`, `goal`,

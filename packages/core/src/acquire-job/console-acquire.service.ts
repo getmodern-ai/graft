@@ -32,7 +32,12 @@ export type StartConsoleAcquireInput = {
 export type ConsoleAcquireDeps = {
   /** The agent read locked, so a scope write or a revoke of it waits for the job (`findAgentForUpdate`). */
   agent: AgentDeps;
-  connection: Pick<ConnectionDeps, "findConnection" | "providers">;
+  /**
+   * The connection read locked (`findConnectionForUpdate`), so a revoke, which deletes the build
+   * approvals under the same lock (`revokeConnection`), waits for the grant and the job, or
+   * commits first and is read here as revoked.
+   */
+  connection: Pick<ConnectionDeps, "findConnection" | "findConnectionForUpdate" | "providers">;
   approval: ApprovalDeps;
   acquireJob: AcquireJobDeps;
 };
@@ -60,7 +65,7 @@ export async function startConsoleAcquire(
       });
     }
     const row = orNotFound(
-      await deps.connection.findConnection(tx, principal.personId, input.connectionId),
+      await deps.connection.findConnectionForUpdate(tx, principal.personId, input.connectionId),
       "Connection not found",
     );
     const connection = toConnectionOutput(row);
