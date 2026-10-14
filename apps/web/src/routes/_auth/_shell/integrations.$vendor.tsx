@@ -3,9 +3,11 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 
 import { PowerIcon } from "@/components/icons";
 import { ActivityTab } from "@/components/integration/activity-tab";
+import { AgentsTab } from "@/components/integration/agents-tab";
 import { ConnectionTab } from "@/components/integration/connection-tab";
 import { IntegrationHeader } from "@/components/integration/integration-header";
 import { IntegrationTabs } from "@/components/integration/integration-tabs";
+import { ToolsTab } from "@/components/integration/tools-tab";
 import { PageContainer } from "@/components/page/page-container";
 import { PageNavBreadcrumb } from "@/components/page/page-nav-breadcrumb";
 import { useScreenTitle } from "@/components/shell/screen-title";
@@ -22,7 +24,6 @@ import { connectionsQuery, toolsQuery } from "@/lib/connection-queries";
 import { readActivityFilters } from "@/lib/integration-activity";
 import {
   DEFAULT_INTEGRATION_TAB,
-  type IntegrationTab,
   integrationPageOf,
   readIntegrationSearch,
 } from "@/lib/integration-page";
@@ -49,12 +50,6 @@ export const Route = createFileRoute("/_auth/_shell/integrations/$vendor")({
     ]),
   component: IntegrationRoute,
 });
-
-const PLACEHOLDERS: Record<Exclude<IntegrationTab, "connection">, (name: string) => string> = {
-  tools: (name) => `The tools your agents use with ${name} will be listed here.`,
-  agents: (name) => `Which agents can use ${name}, and what each may run without asking.`,
-  activity: (name) => `Every call your agents made to ${name} will be listed here.`,
-};
 
 function IntegrationRoute() {
   const { vendor } = Route.useParams();
@@ -113,7 +108,19 @@ function IntegrationRoute() {
       />
       {tab === "connection" ? (
         <ConnectionTab connections={page.connections} integrationName={page.displayName} />
-      ) : tab === "activity" ? (
+      ) : tab === "agents" ? (
+        <AgentsTab
+          vendor={page.vendor}
+          integrationName={page.displayName}
+          connections={page.connections.filter((connection) => connection.state !== "revoked")}
+        />
+      ) : tab === "tools" ? (
+        <ToolsTab
+          vendor={page.vendor}
+          integrationName={page.displayName}
+          connections={page.connections}
+        />
+      ) : (
         <ActivityTab
           vendor={page.vendor}
           integrationName={page.displayName}
@@ -125,8 +132,6 @@ function IntegrationRoute() {
             })
           }
         />
-      ) : (
-        <p className="text-muted-foreground text-sm">{PLACEHOLDERS[tab](page.displayName)}</p>
       )}
     </PageContainer>
   );

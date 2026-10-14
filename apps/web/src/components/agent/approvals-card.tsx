@@ -20,6 +20,7 @@ import {
   withdrawApproval,
 } from "@/lib/approval-queries";
 import { toolsQuery } from "@/lib/connection-queries";
+import { activityKeys } from "@/lib/integration-activity";
 import { APPROVAL_DECISION_CHIP } from "@/lib/status-chips";
 
 const COLUMNS = 5;
@@ -47,8 +48,12 @@ export function ApprovalsCard({ agent }: { agent: Agent }) {
   const approvals = useQuery(approvalsQuery(agent.id));
   const toolbox = useQuery(toolsQuery);
   const toolsById = new Map((toolbox.data?.tools ?? []).map((tool) => [tool.id, tool]));
+  // The activity reads a tool's standing answer as a row (GRA-308), so a write here moves it too.
   const invalidate = () =>
-    queryClient.invalidateQueries({ queryKey: approvalKeys.ofAgent(agent.id) });
+    Promise.all([
+      queryClient.invalidateQueries({ queryKey: approvalKeys.ofAgent(agent.id) }),
+      queryClient.invalidateQueries({ queryKey: activityKeys.all }),
+    ]);
 
   const askEveryCall = useMutation({
     mutationFn: ({ toolId, on }: { toolId: string; on: boolean }) =>

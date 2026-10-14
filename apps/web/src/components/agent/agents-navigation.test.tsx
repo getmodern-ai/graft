@@ -140,6 +140,16 @@ beforeEach(() => {
           changes: [{ id: "change_1", change: "promote", cause: "agent", createdAt: at, tool }],
         });
       }
+      if (url === "/api/vendor-approvals?agentId=agent_1") {
+        return Response.json({ vendorApprovals: [] });
+      }
+      if (url === "/api/agents/agent_1/build-approvals") {
+        return Response.json({ buildApprovals: [] });
+      }
+      if (url === "/api/connections/conn_2/agents/agent_1" && method === "PUT") {
+        scope = [...scope, "conn_2"];
+        return Response.json({ agent: current, connectionIds: scope, materialised: false });
+      }
       if (url === "/api/agents/agent_1/scope" && method === "PUT") {
         scope = body.connectionIds;
         return Response.json({ agent: current, connectionIds: scope });
@@ -207,6 +217,16 @@ function control(label: string, within: ParentNode = document): HTMLElement {
   return result;
 }
 
+/** A switch named by the visible text its `aria-labelledby` points at, as `SettingsToggleRow` wires it. */
+function labelledSwitch(label: string): HTMLElement {
+  const result = [...document.querySelectorAll<HTMLElement>("[role=switch]")].find(
+    (element) =>
+      document.getElementById(element.getAttribute("aria-labelledby") ?? "")?.textContent === label,
+  );
+  if (!result) throw new Error(`Missing switch: ${label}`);
+  return result;
+}
+
 async function click(label: string, within: ParentNode = document) {
   await act(async () => control(label, within).click());
 }
@@ -217,10 +237,12 @@ describe("standalone agent management", () => {
     await waitFor(() => expect(document.body.textContent).toContain("Laptop"));
     expect(control("Laptop").getAttribute("href")).toBe("/agents/agent_1");
     await click("Laptop");
-    await waitFor(() => expect(document.getElementById("limits-name")).not.toBeNull());
+    await waitFor(() => expect(document.body.textContent).toContain("Integrations Laptop can use"));
     expect(router.state.location.pathname).toBe("/agents/agent_1");
     for (const label of [
-      "Scope",
+      "Give Laptop integrations I connect later",
+      "Advanced",
+      "Answers and tools",
       "Working set",
       "Approvals",
       "History",
@@ -235,21 +257,33 @@ describe("standalone agent management", () => {
     await act(async () => router.history.back());
     await waitFor(() => expect(document.getElementById("new-agent")).not.toBeNull());
     await act(async () => router.history.forward());
-    await waitFor(() => expect(document.getElementById("limits-name")).not.toBeNull());
+    await waitFor(() => expect(document.body.textContent).toContain("Integrations Laptop can use"));
   });
 
   it("keeps scope, approval controls and revocation reachable on a direct visit", async () => {
     const router = await mount("/agents/agent_1");
-    await waitFor(() => expect(document.getElementById("scope-conn_2")).not.toBeNull());
-    await act(async () => document.getElementById("scope-conn_2")?.click());
-    await click("Save scope");
+    // One switch per connection, each one write through GRA-294's route (GRA-326).
+    await waitFor(() => expect(control("Laptop can use Personal account")).toBeTruthy());
+    expect(control("Laptop can use Personal account").getAttribute("aria-checked")).toBe("false");
+    await click("Laptop can use Personal account");
     await waitFor(() =>
       expect(requests).toContainEqual({
-        url: "/api/agents/agent_1/scope",
+        url: "/api/connections/conn_2/agents/agent_1",
         method: "PUT",
-        body: { mode: "listed", connectionIds: ["conn_1", "conn_2"] },
+        body: undefined,
       }),
     );
+    await waitFor(() =>
+      expect(control("Laptop can use Personal account").getAttribute("aria-checked")).toBe("true"),
+    );
+    // The later switch is off under `listed`.
+    expect(
+      labelledSwitch("Give Laptop integrations I connect later").getAttribute("aria-checked"),
+    ).toBe("false");
+    await click("Edit");
+    await waitFor(() => expect(document.getElementById("limits-name")).not.toBeNull());
+    await click("Cancel");
+    await waitFor(() => expect(document.getElementById("limits-name")).toBeNull());
     await click("Ask every time for example__create-item");
     await waitFor(() =>
       expect(requests).toContainEqual({
@@ -261,13 +295,14 @@ describe("standalone agent management", () => {
     await waitFor(() => expect((control("Withdraw") as HTMLButtonElement).disabled).toBe(false));
     await click("Withdraw");
     await waitFor(() => expect(document.body.textContent).toContain("Nothing answered yet."));
-    await click("Revoke token");
+    await click("Revoke");
     const confirmation = document.querySelector("[role=alertdialog]");
     if (!confirmation) throw new Error("Missing revocation confirmation");
     await click("Revoke token", confirmation);
     await waitFor(() =>
-      expect((document.getElementById("limits-name") as HTMLInputElement)?.disabled).toBe(true),
+      expect(control("Laptop can use Work account").hasAttribute("data-disabled")).toBe(true),
     );
+    expect(document.body.textContent).not.toContain("Revoke this agent");
     expect(requests).toContainEqual({
       url: "/api/agents/agent_1/revoke",
       method: "POST",
@@ -286,23 +321,20 @@ describe("standalone agent management", () => {
     await waitFor(() => expect(document.body.textContent).toContain("Laptop"));
     await click("Actions for Laptop");
     await click("View agent");
-    await waitFor(() => expect(document.getElementById("limits-name")).not.toBeNull());
+    await waitFor(() => expect(document.body.textContent).toContain("Integrations Laptop can use"));
     expect(document.body.textContent).toContain("Work account");
     expect(document.body.textContent).toContain("example__create-item");
     expect(document.body.textContent).toContain("The agent asked");
-    for (const id of [
-      "limits-name",
-      "limits-cap",
-      "limits-idle",
-      "scope-mode",
-      "scope-conn_1",
-      "scope-conn_2",
-    ]) {
-      expect(document.getElementById(id)?.hasAttribute("disabled")).toBe(true);
+    for (const label of ["Laptop can use Work account", "Laptop can use Personal account"]) {
+      expect(control(label).hasAttribute("data-disabled")).toBe(true);
     }
+    expect(
+      labelledSwitch("Give Laptop integrations I connect later").hasAttribute("data-disabled"),
+    ).toBe(true);
     expect((control("Withdraw") as HTMLButtonElement).disabled).toBe(true);
-    expect(document.body.textContent).not.toContain("Revoke token");
-    expect(document.body.textContent).not.toContain("Save scope");
+    expect(document.body.textContent).not.toContain("Revoke this agent");
+    expect(document.body.textContent).not.toContain("Rotate token");
+    expect(() => control("Edit")).toThrow();
   });
 
   it("keeps a missing or foreign agent on its error page instead of redirecting to the table", async () => {

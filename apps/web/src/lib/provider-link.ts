@@ -45,14 +45,20 @@ export function startProviderLink(actionId: string, input: LinkStartBody) {
 export type LinkOutcome = LinkCallbackMessage["status"] | "stopped" | "expired";
 
 /**
+ * Which link a waiting page is waiting on: an ask's, by its id, or the console connect's (GRA-304;
+ * ADR 0006 as amended 2026-10-14), by the record's `connectId`, since that link answers no ask.
+ */
+export type LinkMatch = string | { connectId: string };
+
+/**
  * The callback route's message, when `event` is one — from the console's own origin, of the shape
- * the route posts, and about the ask in question. Pure, so the filter has a test; anything else is
- * null.
+ * the route posts, and about the ask (or the console connect) in question. Pure, so the filter has
+ * a test; anything else is null.
  */
 export function readLinkMessage(
   event: { origin: string; data: unknown },
   allowedOrigin: string,
-  pendingActionId: string,
+  match: LinkMatch,
 ): LinkCallbackMessage | null {
   if (event.origin !== allowedOrigin) return null;
   const data = event.data;
@@ -60,14 +66,18 @@ export function readLinkMessage(
   const message = data as Partial<LinkCallbackMessage>;
   if (message.type !== LINK_CALLBACK_MESSAGE_TYPE) return null;
   if (!["connected", "declined", "failed"].includes(String(message.status))) return null;
-  if (message.pendingActionId !== pendingActionId) return null;
-  return {
+  const read: Omit<LinkCallbackMessage, "pendingActionId" | "connectId"> = {
     type: LINK_CALLBACK_MESSAGE_TYPE,
     status: message.status as LinkCallbackMessage["status"],
-    pendingActionId,
     connectionId: typeof message.connectionId === "string" ? message.connectionId : null,
     message: typeof message.message === "string" ? message.message : "",
   };
+  if (typeof match === "string") {
+    return message.pendingActionId === match ? { ...read, pendingActionId: match } : null;
+  }
+  // A console connect's message carries no ask; one that names an ask is some other page's.
+  if (message.connectId !== match.connectId || message.pendingActionId) return null;
+  return { ...read, pendingActionId: null, connectId: match.connectId };
 }
 
 /** How often the ask is read while the link runs. */
@@ -103,7 +113,8 @@ export function linkOutcomeOf(read: Extract<LinkSettled, { settled: true }>): {
  */
 export function awaitLink(args: {
   popup: Window;
-  pendingActionId: string;
+  /** The ask's id, or the console connect's record (`{ connectId }`). */
+  match: LinkMatch;
   isSettled: () => Promise<LinkSettled>;
   signal?: AbortSignal;
   deadlineMs?: number;
@@ -128,14 +139,14 @@ export function awaitLink(args: {
       resolve({ outcome, message, connectionId });
     };
     const onMessage = (event: MessageEvent) => {
-      const message = readLinkMessage(event, origin, args.pendingActionId);
+      const message = readLinkMessage(event, origin, args.match);
       if (message) settle(message.status, message.message, message.connectionId);
     };
     const onChannel = (event: MessageEvent) => {
       const message = readLinkMessage(
         { origin: event.origin || origin, data: event.data },
         origin,
-        args.pendingActionId,
+        args.match,
       );
       if (message) settle(message.status, message.message, message.connectionId);
     };

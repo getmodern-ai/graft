@@ -70,6 +70,12 @@ export const AWAITING_RECONNECTION_CHIP: StatusChip = {
 };
 
 /**
+ * On an agent page's integration row whose connection needs the person (GRA-326): the destructive
+ * tone, since its tools will not run until they act, and the act itself as the words (GRA-282).
+ */
+export const RECONNECT_CHIP: StatusChip = { variant: "destructive", label: "Reconnect" };
+
+/**
  * The chips a connection's card wears for its status — one, or two for a revoked connection, whose
  * second chip is the way back (`AWAITING_RECONNECTION_CHIP`).
  */
@@ -155,6 +161,20 @@ export const APPROVAL_DECISION_CHIP = {
   allow: { variant: "success", label: "Allowed" },
   deny: { variant: "destructive", label: "Denied" },
 } as const satisfies Record<Approval["decision"], StatusChip>;
+
+/**
+ * An answer as the integration page's *Your answers* lists it (GRA-318): `success` where the agent
+ * runs without asking, `destructive` for a refusal, `secondary` for a tool set to ask every time,
+ * the person's own choice and not a fault, and `outline` for an allow given for an earlier
+ * version, which waits on the next call's ask (GRA-245).
+ */
+export const ANSWER_CHIP = {
+  always: { variant: "success", label: "Always allowed" },
+  allowed: { variant: "success", label: "Allowed" },
+  ask_every_time: { variant: "secondary", label: "Asks every time" },
+  denied: { variant: "destructive", label: "Denied" },
+  asks_next_time: { variant: "outline", label: "Asks next time" },
+} as const satisfies Record<string, StatusChip>;
 
 /**
  * Whether destructive tools pass under an integration's standing approval (GRA-237; ADR 0008 as
