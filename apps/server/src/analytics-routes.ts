@@ -42,6 +42,17 @@ export function setupStepProperties(step: string): (answer: unknown) => Analytic
   return (answer) => ({ step, ...setupHarnessProperty(answer) });
 }
 
+/** The console connect's answer (`ConsoleConnectResult`): its kind and access, and whether it made a row. */
+export function connectProperties(answer: unknown): AnalyticsProperties {
+  const said =
+    typeof answer === "object" && answer !== null ? (answer as Record<string, unknown>) : {};
+  return {
+    kind: typeof said.kind === "string" ? said.kind : null,
+    access: typeof said.access === "string" ? said.access : null,
+    created: said.created === true,
+  };
+}
+
 /** The job and its agent on a console Create's answer (`ConnectionAcquireJob`), or null for none. */
 export function acquireStartedProperties(answer: unknown): AnalyticsProperties {
   const job =
@@ -65,6 +76,13 @@ export const TRACKED_ROUTES: ReadonlyArray<TrackedRoute> = [
   { method: "DELETE", path: /^\/connections\/[^/]+\/agents\/[^/]+$/, event: "scope_changed" },
   { method: "POST", path: /^\/mcp-oauth\/consent$/, event: "mcp_client_consented" },
   { method: "POST", path: /^\/connections$/, event: "connection_created" },
+  // The console connect (GRA-304): what the answer said to do next and the access chosen.
+  {
+    method: "POST",
+    path: /^\/connect$/,
+    event: "connection_started",
+    properties: connectProperties,
+  },
   { method: "POST", path: /^\/connections\/[^/]+\/revoke$/, event: "connection_revoked" },
   {
     // Create on an integration's page (GRA-303), the console's counterpart of Setup's Build row.

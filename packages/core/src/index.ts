@@ -258,10 +258,14 @@ export {
   readLinkCallbackSearch,
 } from "./connection/link.rules";
 export {
+  type ConsoleLinkStatePayload,
+  type ConsoleLinkStateVerdict,
   LINK_STATE_TTL_MS,
   type LinkStatePayload,
   type LinkStateVerdict,
+  signConsoleLinkState,
   signLinkState,
+  verifyConsoleLinkState,
   verifyLinkState,
 } from "./connection/link-state";
 export {

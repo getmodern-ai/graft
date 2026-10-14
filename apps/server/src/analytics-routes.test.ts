@@ -31,6 +31,22 @@ describe("routeEvent", () => {
     expect(trackedRoute("POST", "/api/agents")?.properties).toBeUndefined();
   });
 
+  it("counts the console connect with its answer's kind, access and whether it made a row (GRA-304)", () => {
+    const connect = trackedRoute("POST", "/api/connect");
+    expect(connect?.event).toBe("connection_started");
+    expect(connect?.properties?.({ kind: "link", access: "full", url: "https://x" })).toEqual({
+      kind: "link",
+      access: "full",
+      created: false,
+    });
+    expect(connect?.properties?.({ kind: "connected", access: "ask", created: true })).toEqual({
+      kind: "connected",
+      access: "ask",
+      created: true,
+    });
+    expect(connect?.properties?.(null)).toEqual({ kind: null, access: null, created: false });
+  });
+
   it("counts a console Create as acquire_started, with the job and the agent and never the goal", () => {
     const route = trackedRoute("POST", "/api/connections/conn_1/acquire");
     expect(route?.event).toBe("acquire_started");

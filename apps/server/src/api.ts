@@ -7,6 +7,7 @@ import {
   addConnectionToAgentScope,
   answerPendingAction,
   type ConnectionDeps,
+  type ConnectionOutput,
   createAgent,
   createIntegrationDeps,
   defaultAcquireJobDeps,
@@ -137,6 +138,7 @@ import {
   startConnectionAcquire,
 } from "./connection-acquire";
 import { createConnectionProposalStore } from "./connection-proposals";
+import { type ConsoleConnectDeps, connectFromConsole, recordFullAccess } from "./console-connect";
 import {
   createStarterDirectory,
   directoryProposal,
@@ -206,6 +208,11 @@ export type {
   ConnectionProposalStarted,
   ConnectionProposalState,
 } from "./connection-proposals";
+export type {
+  ConnectAccess,
+  ConsoleConnectProposal,
+  ConsoleConnectResult,
+} from "./console-connect";
 export type {
   SetupDirectoryEntry,
   SetupDirectoryHome,
@@ -683,10 +690,43 @@ const registrationBody = z.object({
   hosts: z.array(z.string()).optional(),
 });
 
+/** ADR 0008 as amended 2026-10-14: what the connect dialog's access choice records (`console-connect.ts`). */
+const connectAccess = z.enum(["full", "ask"]);
+
 const connectionBody = registrationBody.extend({
   /** With it, the connection is registered with its credential in one transaction (GRA-28's Add connection). */
   credential: credentialFields.optional(),
+  /** The console connect's form (GRA-304): `full` records the in-scope agents' approvals with the row. */
+  access: connectAccess.optional(),
 });
+
+/** The add-connection form's wire shape, as the console posts it. */
+export type ConnectionBody = z.input<typeof connectionBody>;
+
+/**
+ * `POST /connect` (GRA-304): a directory entry by `slug`, read again from the directory, or a whole
+ * proposal in `request_connection`'s shape, and the access chosen; strict, so both is refused.
+ */
+const connectBody = z.union([
+  z.object({ slug: z.string().min(1).max(200), access: connectAccess.optional() }).strict(),
+  z
+    .object({
+      proposal: z.object({
+        vendor: z.string(),
+        displayName: z.string().optional(),
+        primaryHost: z.string(),
+        hosts: z.array(z.string()).optional(),
+        scheme: z.string(),
+        schemeConfig: z.record(z.string(), z.unknown()).optional(),
+        docsUrl: z.string().optional(),
+      }),
+      access: connectAccess.optional(),
+    })
+    .strict(),
+]);
+
+/** The console connect's wire shape, as the console posts it. */
+export type ConnectBody = z.input<typeof connectBody>;
 
 const credentialBody = z.object({ fields: credentialFields });
 
@@ -2048,11 +2088,58 @@ export function createApi(options: ApiOptions): Hono {
       options.notifier,
     );
 
+  /** The console connect's seams (`console-connect.ts`): the directory is Setup's. */
+  const consoleConnect: ConsoleConnectDeps = {
+    connection: connectionDeps,
+    agent: agentDeps,
+    approval: approvalDeps,
+    directory: integrationDirectory,
+    handoff,
+    authUrl: options.authUrl ?? null,
+    notifier: options.notifier,
+  };
+
+  /**
+   * The person connects an integration with no agent asking (GRA-304; ADR 0006 as amended
+   * 2026-10-14): `ConsoleConnectResult` says whether it is connected, the keyring's form to show
+   * (then `POST /connections` with the same `access`), or a link provider's link to open, whose
+   * return lands on `/link/callback` with `connectId`. Counted from its answer's kinds.
+   */
+  api.post("/connect", async (c) => {
+    const principal = await principalOf(c.req.raw.headers);
+    const body = await parseBody(c.req.raw, connectBody);
+    const result = await connectFromConsole(ctx, principal, body, consoleConnect);
+    if (result.kind === "link") {
+      (options.analytics ?? NO_ANALYTICS).capture({
+        distinctId: principal.personId,
+        event: "provider_link_started",
+        properties: { provider: result.provider, via: "connect" },
+      });
+    } else if (result.kind === "form" && result.fallback) {
+      (options.analytics ?? NO_ANALYTICS).capture({
+        distinctId: principal.personId,
+        event: "provider_link_fell_back",
+        properties: { provider: result.fallback.provider, via: "connect" },
+      });
+    }
+    return c.json(result, result.kind === "connected" && result.created ? 201 : 200);
+  });
+
   api.post("/connections", async (c) => {
     const principal = await principalOf(c.req.raw.headers);
-    const { credential, ...registration } = await parseBody(c.req.raw, connectionBody);
+    const { credential, access, ...registration } = await parseBody(c.req.raw, connectionBody);
+    // The console connect's access choice (GRA-304; ADR 0008 as amended 2026-10-14), recorded with
+    // the row for the agents whose scope reaches it now.
+    const withAccess = async (scoped: ServiceContext, connection: ConnectionOutput) => {
+      if (access === "full") await recordFullAccess(scoped, principal, connection, consoleConnect);
+    };
     if (!credential) {
-      const connection = await registerConnection(ctx, principal, registration, connectionDeps);
+      const connection = await ctx.db.transaction(async (tx) => {
+        const scoped: ServiceContext = { db: tx };
+        const made = await registerConnection(scoped, principal, registration, connectionDeps);
+        await withAccess(scoped, made);
+        return made;
+      });
       await announceConnection(principal, connection.id);
       return c.json({ connection }, 201);
     }
@@ -2066,6 +2153,7 @@ export function createApi(options: ApiOptions): Hono {
         { ...registration, credential },
         connectionDeps,
       );
+      await withAccess(scoped, connection);
       const consent = await consentFor(scoped, principal, connection.id, connection.scheme, null);
       return consent
         ? { connection: consent.connection, authorizeUrl: consent.authorizeUrl }
