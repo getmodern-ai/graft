@@ -30,7 +30,7 @@ export type StartConsoleAcquireInput = {
 };
 
 export type ConsoleAcquireDeps = {
-  /** The agent read locked, so a scope write or a revoke of it waits for the job (`findAgentForUpdate`). */
+  /** The agent read locked after the connection, so a scope write or a revoke of it waits for the job (`findAgentForUpdate`). */
   agent: AgentDeps;
   /**
    * The connection read locked (`findConnectionForUpdate`), so a revoke, which deletes the build
@@ -55,6 +55,12 @@ export async function startConsoleAcquire(
 ): Promise<{ job: AcquireJobRow; agent: { id: string; name: string } }> {
   return ctx.db.transaction(async (tx) => {
     const scoped: ServiceContext = { db: tx };
+    // The connection's lock before the agent's, the order a scope answer takes them
+    // (`recordApprovalAnswer`, then `addConnectionToAgentScope`), so the two cannot deadlock.
+    const row = orNotFound(
+      await deps.connection.findConnectionForUpdate(tx, principal.personId, input.connectionId),
+      "Connection not found",
+    );
     const agent = orNotFound(
       await deps.agent.findAgentForUpdate(tx, principal.personId, input.agentId),
       "Agent not found",
@@ -64,10 +70,6 @@ export async function startConsoleAcquire(
         details: { reason: "agent_revoked", agentId: agent.id },
       });
     }
-    const row = orNotFound(
-      await deps.connection.findConnectionForUpdate(tx, principal.personId, input.connectionId),
-      "Connection not found",
-    );
     const connection = toConnectionOutput(row);
     // Revoked rows stay in a resolved scope (`getAgentScope`), so the row's own state is read: a
     // job against a connection that cannot carry a call would only fail in the runner.

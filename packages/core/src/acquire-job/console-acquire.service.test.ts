@@ -141,6 +141,11 @@ describe("startConsoleAcquire", () => {
       "person_1",
       "conn_1",
     );
+    // Connection first, then agent: a scope answer's order, so the two cannot deadlock.
+    const connectionLock = vi.mocked(w.deps.connection.findConnectionForUpdate).mock
+      .invocationCallOrder[0];
+    const agentLock = vi.mocked(w.deps.agent.findAgentForUpdate).mock.invocationCallOrder[0];
+    expect(connectionLock).toBeLessThan(agentLock ?? 0);
   });
 
   it("is not found for an agent or a connection that is not the person's", async () => {
