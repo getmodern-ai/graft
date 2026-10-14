@@ -218,6 +218,41 @@ describe("integrationAnswers", () => {
     expect(answer?.change).toEqual({ kind: "none" });
   });
 
+  it("says when forgetting a tool's answer leaves it to the standing approval", () => {
+    const forgets = (includesDestructive: boolean | null) => {
+      const [row] = integrationAgentRows(
+        [GMAIL],
+        [
+          access("conn_1", [
+            agent("claude", {
+              toolApprovals: [
+                approval("send-email", { decision: "deny" }),
+                approval("delete-email", { decision: "deny", destructive: true }),
+              ],
+              vendorApproval:
+                includesDestructive === null ? null : { includesDestructive, grantedAt: OLD },
+            }),
+          ]),
+        ],
+      );
+      return integrationAnswers(row ? [row] : [], "Gmail", false).flatMap((answer) =>
+        answer.change.kind === "tool" ? [[answer.what, answer.change.forgetRunsUnasked]] : [],
+      );
+    };
+    expect(forgets(null)).toEqual([
+      ["Send email", false],
+      ["Delete email", false],
+    ]);
+    expect(forgets(false)).toEqual([
+      ["Send email", true],
+      ["Delete email", false],
+    ]);
+    expect(forgets(true)).toEqual([
+      ["Send email", true],
+      ["Delete email", true],
+    ]);
+  });
+
   it("offers no change on a read tool's answer", () => {
     const answers = integrationAnswers(rows, "Gmail", false);
     const read = answers.find((answer) => answer.what === "List labels");

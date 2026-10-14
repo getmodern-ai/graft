@@ -445,7 +445,7 @@ function Choice({
 
 type ChangeAction =
   | { kind: "tool"; target: Exclude<ToolAnswerChoice, "stale"> }
-  | { kind: "forget_tool" }
+  | { kind: "forget_tool"; runsUnasked: boolean }
   | { kind: "vendor_destructive"; on: boolean }
   | { kind: "remove_vendor" }
   | { kind: "withdraw_build" };
@@ -554,6 +554,7 @@ function ChangeMenuItems({
   switch (answer.change.kind) {
     case "tool": {
       const current = toolAnswerChoice(answer.change.approval);
+      const runsUnasked = answer.change.forgetRunsUnasked;
       return (
         <>
           <DropdownMenuRadioGroup
@@ -576,10 +577,14 @@ function ChangeMenuItems({
             </DropdownMenuRadioItem>
           </DropdownMenuRadioGroup>
           <DropdownMenuSeparator />
-          <DropdownMenuItem onClick={() => onAction({ kind: "forget_tool" })}>
+          <DropdownMenuItem onClick={() => onAction({ kind: "forget_tool", runsUnasked })}>
             <Choice
               title="Forget this answer"
-              detail={`${agent} asks you again the next time it needs it.`}
+              detail={
+                runsUnasked
+                  ? `Every ${integrationName} tool covers it then, so ${agent} runs it without asking.`
+                  : `${agent} asks you again the next time it needs it.`
+              }
             />
           </DropdownMenuItem>
         </>
@@ -646,7 +651,9 @@ function changedToast(action: ChangeAction, agent: string, integrationName: stri
           ? `${agent} asks every time`
           : `${agent} can't use it`;
     case "forget_tool":
-      return `${agent} asks next time`;
+      return action.runsUnasked
+        ? `${agent} runs it under Every ${integrationName} tool`
+        : `${agent} asks next time`;
     case "vendor_destructive":
       return action.on
         ? `${agent} no longer asks for ${integrationName} tools that delete`

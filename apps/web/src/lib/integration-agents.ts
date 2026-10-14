@@ -143,7 +143,15 @@ export type IntegrationAnswer = {
   chip: StatusChip;
   at: string;
   change:
-    | { kind: "tool"; approval: ToolApproval }
+    | {
+        kind: "tool";
+        approval: ToolApproval;
+        /**
+         * The agent's standing approval for every tool of the integration covers this one, so
+         * forgetting its own answer lets it run without asking rather than ask again.
+         */
+        forgetRunsUnasked: boolean;
+      }
     | { kind: "vendor"; includesDestructive: boolean }
     | { kind: "build"; connectionId: string }
     /** A read tool's answer: reads never ask (ADR 0008), so nothing to change. */
@@ -170,7 +178,12 @@ export function integrationAnswers(
   const answers: IntegrationAnswer[] = [];
   for (const row of rows) {
     const agent = { id: row.agent.id, name: row.agent.name };
+    const standing = row.access.vendorApproval;
     for (const approval of row.access.toolApprovals) {
+      // Without its own answer a tool falls to the standing approval, ones that delete only when
+      // it includes them (ADR 0008 as amended 2026-10-09).
+      const forgetRunsUnasked =
+        standing !== null && (standing.includesDestructive || !approval.tool.destructive);
       answers.push({
         key: `tool:${agent.id}:${approval.tool.id}`,
         agent,
@@ -181,10 +194,11 @@ export function integrationAnswers(
           ? ANSWER_CHIP.always
           : TOOL_ANSWER_CHIP[toolAnswerChoice(approval)],
         at: approval.decidedAt,
-        change: approval.tool.readOnly ? { kind: "none" } : { kind: "tool", approval },
+        change: approval.tool.readOnly
+          ? { kind: "none" }
+          : { kind: "tool", approval, forgetRunsUnasked },
       });
     }
-    const standing = row.access.vendorApproval;
     if (standing) {
       answers.push({
         key: `vendor:${agent.id}`,
