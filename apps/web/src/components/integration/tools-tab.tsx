@@ -1,11 +1,11 @@
 import { useQueries, useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
+import type * as React from "react";
 import { useState } from "react";
 
 import { InfoIcon, KeyboardArrowDownIcon, KeyboardArrowUpIcon } from "@/components/icons";
 import { RetryNotice } from "@/components/retry-notice";
 import { StatusChip } from "@/components/status-chip";
-import { TableBodyNote, TableLoadingRows } from "@/components/table-body-states";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { DataTable, DataTableRow } from "@/components/ui/data-table";
@@ -28,7 +28,46 @@ import { pendingActionsQuery } from "@/lib/pending-action-queries";
 import { toolAccessChips } from "@/lib/status-chips";
 import { cn } from "@/lib/utils";
 
-const COLUMNS = 3;
+/**
+ * The body's states (GRA-47), as `table-body-states.tsx` draws them, but spanning the columns
+ * actually shown: two below `md`, where Approval steps out, and three from `md`. A span wider than
+ * the header under `table-fixed` adds an auto column and squeezes Tool, so each state carries one
+ * cell per breakpoint and the browser hides the other.
+ */
+function StateCells({ className, children }: { className?: string; children: React.ReactNode }) {
+  return (
+    <>
+      <TableCell colSpan={2} className={cn("whitespace-normal md:hidden", className)}>
+        {children}
+      </TableCell>
+      <TableCell colSpan={3} className={cn("hidden whitespace-normal md:table-cell", className)}>
+        {children}
+      </TableCell>
+    </>
+  );
+}
+
+function StateNote({ children }: { children: React.ReactNode }) {
+  return (
+    <DataTableRow className="hover:bg-transparent">
+      <StateCells className="px-4 text-muted-foreground">{children}</StateCells>
+    </DataTableRow>
+  );
+}
+
+function StateLoadingRows() {
+  return (
+    <>
+      {[0, 1, 2].map((row) => (
+        <DataTableRow key={row}>
+          <StateCells className="px-4">
+            <Skeleton className="h-5 w-full" />
+          </StateCells>
+        </DataTableRow>
+      ))}
+    </>
+  );
+}
 
 /** What the Approval column says on a page whose every connection is revoked (decisions, GRA-282). */
 const REVOKED_APPROVAL: ToolApprovalSummary = {
@@ -68,7 +107,9 @@ export function ToolsTab({
   const { data: pendingData } = useQuery(pendingActionsQuery);
   const live = connections.filter((connection) => connection.state !== "revoked");
   const access = useQueries({
-    queries: live.map((connection) => connectionAccessQuery(connection.id)),
+    // Stale at once, so every visit refetches: the agent page's approval edits refresh their own
+    // reads and not this one, and the summary must not draw an answer from before them.
+    queries: live.map((connection) => ({ ...connectionAccessQuery(connection.id), staleTime: 0 })),
     combine: (results) => ({
       pending: results.some((result) => result.isPending),
       failed: results.some((result) => result.isError),
@@ -103,27 +144,27 @@ export function ToolsTab({
           </TableHeader>
           <TableBody>
             {isPending ? (
-              <TableLoadingRows colSpan={COLUMNS} />
+              <StateLoadingRows />
             ) : isError ? (
-              <TableBodyNote colSpan={COLUMNS} className="px-4">
+              <StateNote>
                 <RetryNotice
                   error={error}
                   message={`Could not load the ${integrationName} tools.`}
                   onRetry={() => void refetch()}
                   retrying={isFetching}
                 />
-              </TableBodyNote>
+              </StateNote>
             ) : toolbox.length === 0 && stock.length === 0 ? (
-              <TableBodyNote colSpan={COLUMNS} className="px-4">
+              <StateNote>
                 No {integrationName} tools yet. An agent builds one when it needs it.
-              </TableBodyNote>
+              </StateNote>
             ) : (
               <>
                 {toolbox.length === 0 && !showStock ? (
-                  <TableBodyNote colSpan={COLUMNS} className="px-4">
+                  <StateNote>
                     Your agents have not built a {integrationName} tool yet. Ready-made ones are
                     below.
-                  </TableBodyNote>
+                  </StateNote>
                 ) : null}
                 {shown.map((tool) => (
                   <ToolRow
