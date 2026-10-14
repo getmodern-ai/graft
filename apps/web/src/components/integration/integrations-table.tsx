@@ -222,23 +222,38 @@ function SignInButton({
         description: `Allow popups for this page, or open the sign-in for ${connection.displayName} yourself.`,
         action: { label: "Open", onClick: () => window.open(state.authorizeUrl, "_blank") },
       });
-    } else if (state.phase === "done" && state.outcome !== "connected") {
+    } else if (
+      state.phase === "done" &&
+      state.outcome !== "connected" &&
+      state.outcome !== "stopped"
+    ) {
       toast.error(`${connection.displayName} is not connected`, { description: state.message });
     }
   }, [state, connection.displayName]);
-  const waiting = reconsent.isPending || consent.running;
-
   return (
     <>
-      <Button
-        variant="outline"
-        size="sm"
-        disabled={waiting}
-        aria-label={`Sign in to ${connection.displayName}`}
-        onClick={() => (kind === "consent" ? reconsent.mutate() : setEntering(true))}
-      >
-        {waiting ? "Waiting…" : "Sign in"}
-      </Button>
+      {consent.running ? (
+        // Closing the popup does not end the wait (`awaitConsent`), so the row offers to stop it,
+        // as `ConsentStatus` does on the Connection tab, and Sign in comes back.
+        <Button
+          variant="ghost"
+          size="sm"
+          aria-label={`Stop waiting for ${connection.displayName}`}
+          onClick={consent.cancel}
+        >
+          Stop waiting
+        </Button>
+      ) : (
+        <Button
+          variant="outline"
+          size="sm"
+          disabled={reconsent.isPending}
+          aria-label={`Sign in to ${connection.displayName}`}
+          onClick={() => (kind === "consent" ? reconsent.mutate() : setEntering(true))}
+        >
+          Sign in
+        </Button>
+      )}
       {kind === "credential" && isKeyringConnection(connection) ? (
         <ReenterCredentialDialog
           key={`${connection.id}:${connection.credentialSetAt ?? "none"}`}

@@ -21,6 +21,7 @@ import {
   PageHeaderDescription,
   PageHeaderTitle,
 } from "@/components/page/page-header";
+import { RetryNotice } from "@/components/retry-notice";
 import { useScreenTitle } from "@/components/shell/screen-title";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -32,6 +33,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Skeleton } from "@/components/ui/skeleton";
 import { connectionsQuery, toolsOfConnection, toolsQuery } from "@/lib/connection-queries";
 import { integrationsQuery, suggestedIntegrationsQuery } from "@/lib/integration-queries";
 import {
@@ -260,17 +262,31 @@ function RevokedConnections() {
         {open ? <KeyboardArrowUpIcon /> : <KeyboardArrowDownIcon />}
         Revoked connections ({revoked.length})
       </Button>
-      {open ? (
+      {/* The cards wait for the toolbox: drawn with none, each would say no tool was authored. */}
+      {!open ? null : tools.data ? (
         <div className="flex flex-col gap-4">
           {revoked.map((connection) => (
             <ConnectionCard
               key={connection.id}
               connection={connection}
-              tools={toolsOfConnection(tools.data?.tools ?? [], connection)}
+              tools={toolsOfConnection(tools.data.tools, connection)}
             />
           ))}
         </div>
-      ) : null}
+      ) : tools.isError ? (
+        <RetryNotice
+          error={tools.error}
+          message="Could not load the tools of your revoked connections."
+          onRetry={() => void tools.refetch()}
+          retrying={tools.isFetching}
+        />
+      ) : (
+        <div className="flex flex-col gap-4">
+          {revoked.map((connection) => (
+            <Skeleton key={connection.id} className="h-40 w-full rounded-xl" />
+          ))}
+        </div>
+      )}
     </div>
   );
 }
