@@ -242,6 +242,19 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
+/* The one line the frame holds while the tool call is in flight (GRA-335): a fixed height, so the
+ * frame is that tall from the first paint, before any font has loaded. */
+.ask-waiting {
+  margin: 0;
+  height: 28px;
+  line-height: 28px;
+  font-size: 13px;
+  color: var(--muted-foreground);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 /* Cando's card anatomy: a bordered surface, a header, a body of rows, a footer of actions. */
 .ask {
   display: flex;
