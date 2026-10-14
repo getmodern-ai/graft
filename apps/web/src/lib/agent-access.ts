@@ -26,7 +26,7 @@ export function toolTitle(name: string): string {
 }
 
 /** "A", "A and B", "A and 3 more". */
-function listTools(titles: readonly string[]): string {
+export function listTools(titles: readonly string[]): string {
   if (titles.length <= 2) return titles.join(" and ");
   return `${titles[0]} and ${titles.length - 1} more`;
 }

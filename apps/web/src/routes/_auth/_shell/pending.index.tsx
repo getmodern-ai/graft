@@ -17,12 +17,14 @@ import {
   RequestListNote,
   RequestRow,
 } from "@/components/pending/request-row";
+import { SignInRequestRow } from "@/components/pending/sign-in-request-row";
 import { RetryNotice } from "@/components/retry-notice";
 import { useScreenTitle } from "@/components/shell/screen-title";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { agentsQuery } from "@/lib/agent-queries";
+import { integrationsQuery } from "@/lib/integration-queries";
 import { harnessMark } from "@/lib/marks";
 import { donePendingActionsQuery, pendingActionsQuery } from "@/lib/pending-action-queries";
 import {
@@ -33,6 +35,7 @@ import {
   readRequestsSearch,
   selectedAgent,
 } from "@/lib/requests-filter";
+import { signInRequestsOf } from "@/lib/sign-in-requests";
 
 /**
  * Requests (CONTEXT.md, *Request*; ADR 0006: answerable later, from here): the open asks across
@@ -41,13 +44,17 @@ import {
  * the agents are for each row's harness mark, which reads as the generic glyph until they land, and
  * for the filter by agent. The tab and the agent live in the search (`?tab=done&agent=<id>`), so a
  * link from an agent's card lands filtered; the filter is client-side over each tab's rows, and
- * Done pages by "Show older".
+ * Done pages by "Show older". Above the asks, the connections that need the person to sign in
+ * (GRA-313), from the integrations read: they join Open once it lands, and a failed read leaves
+ * the asks alone. The agent filter leaves them in place, since a connection is the person's and
+ * stops every agent that uses it, not one agent's ask.
  */
 export const Route = createFileRoute("/_auth/_shell/pending/")({
   validateSearch: readRequestsSearch,
   loader: ({ context }) => {
     void context.queryClient.prefetchQuery(pendingActionsQuery);
     void context.queryClient.prefetchQuery(agentsQuery);
+    void context.queryClient.prefetchQuery(integrationsQuery);
   },
   component: RequestsRoute,
 });
@@ -59,6 +66,8 @@ function RequestsRoute() {
   const requests = useQuery({ ...pendingActionsQuery, refetchInterval: 15_000 });
   const done = useInfiniteQuery({ ...donePendingActionsQuery, enabled: tab === "done" });
   const agents = useQuery(agentsQuery);
+  const integrations = useQuery({ ...integrationsQuery, refetchInterval: 15_000 });
+  const signIns = signInRequestsOf(integrations.data?.integrations ?? []);
   const allOpen = requests.data?.pendingActions ?? [];
   const options = agents.data ? agentFilterOptions(agents.data.agents, allOpen) : undefined;
   const selected = options ? selectedAgent(search.agent, options) : null;
@@ -90,7 +99,8 @@ function RequestsRoute() {
           <AgentFilterMenu
             options={options}
             selected={selected}
-            total={requests.data ? allOpen.length : null}
+            // The Open badge under every agent: the asks and the sign-ins above them.
+            total={requests.data ? allOpen.length + signIns.length : null}
             counts={tab === "open" && requests.data !== undefined}
             onSelect={(agent) =>
               void navigate({
@@ -114,15 +124,22 @@ function RequestsRoute() {
         <TabsList variant="line" className="w-full justify-start border-border border-b">
           <TabsTrigger value="open">
             Open
-            {requests.data ? <Badge variant="secondary">{rows.length}</Badge> : null}
+            {requests.data || signIns.length > 0 ? (
+              <Badge variant="secondary">{rows.length + signIns.length}</Badge>
+            ) : null}
           </TabsTrigger>
           <TabsTrigger value="done">Done</TabsTrigger>
         </TabsList>
 
         <TabsContent value="open" className="flex flex-col gap-4 text-sm">
           <RequestList aria-label="Open requests" aria-busy={requests.isPending}>
+            {/* Drawn whatever the asks' read is doing: the badge counts them, so a pending or
+                failed asks read must not hide their Sign in. */}
+            {signIns.map((request) => (
+              <SignInRequestRow key={request.key} request={request} />
+            ))}
             {requests.isPending ? (
-              <RequestListLoading />
+              <RequestListLoading rows={signIns.length > 0 ? 1 : 3} />
             ) : requests.isError && !requests.data ? (
               // Only a first read that failed replaces the rows: a failed background refetch keeps
               // them, and any dialog open on one with what the person typed (the toast says it).
@@ -134,7 +151,7 @@ function RequestsRoute() {
                   retrying={requests.isFetching}
                 />
               </RequestListNote>
-            ) : rows.length === 0 ? (
+            ) : rows.length + signIns.length === 0 ? (
               <RequestListNote>
                 {agentId
                   ? `Nothing from ${agentLabel} is waiting on you.`

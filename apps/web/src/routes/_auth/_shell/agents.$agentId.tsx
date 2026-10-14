@@ -2,14 +2,12 @@ import { useSuspenseQuery } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 import { useRef, useState } from "react";
 
+import { AgentAdvanced } from "@/components/agent/agent-advanced";
 import { AgentConnectionDialog } from "@/components/agent/agent-connection-dialog";
+import { AgentIntegrationsPanel } from "@/components/agent/agent-integrations-panel";
 import { ApprovalsCard } from "@/components/agent/approvals-card";
 import { BuildApprovalsCard } from "@/components/agent/build-approvals-card";
 import { IntegrationApprovalsCard } from "@/components/agent/integration-approvals-card";
-import { LimitsForm } from "@/components/agent/limits-form";
-import { RevokeAgentDialog } from "@/components/agent/revoke-agent-dialog";
-import { RotateTokenDialog } from "@/components/agent/rotate-token-dialog";
-import { ScopeEditor } from "@/components/agent/scope-editor";
 import { WorkingSetHistory } from "@/components/agent/working-set-history";
 import { WorkingSetTable } from "@/components/agent/working-set-table";
 import { PageContainer } from "@/components/page/page-container";
@@ -26,7 +24,6 @@ import { StatusChip } from "@/components/status-chip";
 import { Time } from "@/components/time";
 import { Button } from "@/components/ui/button";
 import { agentQuery, workingSetChangesQuery, workingSetQuery } from "@/lib/agent-queries";
-import { tokenRotatable } from "@/lib/agent-token";
 import { approvalsQuery, vendorApprovalsQuery } from "@/lib/approval-queries";
 import { connectionsQuery, toolsQuery } from "@/lib/connection-queries";
 import { agentStatusChip } from "@/lib/status-chips";
@@ -35,8 +32,8 @@ import { agentStatusChip } from "@/lib/status-chips";
  * The standalone management page opens from the agent name or View agent action (GRA-135).
  * Removing the drawer must not remove scope, approval and history access (ADR 0007, ADR 0008).
  *
- * The loader awaits the agent and the connections, which the header and the two editors need
- * before anything can draw, and only *starts* the three table reads: each table owns its query
+ * The loader awaits the agent and the connections, which the header and the integrations panel
+ * need before anything can draw, and only *starts* the other reads: each card owns its query
  * and paints skeleton rows until it lands, so the page appears once rather than after the slowest
  * of six. Cando's automation page arrived at the same split (its CAN-546).
  */
@@ -59,8 +56,6 @@ function AgentRoute() {
   const { agentId } = Route.useParams();
   const { data } = useSuspenseQuery(agentQuery(agentId));
   const { data: connectionData } = useSuspenseQuery(connectionsQuery);
-  const [revoking, setRevoking] = useState(false);
-  const [rotating, setRotating] = useState(false);
   const [connecting, setConnecting] = useState(false);
   const connectionTrigger = useRef<HTMLButtonElement>(null);
   const { agent, connectionIds } = data;
@@ -109,40 +104,34 @@ function AgentRoute() {
             <Button ref={connectionTrigger} variant="outline" onClick={() => setConnecting(true)}>
               Connect an agent
             </Button>
-            {tokenRotatable(agent) ? (
-              <Button variant="outline" onClick={() => setRotating(true)}>
-                Rotate token
-              </Button>
-            ) : null}
-            <Button variant="destructive" onClick={() => setRevoking(true)}>
-              {agent.tokenPrefix === null ? "Revoke agent" : "Revoke token"}
-            </Button>
           </PageHeaderActions>
         )}
       </PageHeader>
 
-      <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-        <div className="flex min-w-0 flex-col gap-6">
-          <ScopeEditor
-            key={`${agent.scopeMode}:${connectionIds.join(",")}`}
-            agent={agent}
-            connectionIds={connectionIds}
-            connections={connectionData.connections}
-          />
-        </div>
-        <div className="flex min-w-0 flex-col gap-6">
-          <LimitsForm
-            key={`${agent.name}:${agent.workingSetCap}:${agent.idleWindowDays}`}
-            agent={agent}
-          />
-        </div>
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
+        <AgentIntegrationsPanel
+          agent={agent}
+          connectionIds={connectionIds}
+          connections={connectionData.connections}
+        />
+        <AgentAdvanced agent={agent} />
       </div>
 
-      <WorkingSetTable agent={agent} />
-      <ApprovalsCard agent={agent} />
-      <IntegrationApprovalsCard agent={agent} />
-      <BuildApprovalsCard agent={agent} />
-      <WorkingSetHistory agentId={agent.id} />
+      {/* What the design leaves off the page and ADR 0008 has the console answer: every tool,
+          integration and build approval this agent holds, and its working set (GRA-326). */}
+      <section className="flex flex-col gap-4">
+        <div className="flex flex-col gap-0.5">
+          <h2 className="font-heading font-medium text-lg">Answers and tools</h2>
+          <p className="text-muted-foreground text-sm">
+            What you have said yes or no to for {agent.name}, and the tools it keeps ready.
+          </p>
+        </div>
+        <ApprovalsCard agent={agent} />
+        <IntegrationApprovalsCard agent={agent} />
+        <BuildApprovalsCard agent={agent} />
+        <WorkingSetTable agent={agent} />
+        <WorkingSetHistory agentId={agent.id} />
+      </section>
 
       {connecting && !agent.revokedAt ? (
         <AgentConnectionDialog
@@ -151,8 +140,6 @@ function AgentRoute() {
           returnFocus={connectionTrigger}
         />
       ) : null}
-      <RevokeAgentDialog agent={agent} open={revoking} onOpenChange={setRevoking} />
-      <RotateTokenDialog agent={agent} open={rotating} onOpenChange={setRotating} />
     </PageContainer>
   );
 }
