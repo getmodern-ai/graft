@@ -150,7 +150,7 @@ export function ProviderLinkAskCard({
       setState({ phase: "running" });
       const { outcome, message, connectionId } = await awaitLink({
         popup,
-        pendingActionId: action.id,
+        match: action.id,
         isSettled: () => readSettled(action, payload),
         signal: controller.signal,
       });

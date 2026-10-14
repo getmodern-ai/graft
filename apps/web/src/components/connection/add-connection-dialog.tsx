@@ -36,19 +36,35 @@ import { connectionKeys, createConnection } from "@/lib/connection-queries";
  * `onConnected` is for a caller that takes the connection on (Setup's *Another integration*, GRA-206):
  * it is handed the connection's id once it can be called, the consent included, in place of the
  * toast that points at the agent's page.
+ *
+ * `initialDraft` and `access` are Discover's (GRA-322): the keyring's form `POST /api/connect`
+ * answered, pre-filled from its proposal, and the access the person chose before it (ADR 0008 as
+ * amended 2026-10-14), posted with the credential. The draft is taken each time the dialog opens.
  */
 export function AddConnectionDialog({
   open,
   onOpenChange,
   onConnected,
+  initialDraft,
+  access,
+  title = "Add a connection",
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onConnected?: (connectionId: string) => void;
+  initialDraft?: ConnectionDraft;
+  access?: "full" | "ask";
+  title?: string;
 }) {
   const queryClient = useQueryClient();
-  const [draft, setDraft] = useState<ConnectionDraft>(() => emptyDraft());
+  const [draft, setDraft] = useState<ConnectionDraft>(() => initialDraft ?? emptyDraft());
   const [errors, setErrors] = useState<DraftErrors>({});
+  // The pre-fill is taken as the dialog opens, never while the person types into it.
+  const [wasOpen, setWasOpen] = useState(open);
+  if (open !== wasOpen) {
+    setWasOpen(open);
+    if (open && initialDraft) setDraft(initialDraft);
+  }
   const connected = (connectionId: string, displayName: string) => {
     if (onConnected) onConnected(connectionId);
     else {
@@ -100,7 +116,7 @@ export function AddConnectionDialog({
       return;
     }
     setErrors({});
-    create.mutate(verdict.value);
+    create.mutate(access ? { ...verdict.value, access } : verdict.value);
   };
 
   const secret = secretLegend(draft);
@@ -128,7 +144,7 @@ export function AddConnectionDialog({
           }}
         >
           <DialogHeader>
-            <DialogTitle>Add a connection</DialogTitle>
+            <DialogTitle>{title}</DialogTitle>
             <DialogDescription>
               One account of an integration: its hosts, its auth scheme and its credential, entered
               once and never shown again. Agents use it once you add it to their scope.

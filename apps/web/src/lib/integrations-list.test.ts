@@ -96,6 +96,19 @@ describe("readIntegrationsListSearch", () => {
     expect(readIntegrationsListSearch({ tab: 3 })).toEqual({});
     expect(readIntegrationsListSearch({})).toEqual({});
   });
+
+  it("carries Discover's search and Flow C's hand-off only with the Discover tab", () => {
+    expect(
+      readIntegrationsListSearch({ tab: "discover", q: "notion", custom: "https://docs.acme.dev" }),
+    ).toEqual({ tab: "discover", q: "notion", custom: "https://docs.acme.dev" });
+    expect(readIntegrationsListSearch({ tab: "discover", q: "  ", custom: 4 })).toEqual({
+      tab: "discover",
+    });
+    expect(readIntegrationsListSearch({ q: "notion", custom: "acme" })).toEqual({});
+    expect(
+      readIntegrationsListSearch({ tab: "discover", custom: "x".repeat(3000) }).custom,
+    ).toHaveLength(2000);
+  });
 });
 
 describe("readIntegrationsSort", () => {
