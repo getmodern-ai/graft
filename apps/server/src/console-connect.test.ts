@@ -55,7 +55,13 @@ const GMAIL = {
   },
 };
 
-function harness(options: { providers?: (broker: FakeLinkProvider) => ConnectionProvider[] } = {}) {
+function harness(
+  options: {
+    providers?: (broker: FakeLinkProvider) => ConnectionProvider[];
+    /** A revoke landing between the find and the approvals: the locked read sees it revoked. */
+    revokeBeforeApprovals?: boolean;
+  } = {},
+) {
   // A clock the test moves, for a link that took too long.
   const clock = { at: Date.now() };
   const store = createFakeStore({ now: () => new Date(clock.at) });
@@ -72,6 +78,14 @@ function harness(options: { providers?: (broker: FakeLinkProvider) => Connection
     providers,
     lockConnectionKey: async (_db: unknown, personId: string, key: string) => {
       locks.push(`${personId} ${key}`);
+    },
+    findConnectionForUpdate: async (
+      db: Parameters<typeof fake.connection.findConnectionForUpdate>[0],
+      personId: string,
+      id: string,
+    ) => {
+      const row = await fake.connection.findConnectionForUpdate(db, personId, id);
+      return row && options.revokeBeforeApprovals ? { ...row, revokedAt: new Date() } : row;
     },
   };
   const captured: Capture[] = [];
@@ -536,5 +550,13 @@ describe("what Greptile's review of #238 asked for", () => {
       });
       expect(rowsOf(h, PERSON)).toHaveLength(1);
     });
+  });
+
+  it("full access refuses a row a revoke reached first, rather than writing its approvals back", async () => {
+    const h = harness({ revokeBeforeApprovals: true });
+    const res = await h.app.request("/api/connect", post({ proposal: OPEN_METEO, access: "full" }));
+    expect(res.status).toBe(409);
+    expect((await read(res)).details).toMatchObject({ reason: "connection_revoked" });
+    expect(approvalsOf(h)).toEqual({ build: [], vendor: [] });
   });
 });

@@ -417,13 +417,30 @@ async function startConsoleLink(
  * scope reaches the connection now, its build approval for the connection and its standing
  * approval for the integration's tools, destructive ones left out, through the two writes the
  * connection confirmation makes. An agent that gains the connection later asks. Answers the ids.
+ *
+ * The row is read under the lock a revoke takes (`findConnectionForUpdate`) and refused when it is
+ * revoked or gone (Greptile on #238): a revoke landing between the find and these writes sweeps
+ * the approvals, and writing them after would hand them back on a Reconnect. Called inside the
+ * caller's transaction, so the lock holds until the approvals commit.
  */
 export async function recordFullAccess(
   ctx: ServiceContext,
   principal: Principal,
   connection: Pick<ConnectionOutput, "id" | "vendor">,
-  deps: Pick<ConsoleConnectDeps, "agent" | "approval">,
+  deps: Pick<ConsoleConnectDeps, "agent" | "approval" | "connection">,
 ): Promise<string[]> {
+  const locked = await deps.connection.findConnectionForUpdate(
+    ctx.db,
+    principal.personId,
+    connection.id,
+  );
+  if (!locked || locked.revokedAt) {
+    throw new ServiceError(
+      "CONFLICT",
+      "This connection was revoked while it was being connected, so no access was recorded",
+      { details: { reason: "connection_revoked", connectionId: connection.id } },
+    );
+  }
   const agents = (await listAgents(ctx, principal, deps.agent)).filter((agent) => !agent.revokedAt);
   const approved: string[] = [];
   for (const agent of agents) {
