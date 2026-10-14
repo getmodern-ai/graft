@@ -17,6 +17,7 @@ import {
   defaultApprovalDeps,
   defaultSetupDeps,
   defaultStockDeps,
+  defaultSuggestedIntegrationDeps,
   defaultToolDeps,
   defaultWorkingSetDeps,
   deletePersonModelKey,
@@ -35,6 +36,7 @@ import {
   listAgents,
   listConnections,
   listStockToolsForVendor,
+  listSuggestedIntegrations,
   listToolVersionOrigins,
   listToolVersions,
   listWorkingSet,
@@ -58,6 +60,7 @@ import { createDb, type Database } from "@graft/db";
 import { applyMigrations } from "@graft/db/migrate";
 import { upsertVendorApproval } from "@graft/db/repo/approval";
 import { addConnectionHosts } from "@graft/db/repo/connection";
+import { insertPendingAction, listSuggestedConnectionAsks } from "@graft/db/repo/pending-action";
 import { markPersonEmailVerified } from "@graft/db/repo/person";
 import { findSetup, lockSetup, saveSetup } from "@graft/db/repo/setup";
 import type { ProxyEvent, UpstreamRequest } from "@graft/proxy";
@@ -916,6 +919,126 @@ describe.skipIf(!adminUrl)("the schema, the account and the services over a real
       setup: { harness: "hermes", skippedAt: null },
       agent: { name: "Hermes" },
     });
+  });
+
+  /**
+   * GRA-305 (ADR 0001 as amended 2026-10-14): the suggestions statement over real rows. The newest
+   * ask per vendor decides, one answered with a connection hides an older one, a connected vendor,
+   * a revoked agent's ask and another person's are left out, and the row's fields and dates come
+   * back typed.
+   */
+  it("suggests the integrations the person's own agents asked for and the person has not connected", async () => {
+    const personId = await signUp("suggested-owner@example.com");
+    const other = await signUp("suggested-other@example.com");
+    const ctx: ServiceContext = { db };
+    const principal = { personId };
+    const hermes = await createAgent(ctx, principal, { name: "Hermes" }, defaultAgentDeps);
+    const claude = await createAgent(ctx, principal, { name: "Claude" }, defaultAgentDeps);
+    const gone = await createAgent(ctx, principal, { name: "Gone" }, defaultAgentDeps);
+    const theirs = await createAgent(
+      ctx,
+      { personId: other },
+      { name: "Theirs" },
+      defaultAgentDeps,
+    );
+
+    const base = new Date("2026-10-14T10:00:00Z");
+    const at = (minutes: number) => new Date(base.getTime() + minutes * 60_000);
+    let n = 0;
+    const ask = async (
+      agentId: string,
+      vendor: string,
+      minutes: number,
+      extra: { answer?: Record<string, unknown>; expiresAt?: Date } = {},
+    ) => {
+      n += 1;
+      await insertPendingAction(db, {
+        id: `pa_suggest_${n}`,
+        agentId,
+        kind: "connection",
+        payload: {
+          vendor,
+          displayName: `${vendor} display`,
+          docsUrl: `https://docs.${vendor}.example`,
+          note: "The agent proposed this connection.",
+        },
+        expiresAt: extra.expiresAt ?? at(24 * 60),
+        createdAt: at(minutes),
+        ...(extra.answer ? { answer: extra.answer, answeredAt: at(minutes + 1) } : {}),
+      });
+      return `pa_suggest_${n}`;
+    };
+
+    await ask(hermes.agent.id, "acme", 0);
+    const newest = await ask(claude.agent.id, "acme", 10);
+    // An older decline, then a newer ask answered with a connection since revoked: not suggested.
+    await ask(hermes.agent.id, "beta", 0, { answer: { decline: true } });
+    await ask(hermes.agent.id, "beta", 5, { answer: { connectionId: "conn_since_revoked" } });
+    const declined = await ask(hermes.agent.id, "gamma", 2, { answer: { decline: true } });
+    // A vendor the person holds a live connection of.
+    await ask(hermes.agent.id, "connected-vendor", 3);
+    await registerConnection(
+      ctx,
+      principal,
+      {
+        vendor: "connected-vendor",
+        displayName: "Connected",
+        scheme: "none",
+        primaryHost: "https://api.connected-vendor.example",
+      },
+      connectionDeps,
+    );
+    // A revoked connection does not count as connected.
+    const revoked = await registerConnection(
+      ctx,
+      principal,
+      {
+        vendor: "delta",
+        displayName: "Delta",
+        scheme: "none",
+        primaryHost: "https://api.delta.example",
+      },
+      connectionDeps,
+    );
+    await revokeConnection(ctx, principal, revoked.id, connectionDeps);
+    const expired = await ask(hermes.agent.id, "delta", 1, { expiresAt: at(30) });
+    await ask(gone.agent.id, "revoked-agent-vendor", 4);
+    await revokeAgent(ctx, principal, gone.agent.id, defaultAgentDeps);
+    await ask(theirs.agent.id, "their-vendor", 6);
+
+    const rows = await listSuggestedConnectionAsks(db, personId, 12);
+    expect(rows).toEqual([
+      {
+        id: newest,
+        agentId: claude.agent.id,
+        agentName: "Claude",
+        vendor: "acme",
+        displayName: "acme display",
+        docsUrl: "https://docs.acme.example",
+        createdAt: at(10),
+        expiresAt: at(24 * 60),
+        answeredAt: null,
+        consumedAt: null,
+      },
+      expect.objectContaining({ id: declined, vendor: "gamma", answeredAt: at(3) }),
+      expect.objectContaining({ id: expired, vendor: "delta", expiresAt: at(30) }),
+    ]);
+    expect(rows[0]?.createdAt).toBeInstanceOf(Date);
+    expect(await listSuggestedConnectionAsks(db, personId, 1)).toHaveLength(1);
+    expect((await listSuggestedConnectionAsks(db, other, 12)).map((r) => r.vendor)).toEqual([
+      "their-vendor",
+    ]);
+
+    const suggestions = await listSuggestedIntegrations(ctx, principal, null, {
+      ...defaultSuggestedIntegrationDeps,
+      now: () => at(60),
+    });
+    expect(suggestions.map((s) => [s.vendor, s.ask.state, s.agent.name])).toEqual([
+      ["acme", "open", "Claude"],
+      ["gamma", "declined", "Hermes"],
+      ["delta", "expired", "Hermes"],
+    ]);
+    expect(suggestions[0]?.ask.ageSeconds).toBe(50 * 60);
   });
 
   /** GRA-208: the finish issues a token harness's token once, in the statement's own guard. */

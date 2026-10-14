@@ -61,10 +61,21 @@ export function suggestedAskState(row: SuggestedConnectionAskRow, now: Date): Su
   return "open";
 }
 
-async function logoOf(directory: IntegrationDirectory | null, vendor: string) {
+/**
+ * How long the read waits for the directory's marks (Greptile on #236): the suggestions are the
+ * database's, and a slow catalogue must not hold them back, so a mark not in by then is null.
+ */
+export const SUGGESTED_LOGO_TIMEOUT_MS = 1_500;
+
+async function logoOf(
+  directory: IntegrationDirectory | null,
+  vendor: string,
+  deadline: Promise<null>,
+) {
   if (!directory) return null;
   try {
-    return (await directory.get(vendor))?.logoUrl ?? null;
+    const lookup = directory.get(vendor).then((entry) => entry?.logoUrl ?? null);
+    return await Promise.race([lookup, deadline]);
   } catch {
     // A mark is decoration: a directory that cannot answer leaves the suggestion without one.
     return null;
@@ -83,7 +94,13 @@ export async function listSuggestedIntegrations(
     SUGGESTED_INTEGRATIONS_LIMIT,
   );
   const now = deps.now();
-  const logos = await Promise.all(rows.map((row) => logoOf(directory, row.vendor)));
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<null>((resolve) => {
+    timer = setTimeout(() => resolve(null), SUGGESTED_LOGO_TIMEOUT_MS);
+  });
+  const logos = await Promise.all(
+    rows.map((row) => logoOf(directory, row.vendor, deadline)),
+  ).finally(() => clearTimeout(timer));
   return rows.map((row, index) => ({
     vendor: row.vendor,
     displayName: row.displayName?.trim() || row.vendor,

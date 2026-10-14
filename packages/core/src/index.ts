@@ -304,6 +304,7 @@ export {
   defaultSuggestedIntegrationDeps,
   listSuggestedIntegrations,
   SUGGESTED_INTEGRATIONS_LIMIT,
+  SUGGESTED_LOGO_TIMEOUT_MS,
   type SuggestedAskState,
   type SuggestedIntegration,
   type SuggestedIntegrationDeps,

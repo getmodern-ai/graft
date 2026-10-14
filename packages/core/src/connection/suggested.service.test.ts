@@ -1,11 +1,12 @@
 import type { SuggestedConnectionAskRow } from "@graft/db/repo/pending-action";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import type { ServiceContext } from "../context";
 import type { DirectoryEntry, IntegrationDirectory } from "./directory";
 import {
   listSuggestedIntegrations,
   SUGGESTED_INTEGRATIONS_LIMIT,
+  SUGGESTED_LOGO_TIMEOUT_MS,
   type SuggestedIntegrationDeps,
 } from "./suggested.service";
 
@@ -109,6 +110,27 @@ describe("listSuggestedIntegrations", () => {
     const d = deps([ask({}), ask({ id: "pa_2", vendor: "unlisted" })]);
     const found = await listSuggestedIntegrations(ctx, PRINCIPAL, hosted, d.value);
     expect(found.map((s) => s.logoUrl)).toEqual(["https://logos.example/acme.png", null]);
+  });
+
+  it("answers without a mark when the directory does not answer in time", async () => {
+    vi.useFakeTimers();
+    try {
+      const hosted = directoryOf("hosted", [entry("acme-crm", "https://logos.example/acme.png")]);
+      const stalled: IntegrationDirectory = {
+        ...hosted,
+        get: (slug) => (slug === "acme-crm" ? hosted.get(slug) : new Promise(() => {})),
+      };
+      const d = deps([ask({}), ask({ id: "pa_2", vendor: "slow" })]);
+      const read = listSuggestedIntegrations(ctx, PRINCIPAL, stalled, d.value);
+      await vi.advanceTimersByTimeAsync(SUGGESTED_LOGO_TIMEOUT_MS);
+      const found = await read;
+      expect(found.map((s) => [s.vendor, s.logoUrl])).toEqual([
+        ["acme-crm", "https://logos.example/acme.png"],
+        ["slow", null],
+      ]);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("answers without a mark when the directory throws", async () => {
