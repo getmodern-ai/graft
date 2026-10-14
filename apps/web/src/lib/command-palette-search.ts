@@ -198,6 +198,7 @@ export function agentItems(agents: readonly AgentListItem[]): PaletteItem[] {
     // The client it connected through, or that none was recorded (GRA-287: no device line).
     detail: agent.revokedAt ? "Revoked" : (agent.connectedVia?.clientName ?? "Not recorded"),
     mark: { kind: "harness", mark: harnessMark(agent.connectedVia?.clientName) },
+    tier: agent.revokedAt ? 1 : 0,
     open: { to: "/agents/$agentId", params: { agentId: agent.id } },
   }));
 }

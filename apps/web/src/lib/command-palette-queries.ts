@@ -1,3 +1,4 @@
+import { DIRECTORY_PAGE_LIMIT } from "@graft/core/connection/directory";
 import { queryOptions } from "@tanstack/react-query";
 
 import { api } from "./api";
@@ -10,8 +11,13 @@ import type { DirectoryHome, DirectoryPage } from "./setup-queries";
  */
 const paletteDirectoryKey = ["integration-directory", "palette"] as const;
 
-/** How many entries a palette search asks for: a few more than it shows, for the connected it drops. */
-const PALETTE_DIRECTORY_LIMIT = 8;
+/**
+ * How many entries a palette search asks for: the directory's largest page, since the palette
+ * drops the vendors already connected before it shows four, and a person whose connections fill
+ * a whole page of one query's matches is past what a palette row can help with (Search all is
+ * beneath it). One request, never a walk of the cursor per keystroke.
+ */
+const PALETTE_DIRECTORY_LIMIT = DIRECTORY_PAGE_LIMIT;
 
 /** The directory's size, for "Search all N"; it moves only when the backing does. */
 export const paletteDirectoryHomeQuery = queryOptions({

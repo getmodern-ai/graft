@@ -280,6 +280,25 @@ describe("paletteView, typing", () => {
     expect(shape(paletteView(sources, "set", NOW))).toContainEqual(["Go to", ["Settings"]]);
   });
 
+  it("never lets revoked agents that match better push a working one past the cap", () => {
+    const revoked = (n: number) => ({
+      ...agent,
+      id: `agt_r${n}`,
+      name: `Claude ${n}`,
+      revokedAt: at,
+    });
+    const working = { ...agent, id: "agt_w", name: "Desk" };
+    const view = paletteView(
+      { agents: [revoked(1), revoked(2), revoked(3), working] },
+      "claude",
+      NOW,
+    );
+    expect(view.groups[0]).toMatchObject({
+      name: "Agents",
+      items: [{ label: "Desk" }, { label: "Claude 1" }, { label: "Claude 2" }],
+    });
+  });
+
   it("puts the directory's unconnected integrations under what the person has", () => {
     const view = paletteView(
       {

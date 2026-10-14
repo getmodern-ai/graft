@@ -1,11 +1,7 @@
-import {
-  keepPreviousData,
-  useInfiniteQuery,
-  useQuery,
-  useQueryClient,
-} from "@tanstack/react-query";
+import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 import * as React from "react";
+import { toast } from "sonner";
 
 import {
   AddIcon,
@@ -142,9 +138,11 @@ export function CommandPalette() {
   const navigate = useNavigate();
   const [query, setQuery] = React.useState("");
   const directoryQuery = useDebounced(query.trim(), DIRECTORY_DEBOUNCE_MS);
+  const queryClient = useQueryClient();
   // A request chosen here opens in place once the palette has closed, so the two dialogs never
-  // contend for focus; `shownRequest` is the one on screen.
-  const chosenRequest = React.useRef<PendingAction | null>(null);
+  // contend for focus, and from a fresh read of the list, so one answered elsewhere since the
+  // palette opened is never offered again. `shownRequest` is the latest copy of the one on screen.
+  const chosenRequest = React.useRef<string | null>(null);
   const [shownRequest, setShownRequest] = React.useState<PendingAction | null>(null);
   const [requestOpen, setRequestOpen] = React.useState(false);
 
@@ -152,16 +150,34 @@ export function CommandPalette() {
   // share, so a palette opened on Requests or Home costs nothing it has not read already.
   const integrations = useQuery({ ...integrationsQuery, enabled: open });
   const tools = useQuery({ ...toolsQuery, enabled: open });
-  const pending = useQuery({ ...pendingActionsQuery, enabled: open });
+  // Polled while a request is open here, as Requests polls, so an answer from another tab or the
+  // agent's link closes the dialog rather than leaving a settled ask answerable.
+  const pending = useQuery({
+    ...pendingActionsQuery,
+    enabled: open || requestOpen,
+    refetchInterval: requestOpen ? 15_000 : false,
+  });
   const agents = useQuery({ ...agentsQuery, enabled: open });
   const activity = useInfiniteQuery({ ...activityScreenQuery({}), enabled: open });
   const searching = open && directoryQuery !== "";
   const directory = useQuery({
     ...paletteDirectorySearchQuery(directoryQuery),
     enabled: searching,
-    placeholderData: keepPreviousData,
   });
   const directoryHome = useQuery({ ...paletteDirectoryHomeQuery, enabled: searching });
+
+  React.useEffect(() => {
+    if (!requestOpen || !shownRequest || !pending.data) return;
+    const live = pending.data.pendingActions.find((action) => action.id === shownRequest.id);
+    if (live) {
+      if (live !== shownRequest) setShownRequest(live);
+      return;
+    }
+    setRequestOpen(false);
+    toast.info("That request was answered or expired", {
+      description: "Requests shows where it stands.",
+    });
+  }, [requestOpen, shownRequest, pending.data]);
 
   const view = paletteView(
     {
@@ -171,7 +187,9 @@ export function CommandPalette() {
       agents: agents.data?.agents,
       // The newest page alone: the read takes no words, so the palette filters what it has.
       activity: activity.data ? activityRows(activity.data.pages.slice(0, 1)) : undefined,
-      directory: searching ? directory.data?.entries : undefined,
+      // Only the answer to what is typed now: while the next word's read is in flight the last
+      // word's rows would be offered for a query they do not match.
+      directory: searching && directoryQuery === query.trim() ? directory.data?.entries : undefined,
       directoryTotal: directoryHome.data?.total,
     },
     query,
@@ -192,14 +210,25 @@ export function CommandPalette() {
     }
   };
 
+  const openRequest = async (id: string) => {
+    const latest = await queryClient
+      .fetchQuery({ ...pendingActionsQuery, staleTime: 0 })
+      .catch(() => null);
+    const live = latest?.pendingActions.find((action) => action.id === id);
+    // Answered or gone since the palette read the list (or the read failed): Requests says where
+    // it stands.
+    if (!live) {
+      void navigate({ to: "/pending" });
+      return;
+    }
+    setShownRequest(live);
+    setRequestOpen(true);
+  };
+
   const choose = (item: PaletteItem) => {
     setOpen(false);
     if ("request" in item.open) {
-      const id = item.open.request;
-      chosenRequest.current =
-        pending.data?.pendingActions.find((action) => action.id === id) ?? null;
-      // Answered or gone since the list was read: Requests says where it stands.
-      if (!chosenRequest.current) void navigate({ to: "/pending" });
+      chosenRequest.current = item.open.request;
       return;
     }
     void go(item.open);
@@ -216,11 +245,9 @@ export function CommandPalette() {
         onOpenChangeComplete={(isOpen) => {
           if (isOpen) return;
           setQuery("");
-          if (chosenRequest.current) {
-            setShownRequest(chosenRequest.current);
-            setRequestOpen(true);
-            chosenRequest.current = null;
-          }
+          const id = chosenRequest.current;
+          chosenRequest.current = null;
+          if (id) void openRequest(id);
         }}
         // 640px at 112px from the top, the Figma frame's (Cando's primitive puts it at a third). On a
         // short screen, a phone on its side, the offset shrinks to 12svh and the dialog is held to the

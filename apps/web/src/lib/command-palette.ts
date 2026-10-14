@@ -23,6 +23,11 @@ export type PaletteItem = {
   mark?: PaletteMark;
   /** The Enter hint on the selected row; `Open` when absent. */
   hint?: "Open" | "Connect";
+  /**
+   * Ranked ahead of how well the row matches, lower first (0 when absent): a revoked agent is 1,
+   * so the best match among them never pushes a working agent past its group's cap.
+   */
+  tier?: number;
   open: PaletteOpen;
 };
 
@@ -160,8 +165,8 @@ export function paletteMatchRank(
 }
 
 /**
- * The rows a query leaves, grouped in `PALETTE_GROUPS` order, each group best match first (rows
- * that match alike keep the order they arrived in) and cut at its `PALETTE_GROUP_LIMITS` once
+ * The rows a query leaves, grouped in `PALETTE_GROUPS` order, each group by `tier`, then best match
+ * first (rows that match alike keep the order they arrived in) and cut at its `PALETTE_GROUP_LIMITS` once
  * something is typed, and a group with nothing left omitted so no heading stands over an empty
  * list.
  *
@@ -170,12 +175,12 @@ export function paletteMatchRank(
  * query matches every row.
  */
 export function filterPalette(items: readonly PaletteItem[], query: string): PaletteGroup[] {
-  const ranked: { item: PaletteItem; index: number; rank: number }[] = [];
+  const ranked: { item: PaletteItem; index: number; rank: number; tier: number }[] = [];
   items.forEach((item, index) => {
     const rank = paletteMatchRank(item, query);
-    if (rank !== null) ranked.push({ item, index, rank });
+    if (rank !== null) ranked.push({ item, index, rank, tier: item.tier ?? 0 });
   });
-  ranked.sort((a, b) => a.rank - b.rank || a.index - b.index);
+  ranked.sort((a, b) => a.tier - b.tier || a.rank - b.rank || a.index - b.index);
   const blank = words(query).length === 0;
 
   return groupPalette(ranked.map((row) => row.item)).map((group) => {
