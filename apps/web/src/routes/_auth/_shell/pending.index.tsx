@@ -15,24 +15,30 @@ import {
   RequestListNote,
   RequestRow,
 } from "@/components/pending/request-row";
+import { SignInRequestRow } from "@/components/pending/sign-in-request-row";
 import { RetryNotice } from "@/components/retry-notice";
 import { useScreenTitle } from "@/components/shell/screen-title";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { agentsQuery } from "@/lib/agent-queries";
+import { integrationsQuery } from "@/lib/integration-queries";
 import { harnessMark } from "@/lib/marks";
 import { pendingActionsQuery } from "@/lib/pending-action-queries";
+import { signInRequestsOf } from "@/lib/sign-in-requests";
 
 /**
  * Requests (CONTEXT.md, *Request*; ADR 0006: answerable later, from here): the open asks across
  * every agent, one row each (GRA-310). The loader starts the reads and awaits neither, so the list
  * draws its own pending and failed rows (GRA-47); the agents are only for each row's harness mark,
  * which reads as the generic glyph until they land. The Done tab is GRA-312's, drawn disabled.
+ * Above the asks, the connections that need the person to sign in (GRA-313), from the
+ * integrations read: they join Open once it lands, and a failed read leaves the asks alone.
  */
 export const Route = createFileRoute("/_auth/_shell/pending/")({
   loader: ({ context }) => {
     void context.queryClient.prefetchQuery(pendingActionsQuery);
     void context.queryClient.prefetchQuery(agentsQuery);
+    void context.queryClient.prefetchQuery(integrationsQuery);
   },
   component: RequestsRoute,
 });
@@ -40,7 +46,9 @@ export const Route = createFileRoute("/_auth/_shell/pending/")({
 function RequestsRoute() {
   const requests = useQuery({ ...pendingActionsQuery, refetchInterval: 15_000 });
   const agents = useQuery(agentsQuery);
+  const integrations = useQuery({ ...integrationsQuery, refetchInterval: 15_000 });
   const rows = requests.data?.pendingActions ?? [];
+  const signIns = signInRequestsOf(integrations.data?.integrations ?? []);
   const harnessOf = new Map(
     (agents.data?.agents ?? []).map((agent) => [
       agent.id,
@@ -63,7 +71,9 @@ function RequestsRoute() {
         <TabsList variant="line" className="w-full justify-start border-border border-b">
           <TabsTrigger value="open">
             Open
-            {requests.data ? <Badge variant="secondary">{rows.length}</Badge> : null}
+            {requests.data ? (
+              <Badge variant="secondary">{rows.length + signIns.length}</Badge>
+            ) : null}
           </TabsTrigger>
           <TabsTrigger value="done" disabled>
             Done
@@ -85,18 +95,23 @@ function RequestsRoute() {
                   retrying={requests.isFetching}
                 />
               </RequestListNote>
-            ) : rows.length === 0 ? (
+            ) : rows.length + signIns.length === 0 ? (
               <RequestListNote>
                 Nothing is waiting on you. When an agent needs an answer, it appears here.
               </RequestListNote>
             ) : (
-              rows.map((action) => (
-                <RequestRow
-                  key={action.id}
-                  action={action}
-                  harness={harnessOf.get(action.agentId) ?? "generic"}
-                />
-              ))
+              <>
+                {signIns.map((request) => (
+                  <SignInRequestRow key={request.key} request={request} />
+                ))}
+                {rows.map((action) => (
+                  <RequestRow
+                    key={action.id}
+                    action={action}
+                    harness={harnessOf.get(action.agentId) ?? "generic"}
+                  />
+                ))}
+              </>
             )}
           </RequestList>
 
