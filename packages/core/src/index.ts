@@ -184,8 +184,10 @@ export {
 } from "./connection/connection.rules";
 export {
   type ConnectionOutput,
+  type ConnectionState,
   type ConnectThroughProviderInput,
   completeOAuthConsent,
+  connectionStateOf,
   connectThroughProvider,
   getConnection,
   isConnectionUsable,
@@ -308,6 +310,16 @@ export {
   providerListProblem,
   providerNamed,
 } from "./connection/provider";
+export {
+  defaultSuggestedIntegrationDeps,
+  listSuggestedIntegrations,
+  SUGGESTED_INTEGRATIONS_LIMIT,
+  SUGGESTED_LOGO_TIMEOUT_MS,
+  type SuggestedAskState,
+  type SuggestedIntegration,
+  type SuggestedIntegrationDeps,
+  suggestedAskState,
+} from "./connection/suggested.service";
 export type { ServiceContext } from "./context";
 export {
   HTTP_STATUS_BY_CODE,
@@ -316,6 +328,15 @@ export {
   ServiceError,
   type ServiceErrorCode,
 } from "./errors";
+export { createIntegrationDeps, type IntegrationDeps } from "./integration/integration.deps";
+export {
+  type IntegrationAgentOutput,
+  type IntegrationAttentionReason,
+  type IntegrationConnectionOutput,
+  type IntegrationOutput,
+  listIntegrations,
+  worstAttention,
+} from "./integration/integration.service";
 export { isKebabCase } from "./kebab-case";
 export { defaultLedgerDeps, type LedgerDeps } from "./ledger/ledger.deps";
 export {

@@ -17,6 +17,7 @@ import {
   addAgentConnection,
   findAgentForUpdate,
   issueAgentToken,
+  listActiveAgentReach,
   listAgentConnectionIds,
   listAgentIdsForConnection,
   listAgentPersonIds,
@@ -68,6 +69,7 @@ import {
   findPendingAction,
   listOpenToolActions,
   listPendingActionsByKind,
+  listSuggestedConnectionAsks,
   lockPendingActionKey,
   settleAnsweredToolActions,
 } from "./pending-action";
@@ -84,6 +86,7 @@ import {
   lockStockCatalogue,
 } from "./stock";
 import {
+  countLiveToolsByVendor,
   findAuthoredToolForUpdate,
   findToolVersion,
   listAuthoredToolsForVendor,
@@ -92,7 +95,7 @@ import {
   lockAuthoredToolName,
   setCurrentToolVersion,
 } from "./tool";
-import { lastRunByToolForPerson, listUsage, listUsageForVendor } from "./usage";
+import { lastRunByToolForPerson, lastUsedAtByVendor, listUsage, listUsageForVendor } from "./usage";
 import {
   deleteWorkingSetEntriesForConnection,
   deleteWorkingSetEntry,
@@ -651,6 +654,56 @@ describe("person-scoped statements take the person", () => {
   });
 
   /**
+   * The integrations list (GRA-291): three statements beside `listConnections`, each under the
+   * person, so the list costs four whatever the person holds.
+   */
+  it("the integrations list's agent reach takes the person on both sides of the pair", async () => {
+    await listActiveAgentReach(db, "person_1");
+    const s = only();
+    expect(s.sql).toMatch(/^select .* from "agent" inner join "connection" on/);
+    expect(s.sql).toContain('"connection"."person_id" = $1');
+    expect(s.sql).toContain('"connection"."revoked_at" is null');
+    expect(s.sql).toContain('"agent"."scope_mode" = $2');
+    expect(s.sql).toContain(
+      'exists (select "agent_id" from "agent_connection" where ("agent_connection"."agent_id" = "agent"."id" and "agent_connection"."connection_id" = "connection"."id"))',
+    );
+    expect(s.sql).toContain('where ("agent"."person_id" = $3 and "agent"."revoked_at" is null)');
+    expect(s.params).toEqual(["person_1", "all", "person_1"]);
+  });
+
+  it("the integrations list's tool counts, live tools of the person per vendor", async () => {
+    await countLiveToolsByVendor(db, "person_1");
+    const s = only();
+    expect(s.sql).toBe(
+      'select "vendor", count(*) from "authored_tool" where ("authored_tool"."person_id" = $1 and "authored_tool"."current_version_id" is not null) group by "authored_tool"."vendor" order by "authored_tool"."vendor" asc',
+    );
+    expect(s.params).toEqual(["person_1"]);
+  });
+
+  it("the integrations list's last call per vendor, by the vendor-usage rule, through the agent's owner", async () => {
+    await lastUsedAtByVendor(db, "person_1", { toolNames: ["execute__conn_1", "execute__conn_2"] });
+    const s = only();
+    expect(s.sql).toContain('inner join "agent" on "usage_ledger"."agent_id" = "agent"."id"');
+    expect(s.sql).toContain(
+      'left join "authored_tool" on "usage_ledger"."tool_id" = "authored_tool"."id"',
+    );
+    expect(s.sql).toContain(
+      'where ("agent"."person_id" = $1 and ("authored_tool"."vendor" is not null or "usage_ledger"."tool_name" in ($2, $3)))',
+    );
+    expect(s.sql).toMatch(/group by "authored_tool"\."vendor", case when/);
+    expect(s.params).toEqual(["person_1", "execute__conn_1", "execute__conn_2"]);
+  });
+
+  it("the integrations list's last call with no execute names reads the tool rows alone", async () => {
+    await lastUsedAtByVendor(db, "person_1", { toolNames: [] });
+    const s = only();
+    expect(s.sql).toContain(
+      'where ("agent"."person_id" = $1 and "authored_tool"."vendor" is not null)',
+    );
+    expect(s.params).toEqual(["person_1"]);
+  });
+
+  /**
    * An integration's last run per tool (GRA-293), across the person's agents: under both owners,
    * the agent's and the tool's, dry runs and refusals left out, the newest line per tool.
    */
@@ -1017,6 +1070,34 @@ describe("person-scoped statements take the person", () => {
     expect(s.sql).toContain('in (select "id" from "agent" where "agent"."person_id" = $');
     expect(s.sql).toContain('"pending_action"."answered_at" is null');
     expect(s.sql).toContain('"pending_action"."expires_at" > $');
+  });
+
+  /**
+   * "Your agents asked for these" (ADR 0001 as amended 2026-10-14, GRA-305): the person on both
+   * tables, the ask through its agent's owner and the connection through its own column, so neither
+   * the asks nor the "already connected" test reads another person's rows.
+   */
+  it("the suggested integrations name the person on the asks and on the connections they rule out", async () => {
+    await listSuggestedConnectionAsks(db, "person_1", 12);
+    const s = only();
+    expect(s.sql).toMatch(
+      /^select .* from \(select distinct on \("pending_action"\."payload" ->> 'vendor'\)/,
+    );
+    expect(s.sql).toContain(
+      'from "pending_action" inner join "agent" on "agent"."id" = "pending_action"."agent_id"',
+    );
+    expect(s.sql).toContain('"agent"."person_id" = $1');
+    expect(s.sql).toContain('"agent"."revoked_at" is null');
+    expect(s.sql).toContain('"pending_action"."kind" = $2');
+    expect(s.sql).toContain(
+      `not exists (select "id" from "connection" where ("connection"."person_id" = $3 and "connection"."vendor" = "pending_action"."payload" ->> 'vendor' and "connection"."revoked_at" is null))`,
+    );
+    // The newest ask per vendor decides; only then is one answered with a connection left out.
+    expect(s.sql).toContain(
+      `order by "pending_action"."payload" ->> 'vendor', "pending_action"."created_at" desc, "pending_action"."id" desc) "latest" where "answered_with" is null`,
+    );
+    expect(s.sql).toMatch(/order by "latest"\."created_at" desc, "latest"\."id" desc limit \$4$/);
+    expect(s.params).toEqual(["person_1", "connection", "person_1", 12]);
   });
 
   /** A revoke's third sweep (GRA-28): by the column, under the person, both clocks stamped, the JSON unread. */
