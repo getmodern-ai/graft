@@ -1,3 +1,4 @@
+import { approvalDecision } from "@graft/core/approval/approval.decision";
 import type { DonePendingActionCard } from "@graft/server/api";
 
 import type { Jsonified } from "./api";
@@ -12,15 +13,19 @@ import { toolAskIntegrationName } from "./tool-ask-copy";
  * one sentence saying what happened, a sub-line, and Change where an answer stands now that a
  * console route can change (ADR 0008 as amended 2026-10-14). The row reads the ask the agent made
  * (`readAsk`) and how it finished (GRA-292's `state`, `closedReason`, `answer`); Change never
- * replays that answer, it opens what stands (`changeTargets`, then `standingTool` and its kin).
+ * replays that answer, it opens what stands (`ChangeTargets`, then `standingTool`,
+ * `toolChangeView` and their kin, read fresh).
  */
 
 export type DoneRequest = Jsonified<DonePendingActionCard>;
 
 /** What Change opens: the tool's answer and its integration's, or a connection's build approval. */
 export type ChangeTargets = {
-  /** A tool that asks: its answer can be set outright (`PUT /agents/:id/approvals/:toolId`). */
-  tool: { toolId: string; label: string; destructive: boolean } | null;
+  /**
+   * A tool that asked: its answer can be set outright (`PUT /agents/:id/approvals/:toolId`). Its
+   * annotations and version are read from the toolbox when Change opens, never from the ask.
+   */
+  tool: { toolId: string; label: string } | null;
   /** The integration whose standing approval, if one stands, can be widened, narrowed or withdrawn. */
   vendor: { slug: string; integrationName: string } | null;
   /** The connection whose build approval, if one stands, can be withdrawn. */
@@ -118,11 +123,7 @@ export function doneRowCopy(card: DoneRequest, agentActive: boolean): DoneRowCop
       const change: ChangeTargets | null =
         agentActive && !payload.annotations.readOnlyHint
           ? {
-              tool: {
-                toolId: payload.toolId,
-                label: sentenceCase(words),
-                destructive: payload.annotations.destructiveHint === true,
-              },
+              tool: { toolId: payload.toolId, label: sentenceCase(words) },
               vendor: { slug: payload.vendor, integrationName: integration },
               buildConnectionId: null,
             }
@@ -213,23 +214,23 @@ export function doneRowCopy(card: DoneRequest, agentActive: boolean): DoneRowCop
           : ask.kind === "connection" && ask.payload.widens
             ? `${agent} can reach more of ${name}`
             : `Connected ${name}`;
-      // What the connection's confirmation granted beside it (GRA-75, GRA-239), when it said so.
-      const build = answer.approveBuild === true;
-      const vendorTools = answer.allowVendor === true;
+      // A connection's confirmation may grant the build approval and every non-destructive tool
+      // beside it (GRA-75, GRA-239), but the answer records only `{ connectionId }`: the grants
+      // are rows of their own. So Change opens both for any connection made, and the dialog shows
+      // whichever stands now. A credential re-entry grants nothing.
       const connectionId = card.subject.connectionId;
       return {
         ...base,
         title,
         detail: ask.kind === "credential" ? null : `For ${agent}`,
         change:
-          agentActive && (build || vendorTools)
+          agentActive && ask.kind !== "credential" && connectionId
             ? {
                 tool: null,
-                vendor:
-                  vendorTools && open.vendor
-                    ? { slug: open.vendor, integrationName: open.integrationName ?? name }
-                    : null,
-                buildConnectionId: build ? connectionId : null,
+                vendor: open.vendor
+                  ? { slug: open.vendor, integrationName: open.integrationName ?? name }
+                  : null,
+                buildConnectionId: connectionId,
               }
             : null,
       };
@@ -273,15 +274,35 @@ export function doneRowWhen(
   return { iso: card.finishedAt, label: leading ? sentenceCase(label) : label };
 }
 
-/** The tool's answer as it stands now, from `GET /approvals`; null where none stands, so it asks. */
-export type StandingTool = { decision: "allow" | "deny"; askEveryCall: boolean } | null;
+/**
+ * The tool's answer as it stands now, from `GET /approvals`: null where none stands.
+ * `forThisVersion` is whether it was given for the version the tool runs now
+ * (`approval.tool_version_id` against the toolbox's `currentVersionId`; GRA-245), since an allow
+ * for another version asks again.
+ */
+export type StandingTool = {
+  decision: "allow" | "deny";
+  askEveryCall: boolean;
+  forThisVersion: boolean;
+} | null;
 
 export function standingTool(
-  approvals: readonly { toolId: string; decision: "allow" | "deny"; askEveryCall: boolean }[],
+  approvals: readonly {
+    toolId: string;
+    decision: "allow" | "deny";
+    askEveryCall: boolean;
+    toolVersionId: string | null;
+  }[],
   toolId: string,
+  currentVersionId: string | null,
 ): StandingTool {
   const row = approvals.find((approval) => approval.toolId === toolId);
-  return row ? { decision: row.decision, askEveryCall: row.askEveryCall } : null;
+  if (!row) return null;
+  return {
+    decision: row.decision,
+    askEveryCall: row.askEveryCall,
+    forThisVersion: row.toolVersionId !== null && row.toolVersionId === currentVersionId,
+  };
 }
 
 /** The integration's standing approval, from `GET /vendor-approvals`; null where none stands. */
@@ -301,21 +322,77 @@ export function standingBuild(
   return buildApprovals.some((approval) => approval.connectionId === connectionId);
 }
 
+/** The tool as the toolbox holds it now, from `GET /tools`; null where it is gone. */
+export type CurrentTool = {
+  currentVersionId: string | null;
+  readOnly: boolean;
+  destructive: boolean;
+} | null;
+
+/** What Change's tool line says and offers, judged on the tool as it runs now. */
+export type ToolChangeView = {
+  sentence: string;
+  allow: boolean;
+  deny: boolean;
+  withdraw: boolean;
+  /** The ask-every-call switch's state, or null where it has nothing to change. */
+  askEveryCall: boolean | null;
+  /** The current version's, for the line's "Can delete" chip; never the historic ask's. */
+  destructive: boolean;
+};
+
 /**
- * How the tool runs now, in a sentence: its own answer wins over the integration's (ADR 0008 as
- * amended 2026-10-09: a tool's `deny` and `askEveryCall` win), and a destructive tool passes on
- * the integration's only where that approval includes destructive ones.
+ * How the tool runs now and what can change it, by ADR 0008's gate (`approvalDecision`, as amended
+ * 2026-10-09: the tool's own `deny` and `askEveryCall` win over the integration's yes, an allow
+ * passes only for the version it was given for, and a destructive tool passes the integration's
+ * only where that includes destructive ones), on the current version's annotations. A tool gone
+ * from the toolbox, or now read-only, offers nothing to set; one with no version offers only
+ * Withdraw, since `PUT /agents/:id/approvals/:toolId` refuses it.
  */
-export function standingToolSentence(
+export function toolChangeView(
+  current: CurrentTool,
   tool: StandingTool,
   vendor: { includesDestructive: boolean } | null,
-  destructive: boolean,
-): string {
-  if (tool?.decision === "deny") return "Denied. Every call is refused.";
-  if (tool?.askEveryCall) return "Asks you before every call.";
-  if (tool?.decision === "allow") return "Allowed. It runs without asking.";
-  if (vendor && (!destructive || vendor.includesDestructive)) {
-    return "Runs without asking, under the integration's approval.";
+): ToolChangeView {
+  const nothing = { allow: false, deny: false, askEveryCall: null, withdraw: tool !== null };
+  if (!current) {
+    return {
+      ...nothing,
+      destructive: false,
+      sentence: "This tool is no longer in your toolbox.",
+    };
   }
-  return "No answer stands. It asks the next time it runs.";
+  if (current.readOnly) {
+    return { ...nothing, destructive: false, sentence: "It only reads now, so it never asks." };
+  }
+  const verdict = approvalDecision({
+    annotations: { readOnly: false, destructive: current.destructive },
+    approval: tool,
+    vendorApproval: vendor,
+  });
+  const settable = current.currentVersionId !== null;
+  const view = {
+    allow: settable && !(tool?.decision === "allow" && tool.forThisVersion),
+    deny: settable && tool?.decision !== "deny",
+    withdraw: tool !== null,
+    askEveryCall: tool?.decision === "allow" ? tool.askEveryCall : null,
+    destructive: current.destructive,
+  };
+  if (verdict === "deny") return { ...view, sentence: "Denied. Every call is refused." };
+  if (tool?.askEveryCall) return { ...view, sentence: "Asks you before every call." };
+  if (verdict === "pass") {
+    return {
+      ...view,
+      sentence: tool?.forThisVersion
+        ? "Allowed. It runs without asking."
+        : "Runs without asking, under the integration's approval.",
+    };
+  }
+  if (tool?.decision === "allow") {
+    return {
+      ...view,
+      sentence: "Allowed for an earlier version. It asks once before running this one.",
+    };
+  }
+  return { ...view, sentence: "No answer stands. It asks the next time it runs." };
 }

@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 
 import { RetryNotice } from "@/components/retry-notice";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -32,13 +33,14 @@ import {
   withdrawBuildApproval,
   withdrawVendorApproval,
 } from "@/lib/approval-queries";
+import { toolsQuery } from "@/lib/connection-queries";
 import { pendingKeys } from "@/lib/pending-action-queries";
 import {
   type ChangeTargets,
   standingBuild,
   standingTool,
-  standingToolSentence,
   standingVendor,
+  toolChangeView,
 } from "@/lib/request-done";
 
 /**
@@ -66,6 +68,8 @@ export function ChangeAnswerDialog({
 }) {
   const queryClient = useQueryClient();
   const tools = useQuery({ ...approvalsQuery(agentId), enabled: open && targets.tool !== null });
+  // The tool as it runs now: its version and annotations decide the line, never the ask's.
+  const toolbox = useQuery({ ...toolsQuery, enabled: open && targets.tool !== null });
   const vendors = useQuery({
     ...vendorApprovalsQuery(agentId),
     enabled: open && targets.vendor !== null,
@@ -76,6 +80,7 @@ export function ChangeAnswerDialog({
   });
   const reads = [
     targets.tool ? tools : null,
+    targets.tool ? toolbox : null,
     targets.vendor ? vendors : null,
     targets.buildConnectionId ? builds : null,
   ].filter((read) => read !== null);
@@ -141,7 +146,17 @@ export function ChangeAnswerDialog({
   const vendor = targets.vendor
     ? standingVendor(vendors.data?.vendorApprovals ?? [], targets.vendor.slug)
     : null;
-  const tool = targets.tool ? standingTool(tools.data?.approvals ?? [], targets.tool.toolId) : null;
+  const current = targets.tool
+    ? (toolbox.data?.tools.find((candidate) => candidate.id === targets.tool?.toolId) ?? null)
+    : null;
+  const tool = targets.tool
+    ? standingTool(
+        tools.data?.approvals ?? [],
+        targets.tool.toolId,
+        current?.currentVersionId ?? null,
+      )
+    : null;
+  const view = targets.tool ? toolChangeView(current, tool, vendor) : null;
   const build = targets.buildConnectionId
     ? standingBuild(builds.data?.buildApprovals ?? [], targets.buildConnectionId)
     : false;
@@ -177,16 +192,17 @@ export function ChangeAnswerDialog({
           </p>
         ) : (
           <ItemGroup className="gap-2">
-            {targets.tool ? (
+            {targets.tool && view ? (
               <Item variant="outline">
                 <ItemContent>
-                  <ItemTitle>{targets.tool.label}</ItemTitle>
-                  <ItemDescription>
-                    {standingToolSentence(tool, vendor, targets.tool.destructive)}
-                  </ItemDescription>
+                  <ItemTitle>
+                    {targets.tool.label}
+                    {view.destructive ? <Badge variant="destructive">Can delete</Badge> : null}
+                  </ItemTitle>
+                  <ItemDescription>{view.sentence}</ItemDescription>
                 </ItemContent>
                 <ItemActions>
-                  {tool?.decision !== "allow" ? (
+                  {view.allow ? (
                     <Button
                       size="sm"
                       disabled={busy}
@@ -198,7 +214,7 @@ export function ChangeAnswerDialog({
                       Allow
                     </Button>
                   ) : null}
-                  {tool?.decision !== "deny" ? (
+                  {view.deny ? (
                     <Button
                       variant="outline"
                       size="sm"
@@ -211,7 +227,7 @@ export function ChangeAnswerDialog({
                       Deny
                     </Button>
                   ) : null}
-                  {tool ? (
+                  {view.withdraw ? (
                     <Button
                       variant="ghost"
                       size="sm"
@@ -224,7 +240,7 @@ export function ChangeAnswerDialog({
                 </ItemActions>
               </Item>
             ) : null}
-            {targets.tool && tool?.decision === "allow" ? (
+            {targets.tool && view?.askEveryCall != null ? (
               <Item variant="outline">
                 <ItemContent>
                   <ItemTitle>Ask every time</ItemTitle>
@@ -234,7 +250,7 @@ export function ChangeAnswerDialog({
                 </ItemContent>
                 <ItemActions>
                   <Switch
-                    checked={tool.askEveryCall}
+                    checked={view.askEveryCall}
                     disabled={busy}
                     aria-label="Ask every time"
                     onCheckedChange={(on) =>

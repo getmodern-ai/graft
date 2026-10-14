@@ -7,8 +7,8 @@ import {
   doneRowWhen,
   standingBuild,
   standingTool,
-  standingToolSentence,
   standingVendor,
+  toolChangeView,
 } from "./request-done";
 
 const NOW = new Date("2026-10-14T12:00:00.000Z");
@@ -74,7 +74,7 @@ describe("doneRowCopy: tool asks", () => {
     expect(copy.title).toBe("Codex can always send email in Gmail");
     expect(copy.detail).toBeNull();
     expect(copy.change).toEqual({
-      tool: { toolId: "tool_1", label: "Send email", destructive: false },
+      tool: { toolId: "tool_1", label: "Send email" },
       vendor: { slug: "gmail", integrationName: "Gmail" },
       buildConnectionId: null,
     });
@@ -154,27 +154,49 @@ describe("doneRowCopy: build, scope and connection asks", () => {
     ).toEqual({ tool: null, vendor: null, buildConnectionId: "con_2" });
   });
 
-  it("says a connection made, and what its confirmation granted", () => {
-    const plain = doneRowCopy(
+  it("says a connection made, and opens what its confirmation may have granted", () => {
+    // The answer as the server records it: `{ connectionId }` alone, the grants rows of their own.
+    const made = doneRowCopy(
       card("connection", proposal(), {
         answer: { connectionId: "con_9" },
         subject: { toolId: null, vendor: "notion", connectionId: "con_9" },
       }),
       true,
     );
-    expect(plain).toMatchObject({ title: "Connected Notion", detail: "For Codex", change: null });
-    const granted = doneRowCopy(
-      card("connection", proposal(), {
-        answer: { connectionId: "con_9", approveBuild: true, allowVendor: true },
-        subject: { toolId: null, vendor: "notion", connectionId: "con_9" },
-      }),
-      true,
-    );
-    expect(granted.change).toEqual({
+    expect(made).toMatchObject({ title: "Connected Notion", detail: "For Codex" });
+    expect(made.change).toEqual({
       tool: null,
       vendor: { slug: "notion", integrationName: "Notion" },
       buildConnectionId: "con_9",
     });
+  });
+
+  it("offers no Change for a credential re-entry, or a revoked agent's connection", () => {
+    const credential = {
+      connectionId: "con_1",
+      vendor: "gmail",
+      connectionName: "Gmail",
+      scheme: "bearer",
+      schemeConfig: {},
+      revoked: true,
+    };
+    const reconnected = doneRowCopy(
+      card("credential", credential, {
+        answer: { connectionId: "con_1" },
+        subject: { toolId: null, vendor: "gmail", connectionId: "con_1" },
+      }),
+      true,
+    );
+    expect(reconnected).toMatchObject({ title: "Reconnected Gmail", change: null });
+    expect(
+      doneRowCopy(
+        card("connection", proposal(), {
+          answer: { connectionId: "con_9" },
+          subject: { toolId: null, vendor: "notion", connectionId: "con_9" },
+        }),
+        false,
+      ).change,
+    ).toBeNull();
   });
 
   it("says a declined connection", () => {
@@ -233,10 +255,19 @@ describe("doneRowWhen", () => {
 
 describe("what stands now", () => {
   it("reads the tool's, the integration's and the build approval off their reads", () => {
-    expect(
-      standingTool([{ toolId: "tool_1", decision: "deny", askEveryCall: false }], "tool_1"),
-    ).toEqual({ decision: "deny", askEveryCall: false });
-    expect(standingTool([], "tool_1")).toBeNull();
+    const row = { toolId: "tool_1", decision: "allow" as const, askEveryCall: false };
+    expect(standingTool([{ ...row, toolVersionId: "v2" }], "tool_1", "v2")).toEqual({
+      decision: "allow",
+      askEveryCall: false,
+      forThisVersion: true,
+    });
+    expect(standingTool([{ ...row, toolVersionId: "v1" }], "tool_1", "v2")?.forThisVersion).toBe(
+      false,
+    );
+    expect(standingTool([{ ...row, toolVersionId: null }], "tool_1", null)?.forThisVersion).toBe(
+      false,
+    );
+    expect(standingTool([], "tool_1", "v2")).toBeNull();
     expect(standingVendor([{ vendor: "gmail", includesDestructive: true }], "gmail")).toEqual({
       includesDestructive: true,
     });
@@ -245,16 +276,74 @@ describe("what stands now", () => {
     expect(standingBuild([], "con_1")).toBe(false);
   });
 
-  it("says how the tool runs, its own answer winning over the integration's", () => {
-    const vendor = { includesDestructive: false };
-    expect(standingToolSentence({ decision: "deny", askEveryCall: false }, vendor, false)).toMatch(
-      /^Denied/,
-    );
-    expect(standingToolSentence({ decision: "allow", askEveryCall: true }, null, false)).toBe(
-      "Asks you before every call.",
-    );
-    expect(standingToolSentence(null, vendor, false)).toMatch(/integration's approval/);
-    expect(standingToolSentence(null, vendor, true)).toMatch(/^No answer stands/);
+  describe("toolChangeView", () => {
+    const write = { currentVersionId: "v2", readOnly: false, destructive: false };
+    const allow = (forThisVersion: boolean, askEveryCall = false) => ({
+      decision: "allow" as const,
+      askEveryCall,
+      forThisVersion,
+    });
+
+    it("says an allow for this version holds, and offers Deny and Withdraw, not Allow", () => {
+      expect(toolChangeView(write, allow(true), null)).toEqual({
+        sentence: "Allowed. It runs without asking.",
+        allow: false,
+        deny: true,
+        withdraw: true,
+        askEveryCall: false,
+        destructive: false,
+      });
+    });
+
+    it("says an allow for an earlier version asks again, and offers Allow for this one", () => {
+      const view = toolChangeView(write, allow(false), null);
+      expect(view.sentence).toBe(
+        "Allowed for an earlier version. It asks once before running this one.",
+      );
+      expect(view.allow).toBe(true);
+    });
+
+    it("lets the tool's deny and ask-every-call win over the integration's yes", () => {
+      const vendor = { includesDestructive: true };
+      const deny = { decision: "deny" as const, askEveryCall: false, forThisVersion: false };
+      expect(toolChangeView(write, deny, vendor)).toMatchObject({
+        sentence: "Denied. Every call is refused.",
+        allow: true,
+        deny: false,
+        askEveryCall: null,
+      });
+      expect(toolChangeView(write, allow(true, true), vendor).sentence).toBe(
+        "Asks you before every call.",
+      );
+    });
+
+    it("judges the integration's approval on the current version's annotations", () => {
+      const vendor = { includesDestructive: false };
+      expect(toolChangeView(write, null, vendor).sentence).toMatch(/integration's approval/);
+      const nowDestructive = { ...write, destructive: true };
+      expect(toolChangeView(nowDestructive, null, vendor)).toMatchObject({
+        sentence: "No answer stands. It asks the next time it runs.",
+        destructive: true,
+        withdraw: false,
+      });
+    });
+
+    it("offers nothing to set for a tool gone, read-only now, or with no version", () => {
+      expect(toolChangeView(null, allow(true), null)).toMatchObject({
+        allow: false,
+        deny: false,
+        withdraw: true,
+      });
+      expect(toolChangeView({ ...write, readOnly: true }, null, null)).toMatchObject({
+        sentence: "It only reads now, so it never asks.",
+        allow: false,
+        deny: false,
+        withdraw: false,
+      });
+      expect(
+        toolChangeView({ ...write, currentVersionId: null }, allow(false), null),
+      ).toMatchObject({ allow: false, deny: false, withdraw: true });
+    });
   });
 
   it("titles the dialog by what stands, not the row's past", () => {
