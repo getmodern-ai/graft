@@ -33,7 +33,7 @@ const NAV_KEYWORDS: Record<NavTarget, readonly string[]> = {
   "/": ["start", "overview"],
   "/pending": ["pending", "actions", "asks", "approvals", "inbox"],
   "/agents": ["harness", "token"],
-  "/connections": ["connections", "tools"],
+  "/integrations": ["connections", "tools"],
   "/settings": ["model", "key", "preferences"],
 };
 
