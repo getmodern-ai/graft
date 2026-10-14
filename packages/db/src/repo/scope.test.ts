@@ -55,6 +55,7 @@ import {
   findConnection,
   findConnectionByIdUnscoped,
   findConnectionForUpdate,
+  findVendorConnectionsForUpdate,
   revokeConnection,
   setConnectionProviderRef,
 } from "./connection";
@@ -64,6 +65,7 @@ import {
   consumePendingAction,
   expirePendingActionsForConnection,
   findPendingAction,
+  listOpenToolActions,
   listPendingActionsByKind,
   lockPendingActionKey,
   settleAnsweredToolActions,
@@ -212,6 +214,24 @@ describe("agent-scoped reads take both ids of the scope in the statement", () =>
   });
 
   /** ADR 0008 as amended 2026-10-14 (GRA-302): widening or narrowing one that stands. */
+  it("locking a vendor's connections, and the rows open asks name, under the person in id order", async () => {
+    await findVendorConnectionsForUpdate(db, "person_1", "hubspot");
+    const vendorOnly = only();
+    expect(vendorOnly.sql).toMatch(/^select .* from "connection" where/);
+    expect(vendorOnly.sql).toContain('"connection"."person_id" = $1');
+    expect(vendorOnly.sql).toContain('"connection"."vendor" = $2');
+    expect(vendorOnly.sql).toMatch(/order by "connection"\."id" asc for update$/);
+    expect(vendorOnly.params).toEqual(["person_1", "hubspot"]);
+
+    statements = [];
+    await findVendorConnectionsForUpdate(db, "person_1", "hubspot", ["conn_9"]);
+    const named = only();
+    expect(named.sql).toContain(
+      '("connection"."person_id" = $1 and ("connection"."vendor" = $2 or "connection"."id" in ($3)))',
+    );
+    expect(named.params).toEqual(["person_1", "hubspot", "conn_9"]);
+  });
+
   it("widening or narrowing an integration's standing approval", async () => {
     await updateVendorApprovalDestructive(db, SCOPE, "hubspot", {
       includesDestructive: true,
@@ -460,11 +480,29 @@ describe("agent-scoped writes take both ids too, so a mis-scoped write edits not
   });
 
   /** ADR 0008 as amended 2026-10-14 (GRA-302): an answer set outright closes the open asks. */
-  it("answering a tool's open asks with the answer the console set, for one version or every one", async () => {
+  it("reading a tool's open asks, plain and locked", async () => {
+    const at = new Date("2026-10-14T00:00:00Z");
+    await listOpenToolActions(db, SCOPE, "tool_1", at);
+    const plain = only();
+    expect(plain.sql).toMatch(/^select .* from "pending_action" where/);
+    expect(plain.sql).toMatch(SCOPED_AGENT);
+    expect(plain.sql).toContain(`"pending_action"."payload" ->> 'toolId' = $`);
+    expect(plain.sql).toContain('"pending_action"."answered_at" is null');
+    expect(plain.sql).toContain('"pending_action"."consumed_at" is null');
+    expect(plain.sql).toContain('"pending_action"."expires_at" > $');
+    expect(plain.sql).toMatch(/order by "pending_action"\."id"( asc)?$/);
+
+    statements = [];
+    await listOpenToolActions(db, SCOPE, "tool_1", at, { forUpdate: true });
+    const locked = only();
+    expect(locked.sql).toMatch(SCOPED_AGENT);
+    expect(locked.sql).toMatch(/ for update$/);
+  });
+
+  it("answering the open asks it locked with the answer the console set", async () => {
     const at = new Date("2026-10-14T00:00:00Z");
     await answerOpenToolActions(db, SCOPE, {
-      toolId: "tool_1",
-      versionId: "ver_1",
+      ids: ["pa_1"],
       answer: { allow: true, via: "setting" },
       at,
     });
@@ -472,25 +510,17 @@ describe("agent-scoped writes take both ids too, so a mis-scoped write edits not
     expect(s.sql).toMatch(
       /^update "pending_action" set "answered_at" = \$1, "answer" = \$2, "consumed_at" = \$3/,
     );
+    expect(s.sql).toContain('"pending_action"."id" in ($');
     expect(s.sql).toMatch(SCOPED_AGENT);
     expect(s.sql).toContain('"pending_action"."kind" = $');
-    expect(s.sql).toContain(`"pending_action"."payload" ->> 'toolId' = $`);
-    expect(s.sql).toContain(`"pending_action"."payload" ->> 'toolVersionId' = $`);
     expect(s.sql).toContain('"pending_action"."answered_at" is null');
     expect(s.sql).toContain('"pending_action"."consumed_at" is null');
     expect(s.sql).toContain('"pending_action"."expires_at" > $');
-    expect(s.params).toContain("ver_1");
+    expect(s.params).toContain("pa_1");
 
     statements = [];
-    await answerOpenToolActions(db, SCOPE, {
-      toolId: "tool_1",
-      versionId: null,
-      answer: { allow: false, via: "setting" },
-      at,
-    });
-    const every = only();
-    expect(every.sql).toMatch(SCOPED_AGENT);
-    expect(every.sql).not.toContain("toolVersionId");
+    await answerOpenToolActions(db, SCOPE, { ids: [], answer: { allow: false }, at });
+    expect(statements).toHaveLength(0);
   });
 
   it("withdrawing an approval", async () => {

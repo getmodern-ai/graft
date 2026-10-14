@@ -13,8 +13,12 @@ import {
   upsertApproval,
   upsertVendorApproval,
 } from "@graft/db/repo/approval";
-import { findConnection } from "@graft/db/repo/connection";
-import { answerOpenToolActions, settleAnsweredToolActions } from "@graft/db/repo/pending-action";
+import { findConnection, findVendorConnectionsForUpdate } from "@graft/db/repo/connection";
+import {
+  answerOpenToolActions,
+  listOpenToolActions,
+  settleAnsweredToolActions,
+} from "@graft/db/repo/pending-action";
 import {
   findAuthoredToolById,
   findAuthoredToolForUpdate,
@@ -44,6 +48,13 @@ export type ApprovalDeps = {
   settleAnsweredToolActions: typeof settleAnsweredToolActions;
   /** An answer the console sets outright closes the open asks it answers (`setApprovalFromConsole`). */
   answerOpenToolActions: typeof answerOpenToolActions;
+  /** Read plain for the connections the asks name, then locked after them (`setApprovalFromConsole`). */
+  listOpenToolActions: typeof listOpenToolActions;
+  /**
+   * The connections whose revoke would sweep the answer, and those the open asks name, locked
+   * first, as a revoke and an answer to an ask lock theirs (`setApprovalFromConsole`).
+   */
+  findVendorConnectionsForUpdate: typeof findVendorConnectionsForUpdate;
   /** The agent an answer set from the console is for must be the person's, and not revoked. */
   findAgent: typeof findAgent;
   /** The tool and the connection an approval names must be the person's. */
@@ -74,6 +85,8 @@ export const defaultApprovalDeps: ApprovalDeps = {
   updateVendorApprovalDestructive,
   settleAnsweredToolActions,
   answerOpenToolActions,
+  listOpenToolActions,
+  findVendorConnectionsForUpdate,
   findAgent,
   findAuthoredToolById,
   findAuthoredToolForUpdate,

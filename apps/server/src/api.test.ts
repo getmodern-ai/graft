@@ -414,7 +414,11 @@ function approvalDeps(): ApprovalDeps {
       ...input,
     })),
     settleAnsweredToolActions: vi.fn(async () => []),
-    answerOpenToolActions: vi.fn(async () => []),
+    answerOpenToolActions: vi.fn(async (_db, _scope, args) =>
+      args.ids.map((id: string) => ({ ...openAction, id })),
+    ),
+    listOpenToolActions: vi.fn(async () => []),
+    findVendorConnectionsForUpdate: vi.fn(async () => [connectionRow]),
     findAgent: vi.fn(async () => agentRow),
     findAuthoredToolById: vi.fn(async () => destructiveTool),
     findAuthoredToolForUpdate: vi.fn(async () => destructiveTool),
@@ -2304,7 +2308,7 @@ describe("approvals", () => {
   /** ADR 0008 as amended 2026-10-14 (GRA-302): the console sets an answer outright, per agent. */
   it("sets a tool's answer for one agent at the tool's current version, and answers the asks it closes", async () => {
     const { app, deps } = harness({ user: { id: "person_1" } });
-    vi.mocked(deps.approval.answerOpenToolActions).mockResolvedValueOnce([openAction]);
+    vi.mocked(deps.approval.listOpenToolActions).mockResolvedValue([openAction]);
     const res = await app.request(
       "/api/agents/agent_1/approvals/tool_1",
       json({ decision: "deny" }, "PUT"),
@@ -2330,7 +2334,26 @@ describe("approvals", () => {
     expect(deps.approval.answerOpenToolActions).toHaveBeenCalledWith(
       fakeDb,
       { personId: "person_1", agentId: "agent_1" },
-      { toolId: "tool_1", versionId: null, answer: { allow: false, via: "setting" }, at: NOW },
+      { ids: ["pa_1"], answer: { allow: false, via: "setting" }, at: NOW },
+    );
+    // The connections the tool's vendor and the open ask name are locked first, as an answer to
+    // the ask locks its connection; then the asks, then the tool row (`recordApprovalAnswer`).
+    expect(deps.approval.findVendorConnectionsForUpdate).toHaveBeenCalledWith(
+      fakeDb,
+      "person_1",
+      "demo",
+      ["conn_1"],
+    );
+    const order = (fn: { mock: { invocationCallOrder: number[] } }, at = 0) =>
+      fn.mock.invocationCallOrder[at] ?? Number.NaN;
+    expect(order(vi.mocked(deps.approval.findVendorConnectionsForUpdate))).toBeLessThan(
+      order(vi.mocked(deps.approval.listOpenToolActions), 1),
+    );
+    expect(order(vi.mocked(deps.approval.listOpenToolActions), 1)).toBeLessThan(
+      order(vi.mocked(deps.approval.findAuthoredToolForUpdate)),
+    );
+    expect(order(vi.mocked(deps.approval.findAuthoredToolForUpdate))).toBeLessThan(
+      order(vi.mocked(deps.approval.upsertApproval)),
     );
 
     const allow = await app.request(
@@ -2341,9 +2364,9 @@ describe("approvals", () => {
     expect(await allow.json()).toMatchObject({ approval: { decision: "allow" } });
   });
 
-  it("refuses a read-only tool with 400, another person's agent or tool with 404, and a malformed body", async () => {
+  it("refuses a read-only tool with 400, another person's agent or tool with 404, an unconnected integration with 409, and a malformed body", async () => {
     const { app, deps } = harness({ user: { id: "person_1" } });
-    vi.mocked(deps.approval.findAuthoredToolForUpdate).mockResolvedValueOnce({
+    vi.mocked(deps.approval.findAuthoredToolById).mockResolvedValueOnce({
       ...destructiveTool,
       destructive: false,
       readOnly: true,
@@ -2361,12 +2384,22 @@ describe("approvals", () => {
     );
     expect(agent.status).toBe(404);
 
-    vi.mocked(deps.approval.findAuthoredToolForUpdate).mockResolvedValueOnce(null);
+    vi.mocked(deps.approval.findAuthoredToolById).mockResolvedValueOnce(null);
     const tool = await app.request(
       "/api/agents/agent_1/approvals/tool_x",
       json({ decision: "allow" }, "PUT"),
     );
     expect(tool.status).toBe(404);
+
+    vi.mocked(deps.approval.findVendorConnectionsForUpdate).mockResolvedValueOnce([
+      { ...connectionRow, revokedAt: NOW },
+    ]);
+    const revoked = await app.request(
+      "/api/agents/agent_1/approvals/tool_1",
+      json({ decision: "allow" }, "PUT"),
+    );
+    expect(revoked.status).toBe(409);
+    expect(await revoked.json()).toMatchObject({ details: { reason: "connection_revoked" } });
 
     const malformed = await app.request(
       "/api/agents/agent_1/approvals/tool_1",

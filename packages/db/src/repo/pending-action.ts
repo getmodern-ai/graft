@@ -284,38 +284,60 @@ export async function settleAnsweredToolActions(
 }
 
 /**
- * Answer every open `tool` ask about one tool for one agent with the answer the console just set
- * outright, and mark each taken (ADR 0008 as amended 2026-10-14; GRA-302). The standing row now
- * carries the answer in full, so the ask is answered and spent at once, as `recordApprovalAnswer`
- * spends an answer the row carries: the person's inbox no longer offers an answer already given,
- * and a call still waiting on the ask reads it as taken and judges the rule again, which is how it
- * passes on the allow or refuses on the deny. `versionId` narrows to the asks naming that version
- * (an allow holds for the version it was set for; GRA-245); null takes every version's (a deny
- * holds across versions). Open and in time in the predicate, as an answer is, so an ask the
- * person answers in the same instant is answered once. The tool is matched on the payload, as
+ * The open `tool` asks about one tool for one agent: unanswered, untaken and in time, in id order
+ * (GRA-302). Read twice by an answer set from the console: once plain, for the connections the asks
+ * name, which it locks first as answering an ask does (`recordApprovalAnswer`), and once with
+ * `forUpdate` after those locks and before the tool row's, which is that path's order (connection,
+ * action, tool), so the two cannot deadlock. The tool is matched on the payload, as
  * `settleAnsweredToolActions` matches it.
+ */
+export async function listOpenToolActions(
+  db: DbOrTx,
+  scope: AgentScope,
+  toolId: string,
+  at: Date,
+  options: { forUpdate?: boolean } = {},
+): Promise<PendingActionRow[]> {
+  const query = db
+    .select()
+    .from(pendingAction)
+    .where(
+      and(
+        inArray(pendingAction.agentId, scopedAgentIds(db, scope)),
+        eq(pendingAction.kind, "tool"),
+        sql`${pendingAction.payload} ->> 'toolId' = ${toolId}`,
+        isNull(pendingAction.answeredAt),
+        isNull(pendingAction.consumedAt),
+        gt(pendingAction.expiresAt, at),
+      ),
+    )
+    .orderBy(pendingAction.id);
+  return options.forUpdate ? query.for("update") : query;
+}
+
+/**
+ * Answer the named open `tool` asks of one agent with the answer the console just set outright,
+ * and mark each taken (ADR 0008 as amended 2026-10-14; GRA-302). The standing row now carries the
+ * answer in full, so the ask is answered and spent at once, as `recordApprovalAnswer` spends an
+ * answer the row carries: the inbox no longer offers an answer already given, and a call still
+ * waiting on the ask reads it as taken and judges the rule again. Only `ids`, the rows the caller
+ * locked (`listOpenToolActions`), so the statement takes no row lock out of order; open and in
+ * time in the predicate, as an answer is.
  */
 export async function answerOpenToolActions(
   db: DbOrTx,
   scope: AgentScope,
-  args: {
-    toolId: string;
-    versionId: string | null;
-    answer: Record<string, unknown>;
-    at: Date;
-  },
+  args: { ids: readonly string[]; answer: Record<string, unknown>; at: Date },
 ): Promise<PendingActionRow[]> {
+  if (args.ids.length === 0) return [];
   return db
     .update(pendingAction)
     .set({ answer: args.answer, answeredAt: args.at, consumedAt: args.at })
     .where(
       and(
+        inArray(pendingAction.id, [...args.ids]),
         inArray(pendingAction.agentId, scopedAgentIds(db, scope)),
         eq(pendingAction.kind, "tool"),
-        sql`${pendingAction.payload} ->> 'toolId' = ${args.toolId}`,
-        args.versionId === null
-          ? undefined
-          : sql`${pendingAction.payload} ->> 'toolVersionId' = ${args.versionId}`,
         isNull(pendingAction.answeredAt),
         isNull(pendingAction.consumedAt),
         gt(pendingAction.expiresAt, args.at),

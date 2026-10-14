@@ -195,18 +195,28 @@ export type ConsoleApprovalResult = {
  * through `setApproval` for the tool's current version, read under the tool row's lock, so an
  * advance in flight either lands first and the answer is for its version, or waits.
  *
+ * **Locked as answering an ask is, and in its order** (`recordApprovalAnswer`: connection, action,
+ * tool): first every connection whose revoke would sweep this answer (the tool's vendor's,
+ * `revokeConnection` sweeping by vendor) with the tool's default and every connection an open ask
+ * names, in id order; then the open asks; then the tool row. A revoke that overlaps therefore
+ * either commits first, and the answer is refused below, or waits and sweeps the answer this
+ * wrote, so an allow never outlives a revoke and passes a write after a reconnect (ADR 0007, ADR
+ * 0008); and an answer to an ask that overlaps queues on the same connection rather than each
+ * holding a row the other wants.
+ *
  * Refused: another person's agent or tool (`NOT_FOUND`), a revoked agent (`CONFLICT`, since this
  * can write a row a revoked agent's record would then carry), a read-only tool (`BAD_REQUEST`:
- * reads never ask), and a tool with no current version (`CONFLICT`, `tool_has_no_version`: there
- * is no version for the answer to be for).
+ * reads never ask), no live connection among those locked (`CONFLICT`, `connection_revoked`: the
+ * revoke's fresh start stands until the person reconnects), and a tool with no current version
+ * (`CONFLICT`, `tool_has_no_version`: there is no version for the answer to be for).
  *
  * **The open asks it answers are closed with it.** Every open ask about the tool for this agent,
  * on a deny, and those naming the current version, on an allow, are answered with the same
- * decision (`via: "setting"`) and taken at once, as an answer the standing row carries in full is
- * (`recordApprovalAnswer`): the inbox stops offering an answer already given, and a call waiting
- * on one judges the rule again. Not on an allow while the tool asks every call: each call's ask is
- * still the person's to answer. A yes left answered for the agent's next call is spent, as
- * `setAskEveryCall` spends one, since it was given under the state this replaces.
+ * decision (`via: "setting"`) and taken at once, as an answer the standing row carries in full is:
+ * the inbox stops offering an answer already given, and a call waiting on one judges the rule
+ * again. Not on an allow while the tool asks every call: each call's ask is still the person's to
+ * answer. A yes left answered for the agent's next call is spent, as `setAskEveryCall` spends one,
+ * since it was given under the state this replaces.
  */
 export async function setApprovalFromConsole(
   ctx: ServiceContext,
@@ -229,6 +239,38 @@ export async function setApprovalFromConsole(
         },
       );
     }
+    // Read unlocked for the vendor and the default binding, as the ask path reads its action
+    // unlocked for the connection it names; the row is read again under its lock below.
+    const seen = orNotFound(
+      await deps.findAuthoredToolById(tx, scope.personId, toolId),
+      "Tool not found",
+    );
+    if (seen.readOnly) {
+      throw new ServiceError("BAD_REQUEST", "A read-only tool never asks, so it takes no answer");
+    }
+    const now = deps.now();
+    const asked = await deps.listOpenToolActions(tx, scope, toolId, now);
+    const named = [
+      ...new Set(
+        [seen.defaultConnectionId, ...asked.map((row) => row.connectionId)].filter(
+          (id): id is string => typeof id === "string",
+        ),
+      ),
+    ];
+    const connections = await deps.findVendorConnectionsForUpdate(
+      tx,
+      scope.personId,
+      seen.vendor,
+      named,
+    );
+    if (!connections.some((row) => row.revokedAt === null)) {
+      throw new ServiceError(
+        "CONFLICT",
+        "This tool's integration is not connected, so no answer is recorded. Reconnect it and the agent asks again.",
+        { details: { reason: "connection_revoked" } },
+      );
+    }
+    const open = await deps.listOpenToolActions(tx, scope, toolId, now, { forUpdate: true });
     const tool = orNotFound(
       await deps.findAuthoredToolForUpdate(tx, scope.personId, toolId),
       "Tool not found",
@@ -247,14 +289,16 @@ export async function setApprovalFromConsole(
     const approval = await setApproval({ db: tx }, scope, toolId, decision, deps, {
       asked: { versionId, annotations: { readOnly: tool.readOnly, destructive: tool.destructive } },
     });
-    const now = deps.now();
     await deps.settleAnsweredToolActions(tx, scope, toolId, now);
-    const answered =
+    const closing =
       decision === "allow" && approval.askEveryCall
         ? []
+        : open.filter((row) => decision === "deny" || row.payload.toolVersionId === versionId);
+    const answered =
+      closing.length === 0
+        ? []
         : await deps.answerOpenToolActions(tx, scope, {
-            toolId,
-            versionId: decision === "deny" ? null : versionId,
+            ids: closing.map((row) => row.id),
             answer: { allow: decision === "allow", via: SETTING_ANSWER_VIA },
             at: now,
           });

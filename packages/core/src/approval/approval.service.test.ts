@@ -1,5 +1,7 @@
 import type { AgentRow } from "@graft/db/repo/agent";
 import type { ApprovalRow, BuildApprovalRow, VendorApprovalRow } from "@graft/db/repo/approval";
+import type { ConnectionRow } from "@graft/db/repo/connection";
+import type { PendingActionRow } from "@graft/db/repo/pending-action";
 import type { AuthoredToolRow } from "@graft/db/repo/tool";
 import { describe, expect, it, vi } from "vitest";
 
@@ -56,6 +58,13 @@ const agentRow = {
   revokedAt: null,
 } as AgentRow;
 
+const liveConnection = { id: "conn_1", revokedAt: null } as ConnectionRow;
+
+/** An open tool ask as `listOpenToolActions` answers it, naming a version and a connection. */
+function openAsk(id: string, toolVersionId: string, connectionId = "conn_1"): PendingActionRow {
+  return { id, kind: "tool", connectionId, payload: { toolId: "tool_1", toolVersionId } } as never;
+}
+
 const hubspotWrite = { ...writeTool, vendor: "hubspot" } as AuthoredToolRow;
 const hubspotDestructive = { ...hubspotWrite, destructive: true } as AuthoredToolRow;
 const vendorApproval: VendorApprovalRow = {
@@ -106,7 +115,11 @@ function fakeDeps(overrides: Partial<ApprovalDeps> = {}): ApprovalDeps {
     deleteVendorApproval: vi.fn(async () => null),
     updateVendorApprovalDestructive: vi.fn(async () => null),
     settleAnsweredToolActions: vi.fn(async () => []),
-    answerOpenToolActions: vi.fn(async () => []),
+    answerOpenToolActions: vi.fn(async (_db, _scope, args) =>
+      args.ids.map((id: string) => ({ id }) as never),
+    ),
+    listOpenToolActions: vi.fn(async () => []),
+    findVendorConnectionsForUpdate: vi.fn(async () => [liveConnection]),
     findAgent: vi.fn(async () => agentRow),
     findAuthoredToolById: vi.fn(async () => writeTool),
     findAuthoredToolForUpdate: vi.fn(async () => writeTool),
@@ -392,12 +405,16 @@ describe("setApprovalFromConsole", () => {
 
   it("answers the open asks for the current version on an allow, taken at once, and spends a waiting yes", async () => {
     const deps = fakeDeps({
-      answerOpenToolActions: vi.fn(async () => [{ id: "pa_1" }, { id: "pa_2" }] as never),
+      listOpenToolActions: vi.fn(async () => [
+        openAsk("pa_1", "ver_1"),
+        openAsk("pa_2", "ver_1"),
+        openAsk("pa_old", "ver_0"),
+      ]),
     });
     const result = await setApprovalFromConsole(ctx, SCOPE, "tool_1", "allow", deps);
+    // An allow holds for the version it was set for, so an ask about an older one stays open.
     expect(deps.answerOpenToolActions).toHaveBeenCalledWith(ctx.db, SCOPE, {
-      toolId: "tool_1",
-      versionId: "ver_1",
+      ids: ["pa_1", "pa_2"],
       answer: { allow: true, via: "setting" },
       at: NOW,
     });
@@ -406,14 +423,69 @@ describe("setApprovalFromConsole", () => {
   });
 
   it("answers every version's open asks on a deny, since a deny holds across versions", async () => {
-    const deps = fakeDeps();
+    const deps = fakeDeps({
+      listOpenToolActions: vi.fn(async () => [
+        openAsk("pa_1", "ver_1"),
+        openAsk("pa_old", "ver_0"),
+      ]),
+    });
     await setApprovalFromConsole(ctx, SCOPE, "tool_1", "deny", deps);
     expect(deps.answerOpenToolActions).toHaveBeenCalledWith(ctx.db, SCOPE, {
-      toolId: "tool_1",
-      versionId: null,
+      ids: ["pa_1", "pa_old"],
       answer: { allow: false, via: "setting" },
       at: NOW,
     });
+  });
+
+  /**
+   * A revoke locks its connection and then sweeps every answer of the vendor's tools; answering an
+   * ask locks the ask's connection, then the action, then the tool row (`recordApprovalAnswer`).
+   * This path takes the same rows in the same order, so it serialises with both and deadlocks with
+   * neither: an allow written here never outlives a revoke's sweep.
+   */
+  it("locks the vendor's connections and those the open asks name, then the asks, then the tool row", async () => {
+    const deps = fakeDeps({
+      findAuthoredToolById: vi.fn(
+        async () =>
+          ({ ...writeTool, vendor: "hubspot", defaultConnectionId: "conn_1" }) as AuthoredToolRow,
+      ),
+      listOpenToolActions: vi.fn(async () => [openAsk("pa_1", "ver_1", "conn_other")]),
+    });
+    await setApprovalFromConsole(ctx, SCOPE, "tool_1", "allow", deps);
+    expect(deps.findVendorConnectionsForUpdate).toHaveBeenCalledWith(
+      ctx.db,
+      "person_1",
+      "hubspot",
+      ["conn_1", "conn_other"],
+    );
+    expect(deps.listOpenToolActions).toHaveBeenNthCalledWith(1, ctx.db, SCOPE, "tool_1", NOW);
+    expect(deps.listOpenToolActions).toHaveBeenNthCalledWith(2, ctx.db, SCOPE, "tool_1", NOW, {
+      forUpdate: true,
+    });
+    const order = (fn: { mock: { invocationCallOrder: number[] } }, at = 0) =>
+      fn.mock.invocationCallOrder[at] ?? Number.NaN;
+    const connections = order(vi.mocked(deps.findVendorConnectionsForUpdate));
+    const asks = order(vi.mocked(deps.listOpenToolActions), 1);
+    const tool = order(vi.mocked(deps.findAuthoredToolForUpdate));
+    expect(order(vi.mocked(deps.listOpenToolActions), 0)).toBeLessThan(connections);
+    expect(connections).toBeLessThan(asks);
+    expect(asks).toBeLessThan(tool);
+    expect(tool).toBeLessThan(order(vi.mocked(deps.upsertApproval)));
+    expect(order(vi.mocked(deps.upsertApproval))).toBeLessThan(
+      order(vi.mocked(deps.answerOpenToolActions)),
+    );
+  });
+
+  it("refuses when every connection a revoke would have swept is revoked, and writes nothing", async () => {
+    const deps = fakeDeps({
+      findVendorConnectionsForUpdate: vi.fn(async () => [{ ...liveConnection, revokedAt: NOW }]),
+    });
+    await expect(setApprovalFromConsole(ctx, SCOPE, "tool_1", "allow", deps)).rejects.toMatchObject(
+      { code: "CONFLICT", details: { reason: "connection_revoked" } },
+    );
+    expect(deps.findAuthoredToolForUpdate).not.toHaveBeenCalled();
+    expect(deps.upsertApproval).not.toHaveBeenCalled();
+    expect(deps.answerOpenToolActions).not.toHaveBeenCalled();
   });
 
   it("leaves the open asks open on an allow while the tool asks every call", async () => {
@@ -428,7 +500,7 @@ describe("setApprovalFromConsole", () => {
   });
 
   it("refuses a read-only tool, which never asks, and writes nothing", async () => {
-    const deps = fakeDeps({ findAuthoredToolForUpdate: vi.fn(async () => readTool) });
+    const deps = fakeDeps({ findAuthoredToolById: vi.fn(async () => readTool) });
     await expect(setApprovalFromConsole(ctx, SCOPE, "tool_1", "allow", deps)).rejects.toMatchObject(
       { code: "BAD_REQUEST" },
     );
@@ -441,7 +513,7 @@ describe("setApprovalFromConsole", () => {
     await expect(
       setApprovalFromConsole(ctx, SCOPE, "tool_1", "allow", noAgent),
     ).rejects.toMatchObject({ code: "NOT_FOUND" });
-    const noTool = fakeDeps({ findAuthoredToolForUpdate: vi.fn(async () => null) });
+    const noTool = fakeDeps({ findAuthoredToolById: vi.fn(async () => null) });
     await expect(
       setApprovalFromConsole(ctx, SCOPE, "tool_1", "allow", noTool),
     ).rejects.toMatchObject({ code: "NOT_FOUND" });

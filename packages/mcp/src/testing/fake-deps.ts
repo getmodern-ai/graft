@@ -1231,15 +1231,29 @@ export function createFakeDeps(store: FakeStore): FakeDeps {
       store.vendorApprovals.set(key(scope.agentId, vendor), updated);
       return updated;
     },
+    listOpenToolActions: async (_db, scope, toolId, at) =>
+      ownsAgent(scope)
+        ? [...store.pendingActions.values()]
+            .filter(
+              (row) =>
+                row.agentId === scope.agentId &&
+                row.kind === "tool" &&
+                row.payload.toolId === toolId &&
+                row.answeredAt === null &&
+                row.consumedAt === null &&
+                row.expiresAt.getTime() > at.getTime(),
+            )
+            .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
+        : [],
     answerOpenToolActions: async (_db, scope, args) => {
       if (!ownsAgent(scope)) return [];
       const answered: PendingActionRow[] = [];
-      for (const [k, row] of store.pendingActions) {
+      for (const id of args.ids) {
+        const row = store.pendingActions.get(id);
         if (
+          row &&
           row.agentId === scope.agentId &&
           row.kind === "tool" &&
-          row.payload.toolId === args.toolId &&
-          (args.versionId === null || row.payload.toolVersionId === args.versionId) &&
           row.answeredAt === null &&
           row.consumedAt === null &&
           row.expiresAt.getTime() > args.at.getTime()
@@ -1251,12 +1265,18 @@ export function createFakeDeps(store: FakeStore): FakeDeps {
             consumedAt: args.at,
             updatedAt: store.now(),
           };
-          store.pendingActions.set(k, updated);
+          store.pendingActions.set(id, updated);
           answered.push(updated);
         }
       }
       return answered;
     },
+    findVendorConnectionsForUpdate: async (_db, personId, vendor, alsoIds = []) =>
+      [...store.connections.values()]
+        .filter(
+          (row) => row.personId === personId && (row.vendor === vendor || alsoIds.includes(row.id)),
+        )
+        .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)),
     findAgent: agent.findAgent,
     findAuthoredToolById: tool.findAuthoredToolById,
     findAuthoredToolForUpdate: tool.findAuthoredToolForUpdate,
