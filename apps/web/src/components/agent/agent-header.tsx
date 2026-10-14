@@ -56,13 +56,8 @@ export function AgentHeader({ agent }: { agent: Agent }) {
           <StatusChip chip={agentStatusChip(agent)} className="shrink-0" />
         </div>
         <p className="text-muted-foreground text-sm">
+          {/* The token's prefix is Advanced's "How it signs in", beside Rotate token. */}
           {facts.client} · created <Time iso={facts.created} /> · {facts.signsIn}
-          {agent.tokenPrefix ? (
-            <>
-              {" "}
-              (<code className="font-mono">{agent.tokenPrefix}…</code>)
-            </>
-          ) : null}
           {agent.revokedAt ? (
             <>
               {" "}
