@@ -184,15 +184,23 @@ export function integrationAnswers(
       // it includes them (ADR 0008 as amended 2026-10-09).
       const forgetRunsUnasked =
         standing !== null && (standing.includesDestructive || !approval.tool.destructive);
+      const choice = toolAnswerChoice(approval);
       answers.push({
         key: `tool:${agent.id}:${approval.tool.id}`,
         agent,
         what: toolTitle(approval.tool.name),
-        detail: approval.tool.readOnly ? "Reads never ask" : null,
-        // A read passes whatever answer a write version of it left behind (ADR 0008).
-        chip: approval.tool.readOnly
-          ? ANSWER_CHIP.always
-          : TOOL_ANSWER_CHIP[toolAnswerChoice(approval)],
+        detail: approval.tool.readOnly
+          ? "Reads never ask"
+          : choice === "stale" && forgetRunsUnasked
+            ? `Allowed by Every ${integrationName} tool`
+            : null,
+        // A read passes whatever answer a write version of it left behind, and an allow for an
+        // earlier version falls to a standing approval that covers the tool (`approvalDecision`),
+        // so neither asks on its next call.
+        chip:
+          approval.tool.readOnly || (choice === "stale" && forgetRunsUnasked)
+            ? ANSWER_CHIP.always
+            : TOOL_ANSWER_CHIP[choice],
         at: approval.decidedAt,
         change: approval.tool.readOnly
           ? { kind: "none" }

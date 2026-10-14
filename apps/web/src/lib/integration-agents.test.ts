@@ -271,6 +271,37 @@ describe("integrationAnswers", () => {
     ]);
   });
 
+  it("draws an allow for an earlier version as allowed when the standing approval covers it", () => {
+    const chips = (includesDestructive: boolean | null) => {
+      const [row] = integrationAgentRows(
+        [GMAIL],
+        [
+          access("conn_1", [
+            agent("claude", {
+              toolApprovals: [
+                approval("send-email", { forCurrentVersion: false }),
+                approval("delete-email", { forCurrentVersion: false, destructive: true }),
+              ],
+              vendorApproval:
+                includesDestructive === null ? null : { includesDestructive, grantedAt: OLD },
+            }),
+          ]),
+        ],
+      );
+      return integrationAnswers(row ? [row] : [], "Gmail", false).flatMap((answer) =>
+        answer.change.kind === "tool" ? [[answer.what, answer.chip, answer.detail]] : [],
+      );
+    };
+    expect(chips(null)).toEqual([
+      ["Send email", ANSWER_CHIP.asks_next_time, null],
+      ["Delete email", ANSWER_CHIP.asks_next_time, null],
+    ]);
+    expect(chips(false)).toEqual([
+      ["Send email", ANSWER_CHIP.always, "Allowed by Every Gmail tool"],
+      ["Delete email", ANSWER_CHIP.asks_next_time, null],
+    ]);
+  });
+
   it("offers no change on a read tool's answer", () => {
     const answers = integrationAnswers(rows, "Gmail", false);
     const read = answers.find((answer) => answer.what === "List labels");
