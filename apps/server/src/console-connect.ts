@@ -454,6 +454,9 @@ export async function recordFullAccess(
   return approved;
 }
 
+/** How many times a link's return asks the provider again after another link claimed its account. */
+const MAX_CLAIMS = 3;
+
 /**
  * The console connect's return (`provider-link.ts`'s callback, for a state `signConsoleLinkState`
  * signed): the provider is asked what the person connected, never its redirect's say-so, as for
@@ -518,72 +521,76 @@ export async function completeConsoleLink(
   const before = await madeByThisLink(ctx);
   if (before) return already(before);
 
-  const takenRefs = (await deps.connection.listConnections(ctx.db, principal.personId)).flatMap(
-    (row) => (row.provider === provider.name && row.providerRef ? [row.providerRef] : []),
-  );
-  let completed: Awaited<ReturnType<typeof link.complete>>;
-  try {
-    completed = await link.complete({
-      personId: principal.personId,
-      vendor: record.vendor,
-      hosts: record.hosts,
-      takenRefs,
-    });
-  } catch {
-    return outcome(
+  const notInGraft = (error: unknown) =>
+    outcome(
       "failed",
-      `${name} could not be asked which account was connected, so nothing was connected. Press Connect to try again.`,
+      `${record.displayName} was connected at ${name} but not in Graft: ${
+        error instanceof ServiceError ? error.message : "the connection could not be made"
+      }. Press Connect to try again.`,
     );
-  }
-  if (!completed.ok) {
-    const landed = await madeByThisLink(ctx);
-    return landed ? already(landed) : outcome("failed", completed.message);
-  }
-  const ref = completed.ref;
 
-  let made: { connection: Pick<ConnectionOutput, "id" | "revokedAt">; now: boolean };
-  try {
-    made = await ctx.db.transaction(async (tx) => {
-      const scoped: ServiceContext = { db: tx };
-      // Two landings of one record take turns here, and the later finds the earlier's row rather
-      // than claiming the account the provider answered it; the record's id on the new row is the
-      // database's guard beside the lock.
-      await deps.connection.lockConnectionKey(tx, principal.personId, `link:${record.connectId}`);
-      const earlier = await madeByThisLink(scoped);
-      if (earlier) return { connection: earlier, now: false };
-      const connection = await connectThroughProvider(
-        scoped,
-        principal,
-        {
-          provider,
-          vendor: record.vendor,
-          displayName: record.displayName,
-          primaryHost: record.primaryHost,
-          hosts: record.hosts,
-          ref,
-          id: record.connectId,
-        },
-        deps.connection,
-      );
-      // No agent asked, so no agent's scope is granted: the row is in every `all` agent's already.
-      if (record.access === "full") await recordFullAccess(scoped, principal, connection, deps);
-      return { connection, now: true };
-    });
-  } catch (error) {
-    // Two landings claimed the same account and the database let one in.
-    if (error instanceof ServiceError && error.code === "CONFLICT") {
-      for (let attempt = 0; attempt < 10; attempt += 1) {
-        const settled = await madeByThisLink(ctx);
-        if (settled) return already(settled);
-        await new Promise((resolve) => setTimeout(resolve, 50));
-      }
-    }
-    const detail =
-      error instanceof ServiceError ? error.message : "the connection could not be made";
-    return outcome(
-      "failed",
-      `${record.displayName} was connected at ${name} but not in Graft: ${detail}. Press Connect to try again.`,
+  // Two different links of the person's can return together and be answered the same account:
+  // the database lets one row in (`connection_provider_ref_idx`) and refuses the other, which asks
+  // the provider again with that account now taken (Greptile on #238), up to `MAX_CLAIMS` times.
+  let made: { connection: Pick<ConnectionOutput, "id" | "revokedAt">; now: boolean } | null = null;
+  let label: string | null = null;
+  for (let claim = 1; !made; claim += 1) {
+    const takenRefs = (await deps.connection.listConnections(ctx.db, principal.personId)).flatMap(
+      (row) => (row.provider === provider.name && row.providerRef ? [row.providerRef] : []),
     );
+    let completed: Awaited<ReturnType<typeof link.complete>>;
+    try {
+      completed = await link.complete({
+        personId: principal.personId,
+        vendor: record.vendor,
+        hosts: record.hosts,
+        takenRefs,
+      });
+    } catch {
+      return outcome(
+        "failed",
+        `${name} could not be asked which account was connected, so nothing was connected. Press Connect to try again.`,
+      );
+    }
+    if (!completed.ok) {
+      const landed = await madeByThisLink(ctx);
+      return landed ? already(landed) : outcome("failed", completed.message);
+    }
+    const ref = completed.ref;
+    label = completed.label;
+    try {
+      made = await ctx.db.transaction(async (tx) => {
+        const scoped: ServiceContext = { db: tx };
+        // Two landings of one record take turns here, and the later finds the earlier's row rather
+        // than claiming the account the provider answered it; the record's id on the new row is the
+        // database's guard beside the lock.
+        await deps.connection.lockConnectionKey(tx, principal.personId, `link:${record.connectId}`);
+        const earlier = await madeByThisLink(scoped);
+        if (earlier) return { connection: earlier, now: false };
+        const connection = await connectThroughProvider(
+          scoped,
+          principal,
+          {
+            provider,
+            vendor: record.vendor,
+            displayName: record.displayName,
+            primaryHost: record.primaryHost,
+            hosts: record.hosts,
+            ref,
+            id: record.connectId,
+          },
+          deps.connection,
+        );
+        // No agent asked, so no agent's scope is granted: the row is in every `all` agent's already.
+        if (record.access === "full") await recordFullAccess(scoped, principal, connection, deps);
+        return { connection, now: true };
+      });
+    } catch (error) {
+      if (!(error instanceof ServiceError && error.code === "CONFLICT")) return notInGraft(error);
+      const settled = await madeByThisLink(ctx);
+      if (settled) return already(settled);
+      if (claim >= MAX_CLAIMS) return notInGraft(error);
+    }
   }
   if (!made.now) return already(made.connection);
   const connectionId = made.connection.id;
@@ -596,7 +603,7 @@ export async function completeConsoleLink(
   );
   return outcome(
     "connected",
-    `${record.displayName} is connected through ${name}${completed.label ? ` as ${completed.label}` : ""}. The console updates on its own.`,
+    `${record.displayName} is connected through ${name}${label ? ` as ${label}` : ""}. The console updates on its own.`,
     connectionId,
   );
 }

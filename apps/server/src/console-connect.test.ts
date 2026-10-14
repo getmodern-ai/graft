@@ -605,4 +605,41 @@ describe("what Greptile's review of #238 asked for", () => {
     expect(h.store.connections.get(fresh.connectId)?.providerRef).toBe("acct_2");
     expect(h.store.connections.get(old.connectId)?.revokedAt).not.toBeNull();
   });
+
+  it("a link refused because another link claimed its account asks the provider again and claims the next", async () => {
+    // A provider whose next answer is stale: it hands out the account another link just claimed,
+    // as two links returning together would both be answered.
+    const stale = { once: false };
+    const h = harness({
+      providers: (broker) => {
+        if (broker.connect.kind !== "link") throw new Error("not a link provider");
+        const link = broker.connect;
+        const racing: ConnectionProvider = {
+          ...broker,
+          connect: {
+            ...link,
+            complete: async (input) => {
+              if (stale.once) {
+                stale.once = false;
+                return { ok: true, ref: "acct_1", label: null };
+              }
+              return link.complete(input);
+            },
+          },
+        };
+        return [racing, keyringProvider];
+      },
+    });
+    await h.app.request("/api/connect", post({ proposal: GMAIL }));
+    const oneSuccess = h.broker.minted.at(-1)?.success ?? "";
+    const two = await read(await h.app.request("/api/connect", post({ proposal: GMAIL })));
+    const twoSuccess = h.broker.minted.at(-1)?.success ?? "";
+    h.broker.connectAccount({ personId: PERSON, target: "gmail", id: "acct_1" });
+    h.broker.connectAccount({ personId: PERSON, target: "gmail", id: "acct_2" });
+    expect(consoleOutcome(await landing(h, oneSuccess)).status).toBe("connected");
+    stale.once = true;
+    const landed = consoleOutcome(await landing(h, twoSuccess));
+    expect(landed).toMatchObject({ status: "connected", connectionId: two.connectId });
+    expect(h.store.connections.get(two.connectId)?.providerRef).toBe("acct_2");
+  });
 });
