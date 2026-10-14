@@ -24,6 +24,7 @@ import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { type Ask, isOpen } from "@/lib/pending-action-queries";
 import {
+  askEveryCallSent,
   defaultToolAllowChoice,
   type ToolAllowChoice,
   toolAllowAnswer,
@@ -84,7 +85,14 @@ export function ToolAskCard({
         pending={answer.isPending}
         approveLabel="Allow"
         onAnswer={(allow) =>
-          answer.mutate(allow ? toolAllowAnswer(choice, askEveryCall) : { allow: false })
+          answer.mutate(
+            allow
+              ? toolAllowAnswer(
+                  choice,
+                  askEveryCallSent(askEveryCall, payload.askEveryCall === true),
+                )
+              : { allow: false },
+          )
         }
         focused={{
           vendor: payload.vendor,

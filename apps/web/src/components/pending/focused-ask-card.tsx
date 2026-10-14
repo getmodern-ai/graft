@@ -1,5 +1,5 @@
 import type * as React from "react";
-import { useState } from "react";
+import { createContext, useContext, useState } from "react";
 
 import {
   ChevronRightIcon,
@@ -46,6 +46,13 @@ export type FocusedAsk = {
   /** Whether the person types a secret here, which the footnote then speaks to. */
   secret?: boolean;
 };
+
+/**
+ * What holds the focused layout: the handoff page, where it is a card of its own, or the Requests
+ * dialog (GRA-311), whose popup is already the frame, so the card draws none. A context rather than
+ * a third `AskLayout`, since every kind's card reads the layout and none needs to know the frame.
+ */
+export const FocusedAskFrame = createContext<"page" | "dialog">("page");
 
 /**
  * The line under a secret's input on the focused layout: where it goes, and who never sees it,
@@ -95,10 +102,15 @@ export function FocusedAskCard({
     else setShown(next);
   };
   const agentName = action.agent?.name ?? null;
+  const frame = useContext(FocusedAskFrame);
 
   return (
     <div className="flex w-full flex-col items-center gap-4">
-      <Card className="w-full gap-5 p-6 md:p-8">
+      <Card
+        className={
+          frame === "dialog" ? "w-full gap-5 bg-transparent p-0 ring-0" : "w-full gap-5 p-6 md:p-8"
+        }
+      >
         <CardHeader className="flex flex-col items-center gap-5 px-0 text-center">
           <div aria-hidden="true" className="flex items-center gap-3">
             <HarnessMark
@@ -179,6 +191,7 @@ export function FocusedAskCard({
             expiresAt: action.expiresAt,
             agentName,
             secret: focused.secret === true,
+            inConsole: frame === "dialog",
           })}
         </p>
       ) : null}
