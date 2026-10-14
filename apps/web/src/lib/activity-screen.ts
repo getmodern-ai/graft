@@ -115,6 +115,9 @@ export function activityScreenQuery(filters: ActivityScreenSearch) {
       api<ActivityPage>(`/activity?${activityScreenSearchParams(filters, pageParam)}`),
     initialPageParam: null as string | null,
     getNextPageParam: (last) => last.nextCursor,
+    // An answer lands here from the console, a chat's card or an agent's elicitation, and a run
+    // from any agent, none of which knows this read; stale at once, so every visit reads afresh.
+    staleTime: 0,
   });
 }
 
@@ -158,8 +161,8 @@ function possessive(name: string): string {
 }
 
 /**
- * An answer row's sentence, the person's own words for what they said: "You always allowed Codex
- * to draft replies in Gmail", "You denied Codex permission to delete email in Gmail". The three
+ * An answer row's sentence, the person's own words for what they said: "You allowed Codex to
+ * draft replies in Gmail", "You denied Codex permission to delete email in Gmail". The three
  * sources read differently (`repo/activity.ts`): a tool's standing answer, an integration's
  * standing approval, and an answered ask of another kind, read off its kind and answer alone,
  * since the row carries no payload. A kind this does not know still reads as an answer.
@@ -177,9 +180,11 @@ export function activityAnswerCopy(
     case "tool": {
       const words = row.tool ? toolActionWords(row.tool.wireName) : null;
       const action = words ? `${words} in ${integration}` : `use a ${integration} tool`;
+      // Not "always": an allow may ask on every call (`askEveryCall`, ADR 0008), which the
+      // read does not carry, so the sentence claims no more than that the person said yes.
       return row.decision === "deny"
         ? { sentence: `You denied ${agent} permission to ${action}`, outcome: "denied" }
-        : { sentence: `You always allowed ${agent} to ${action}`, outcome: "allowed" };
+        : { sentence: `You allowed ${agent} to ${action}`, outcome: "allowed" };
     }
     case "vendor":
       return {
@@ -248,7 +253,15 @@ function askAnswerCopy(
   }
 }
 
-/** One option of a filter's `Select`; `ALL` is "no filter" and never written to the URL. */
+/**
+ * The value of a filter's "All …" option, never written to the URL. Not the integration tab's
+ * `ALL` ("all"): that is a slug a vendor may have, and selecting such an integration would clear
+ * the filter. A slug is lowercase letters, digits and hyphens, and an agent id is a UUID, so
+ * neither can be this.
+ */
+export const NO_FILTER = "__all__";
+
+/** One option of a filter's `Select`. */
 export type FilterItem = { value: string; label: string };
 
 /**

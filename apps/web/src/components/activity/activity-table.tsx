@@ -34,13 +34,13 @@ import {
   type IntegrationNames,
   integrationFilterItems,
   isFiltered,
+  NO_FILTER,
 } from "@/lib/activity-screen";
 import { agentMark } from "@/lib/agent-cards";
 import { type AgentListItem, agentsQuery } from "@/lib/agent-queries";
 import { connectionsQuery } from "@/lib/connection-queries";
 import {
   type ActivityRun,
-  ALL,
   activityToolLabel,
   refusalSentence,
   timeTakenLabel,
@@ -91,7 +91,7 @@ function StateLoadingRows() {
 }
 
 const OUTCOME_ITEMS: FilterItem[] = [
-  { value: ALL, label: "All outcomes" },
+  { value: NO_FILTER, label: "All outcomes" },
   ...ACTIVITY_SCREEN_OUTCOMES.map((value) => ({
     value,
     label: ACTIVITY_SCREEN_OUTCOME_LABELS[value],
@@ -117,7 +117,7 @@ function FilterSelect({
       value={value}
       items={items}
       onValueChange={(next) =>
-        onChange(typeof next === "string" && next !== ALL ? next : undefined)
+        onChange(typeof next === "string" && next !== NO_FILTER ? next : undefined)
       }
     >
       <SelectTrigger size="sm" aria-label={label}>
@@ -180,7 +180,7 @@ export function ActivityTable({
   const failedOutright = isError && data === undefined;
 
   const agentItems: FilterItem[] = [
-    { value: ALL, label: "All agents" },
+    { value: NO_FILTER, label: "All agents" },
     ...agents.map((agent) => ({ value: agent.id, label: agent.name })),
   ];
   // An agent the list does not hold (another person's id pasted into the URL) still shows what
@@ -189,7 +189,7 @@ export function ActivityTable({
     agentItems.push({ value: filters.agent, label: "Another agent" });
   }
   const integrationItems: FilterItem[] = [
-    { value: ALL, label: "All integrations" },
+    { value: NO_FILTER, label: "All integrations" },
     ...integrationFilterItems(connections, names, filters.vendor),
   ];
 
@@ -199,19 +199,19 @@ export function ActivityTable({
         <FilterSelect
           label="Integration"
           icon
-          value={filters.vendor ?? ALL}
+          value={filters.vendor ?? NO_FILTER}
           items={integrationItems}
           onChange={(vendor) => onFiltersChange({ ...filters, vendor })}
         />
         <FilterSelect
           label="Agent"
-          value={filters.agent ?? ALL}
+          value={filters.agent ?? NO_FILTER}
           items={agentItems}
           onChange={(agent) => onFiltersChange({ ...filters, agent })}
         />
         <FilterSelect
           label="Outcome"
-          value={filters.outcome ?? ALL}
+          value={filters.outcome ?? NO_FILTER}
           items={OUTCOME_ITEMS}
           onChange={(outcome) =>
             onFiltersChange({

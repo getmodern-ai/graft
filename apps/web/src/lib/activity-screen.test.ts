@@ -1,3 +1,4 @@
+import { validateVendor } from "@graft/core/connection/connection.rules";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -6,10 +7,12 @@ import {
   activityIntegrationName,
   activityRows,
   activityScreenKey,
+  activityScreenQuery,
   activityScreenSearchParams,
   type IntegrationNames,
   integrationFilterItems,
   isFiltered,
+  NO_FILTER,
   readActivityScreenSearch,
 } from "./activity-screen";
 import type { ActivityPage } from "./integration-activity";
@@ -131,7 +134,7 @@ describe("activityAnswerCopy", () => {
     expect(
       activityAnswerCopy(answer({ source: "tool", tool, decision: "allow" }), "Gmail"),
     ).toEqual({
-      sentence: "You always allowed Codex to draft replies in Gmail",
+      sentence: "You allowed Codex to draft replies in Gmail",
       outcome: "allowed",
     });
     expect(activityAnswerCopy(answer({ source: "tool", tool, decision: "deny" }), "Gmail")).toEqual(
@@ -142,7 +145,7 @@ describe("activityAnswerCopy", () => {
     );
     expect(
       activityAnswerCopy(answer({ source: "tool", tool: null, decision: "allow" }), "Gmail"),
-    ).toEqual({ sentence: "You always allowed Codex to use a Gmail tool", outcome: "allowed" });
+    ).toEqual({ sentence: "You allowed Codex to use a Gmail tool", outcome: "allowed" });
   });
 
   it("words an integration's standing approval with or without the tools that delete", () => {
@@ -223,5 +226,23 @@ describe("integrationFilterItems", () => {
 
   it("keeps a slug the URL names that the list does not hold", () => {
     expect(integrationFilterItems([], names, "gone")).toEqual([{ value: "gone", label: "gone" }]);
+  });
+});
+
+describe("NO_FILTER", () => {
+  // Greptile on #260: the tab's "all" is a slug a vendor may have, so it cannot mean "no filter".
+  it("is no vendor slug, so an integration named all stays selectable", () => {
+    expect(validateVendor("all")).toBeNull();
+    expect(validateVendor(NO_FILTER)).not.toBeNull();
+    const items = integrationFilterItems([{ vendor: "all", displayName: "All" }], names, "all");
+    expect(items.map((item) => item.value)).toEqual(["all"]);
+    expect(items.some((item) => item.value === NO_FILTER)).toBe(false);
+  });
+});
+
+describe("activityScreenQuery", () => {
+  // Answers and runs land from doors that know nothing of this read, so a visit never reuses one.
+  it("is stale at once", () => {
+    expect(activityScreenQuery({}).staleTime).toBe(0);
   });
 });
