@@ -161,6 +161,14 @@ export function readStartRefusal(error: unknown): StartRefusal {
 }
 
 /**
+ * Whether a failed read of the job means it is gone: a 404 (a restart forgot it, another replica
+ * answered, its window passed). Any other failure is the read's, and the same job is read again.
+ */
+export function isLostProposal(error: unknown): boolean {
+  return error instanceof ApiError && error.status === 404;
+}
+
+/**
  * The refusals a person fixes on the form (ADR 0010: a private address is never sent a key): the
  * sentence above it, the form open with what the job found. Every other failure (the docs could not
  * be read or did not say, the model failed or ran long) offers Try again and the form by hand.
@@ -183,17 +191,21 @@ export function draftFromFailure(state: ProposalState): {
   errors: DraftErrors;
 } {
   const base = emptyDraft(state.found.scheme ?? "api_key_header");
-  // A refused address is shown as found, under its sentence, for the person to correct.
-  const address = state.found.primaryHost ?? state.failure?.host ?? null;
+  const failure = state.failure;
+  const refused = failure?.host ?? null;
+  // A refused host is kept in the form, under its sentence, for the person to correct: the
+  // address when it is the one refused (or the only one known), else the additional hosts.
+  const primary = state.found.primaryHost ?? refused;
+  const additional = refused && primary && refused !== primary ? refused : null;
   const draft: ConnectionDraft = {
     ...base,
     vendor: vendorSlugOf(state.name),
     displayName: state.name,
-    primaryHost: address ? `https://${address}` : base.primaryHost,
+    primaryHost: primary ? `https://${primary}` : base.primaryHost,
+    hosts: additional ?? "",
   };
-  const failure = state.failure;
   if (!failure || !failureOpensForm(failure.reason)) return { draft, errors: {} };
-  return { draft, errors: { primaryHost: failure.message } };
+  return { draft, errors: { [additional ? "hosts" : "primaryHost"]: failure.message } };
 }
 
 /** The plain form, for a deployment with no model or a person who would rather type it. */

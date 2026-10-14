@@ -11,6 +11,7 @@ import {
   draftFromFailure,
   draftFromProposalState,
   failureOpensForm,
+  isLostProposal,
   listInWords,
   onlySentToLine,
   PROPOSAL_STAGES,
@@ -146,6 +147,17 @@ describe("readStartRefusal", () => {
   });
 });
 
+describe("isLostProposal", () => {
+  it("reads only a 404 as a job that is gone", () => {
+    expect(isLostProposal(new ApiError(404, "NOT_FOUND", "No such connection proposal"))).toBe(
+      true,
+    );
+    expect(isLostProposal(new ApiError(500, "INTERNAL", "Boom"))).toBe(false);
+    expect(isLostProposal(new TypeError("fetch failed"))).toBe(false);
+    expect(isLostProposal(null)).toBe(false);
+  });
+});
+
 describe("the form a job opens", () => {
   it("prefills the proposal, the primary's host out of the additional list", () => {
     const draft = draftFromProposalState(running({ status: "ready", proposal: PROPOSAL }));
@@ -183,6 +195,23 @@ describe("the form a job opens", () => {
       credential: { token: "" },
     });
     expect(errors).toEqual({ primaryHost: "10.0.0.1 is not a public host" });
+  });
+
+  it("keeps a refused additional host in the hosts, its sentence there, the address as found", () => {
+    const { draft, errors } = draftFromFailure(
+      running({
+        status: "failed",
+        stage: "checking_address",
+        found: { docsHost: "docs.acme.com", scheme: "bearer", primaryHost: "api.acme.com" },
+        failure: {
+          reason: "host_not_public",
+          message: "files.acme.com resolves to 10.0.0.5",
+          host: "files.acme.com",
+        },
+      }),
+    );
+    expect(draft).toMatchObject({ primaryHost: "https://api.acme.com", hosts: "files.acme.com" });
+    expect(errors).toEqual({ hosts: "files.acme.com resolves to 10.0.0.5" });
   });
 
   it("starts the plain form from the name typed", () => {

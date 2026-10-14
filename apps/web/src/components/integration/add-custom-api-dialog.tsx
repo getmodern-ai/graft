@@ -21,6 +21,7 @@ import {
   WarningIcon,
 } from "@/components/icons";
 import { IntegrationMark } from "@/components/marks";
+import { RetryNotice } from "@/components/retry-notice";
 import { SetupChoice } from "@/components/setup/setup-choice";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -45,6 +46,7 @@ import {
   hostsOf,
   secretLegend,
   validateConnectionDraft,
+  validateCredentialDraft,
 } from "@/lib/connection-form";
 import { connectionKeys, fetchConnection } from "@/lib/connection-queries";
 import {
@@ -56,6 +58,7 @@ import {
   draftFromFailure,
   draftFromProposalState,
   failureOpensForm,
+  isLostProposal,
   type NameStepErrors,
   type NameStepInput,
   onlySentToLine,
@@ -443,7 +446,9 @@ function WorkingStep({
   const job = useQuery(proposalQuery(jobId));
   const state = job.data;
   const settled = state && state.status !== "running" ? state : null;
-  const lost = job.isError;
+  // Only a 404 means the job is gone; any other failed read is offered again on the same job.
+  const lost = isLostProposal(job.error);
+  const unreachable = job.isError && !lost;
 
   const onSettledRef = useRef(onSettled);
   onSettledRef.current = onSettled;
@@ -487,6 +492,14 @@ function WorkingStep({
           </li>
         ))}
       </ol>
+      {unreachable ? (
+        <RetryNotice
+          error={job.error}
+          message="Could not check on Graft's progress."
+          onRetry={() => void job.refetch()}
+          retrying={job.isFetching}
+        />
+      ) : null}
       <div
         role="progressbar"
         aria-label="Progress"
@@ -599,19 +612,36 @@ function CheckStep({
     null,
   );
 
+  // Closing or leaving the dialog ends every wait it started (a consent popup, a provider's
+  // sign-in), so an old popup finishing later cannot close a reopened dialog or navigate away.
+  const alive = useRef(true);
+  const stopLink = useRef<AbortController | null>(null);
   const finished = ({ vendor, displayName }: Connected) => {
     queryClient.invalidateQueries({ queryKey: connectionKeys.all });
     queryClient.invalidateQueries({ queryKey: agentKeys.all });
     queryClient.invalidateQueries({ queryKey: approvalKeys.builds });
+    busy.current = false;
+    if (!alive.current) return;
     const copy = connectedToast(displayName, access);
     toast.success(copy.title, { description: copy.description });
-    busy.current = false;
     close();
     void navigate({ to: "/integrations/$vendor", params: { vendor } });
   };
   const consent = useOAuthConsent({
     onConnected: () => finished({ vendor: draft.vendor.trim(), displayName: draft.displayName }),
   });
+  const cancelConsent = useRef(consent.cancel);
+  cancelConsent.current = consent.cancel;
+  useEffect(() => {
+    // Set on mount as well: StrictMode runs this cleanup once before the real mount.
+    alive.current = true;
+    return () => {
+      alive.current = false;
+      busy.current = false;
+      cancelConsent.current();
+      stopLink.current?.abort();
+    };
+  }, [busy]);
 
   const connect = useMutation({
     mutationFn: async ({
@@ -622,14 +652,26 @@ function CheckStep({
       credential: Record<string, string>;
     }) => {
       const routed = await connectFromConsole(connectBodyOf(registration, setup.docsUrl, access));
-      if (routed.kind !== "form") return { routed, stored: null };
-      const stored = await createConnectionWithAccess({ ...registration, credential, access });
-      return { routed, stored };
+      if (routed.kind !== "form") return { routed, stored: null, credentialErrors: null };
+      // The key is asked for only now: a provider that connects without it never needs one.
+      const key = validateCredentialDraft(registration.scheme, credential);
+      if (!key.ok) return { routed, stored: null, credentialErrors: key.errors };
+      const stored = await createConnectionWithAccess({
+        ...registration,
+        credential: key.value,
+        access,
+      });
+      return { routed, stored, credentialErrors: null };
     },
     onMutate: () => {
       busy.current = true;
     },
-    onSuccess: async ({ routed, stored }, { registration }) => {
+    onSuccess: async ({ routed, stored, credentialErrors }, { registration }) => {
+      if (credentialErrors) {
+        busy.current = false;
+        setErrors(credentialErrors);
+        return;
+      }
       if (routed.kind === "connected") {
         finished(routed.connection);
         return;
@@ -654,6 +696,7 @@ function CheckStep({
           return;
         }
         const stop = new AbortController();
+        stopLink.current = stop;
         setLinkWait({ provider: routed.provider, stop });
         const { outcome } = await awaitConsent({
           popup,
@@ -662,8 +705,10 @@ function CheckStep({
           signal: stop.signal,
           deadlineMs: Math.max(0, new Date(routed.expiresAt).getTime() - Date.now()),
         });
-        setLinkWait(null);
+        stopLink.current = null;
         busy.current = false;
+        if (!alive.current) return;
+        setLinkWait(null);
         if (outcome === "connected") finished(registration);
         else if (outcome === "expired") toast.error("The sign-in took too long. Connect again.");
       }
@@ -688,18 +733,17 @@ function CheckStep({
     },
   });
 
+  // The registration is judged here; the key only once `/connect` says the keyring's form takes it.
   const submit = () => {
-    const verdict = validateConnectionDraft(draft);
+    const verdict = validateConnectionDraft(draft, { withCredential: false });
     if (!verdict.ok) {
       setErrors(verdict.errors);
-      if (Object.keys(verdict.errors).some((key) => !key.startsWith("credential"))) {
-        setDetails(true);
-      }
+      setDetails(true);
       return;
     }
     setErrors({});
-    const { credential, ...registration } = verdict.value;
-    connect.mutate({ registration, credential });
+    const { credential: _unchecked, ...registration } = verdict.value;
+    connect.mutate({ registration, credential: draft.credential });
   };
 
   const name = draft.displayName.trim() || "the integration";
