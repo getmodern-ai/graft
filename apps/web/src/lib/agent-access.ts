@@ -43,21 +43,30 @@ export function agentAccessSummary(
   }
   // A read never asks, so its answer changes nothing this line says.
   const answers = access.toolApprovals.filter((approval) => !approval.tool.readOnly);
+  // A tool's own `deny` refuses before its ask-every-call setting is read (`approvalDecision`),
+  // so only an `allow` row that asks every call asks.
   const asksEveryCall = answers
-    .filter((approval) => approval.askEveryCall)
+    .filter((approval) => approval.decision === "allow" && approval.askEveryCall)
     .map((approval) => toolTitle(approval.tool.name));
-  const allowed = answers
-    .filter(
-      (approval) =>
-        approval.decision === "allow" && approval.forCurrentVersion && !approval.askEveryCall,
-    )
+  const allowedAnswers = answers.filter(
+    (approval) =>
+      approval.decision === "allow" && approval.forCurrentVersion && !approval.askEveryCall,
+  );
+  const allowed = allowedAnswers.map((approval) => toolTitle(approval.tool.name));
+  // A tool's own current allow wins over the standing approval, so a destructive tool allowed on
+  // its own runs without asking even where the standing approval leaves out ones that delete.
+  const deletesAllowed = allowedAnswers
+    .filter((approval) => approval.tool.destructive)
     .map((approval) => toolTitle(approval.tool.name));
 
   const standing = access.vendorApproval;
+  const exceptDeletes = !standing || standing.includesDestructive ? null : deletesAllowed;
   const summary = standing
-    ? standing.includesDestructive
+    ? exceptDeletes === null
       ? `Every ${integrationName} tool`
-      : `Every ${integrationName} tool, except ones that delete`
+      : exceptDeletes.length > 0
+        ? `Every ${integrationName} tool, except ones that delete other than ${listTools(exceptDeletes)}`
+        : `Every ${integrationName} tool, except ones that delete`
     : allowed.length > 0
       ? `Reads, plus ${listTools(allowed)}`
       : "Reads only";
@@ -70,7 +79,14 @@ export function agentAccessSummary(
     return { summary, detail: `Can also build its own ${integrationName} tools` };
   }
   if (standing) {
-    return { summary, detail: standing.includesDestructive ? null : "Ones that delete ask first" };
+    if (exceptDeletes === null) return { summary, detail: null };
+    return {
+      summary,
+      detail:
+        exceptDeletes.length > 0
+          ? "Other ones that delete ask first"
+          : "Ones that delete ask first",
+    };
   }
   return {
     summary,

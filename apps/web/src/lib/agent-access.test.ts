@@ -132,6 +132,44 @@ describe("agentAccessSummary", () => {
     });
   });
 
+  it("never says a denied tool asks every time, since its deny refuses first", () => {
+    expect(
+      agentAccessSummary(
+        access({
+          toolApprovals: [approval("send-email", { decision: "deny", askEveryCall: true })],
+        }),
+        "Gmail",
+      ),
+    ).toEqual({ summary: "Reads only", detail: "Anything that changes data asks first" });
+  });
+
+  it("names a tool that deletes allowed on its own beside a standing approval without ones that delete", () => {
+    expect(
+      agentAccessSummary(
+        access({
+          vendorApproval: { includesDestructive: false, grantedAt: AT },
+          toolApprovals: [approval("delete-email", { destructive: true })],
+        }),
+        "Gmail",
+      ),
+    ).toEqual({
+      summary: "Every Gmail tool, except ones that delete other than Delete email",
+      detail: "Other ones that delete ask first",
+    });
+    // Given for an older version, the standing approval leaves it out and it asks.
+    expect(
+      agentAccessSummary(
+        access({
+          vendorApproval: { includesDestructive: false, grantedAt: AT },
+          toolApprovals: [
+            approval("delete-email", { destructive: true, forCurrentVersion: false }),
+          ],
+        }),
+        "Gmail",
+      ).summary,
+    ).toBe("Every Gmail tool, except ones that delete");
+  });
+
   it("reads only when no answer lets a write through", () => {
     expect(
       agentAccessSummary(

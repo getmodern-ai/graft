@@ -85,6 +85,7 @@ export async function getConnectionAccess(
   const lastUsed = new Map(lastUses.map((row) => [row.agentId, row.lastUsedAt]));
   const vendorApproval = new Map(vendorApprovals.map((row) => [row.agentId, row]));
   const buildApproval = new Map(buildApprovals.map((row) => [row.agentId, row]));
+  const answersOf = Map.groupBy(toolApprovals, (row) => row.agentId);
   return {
     connectionId: connection.id,
     vendor,
@@ -100,16 +101,14 @@ export async function getConnectionAccess(
         },
         inScope: row.inScope,
         lastUsedAt: lastUsed.get(row.id) ?? null,
-        toolApprovals: toolApprovals
-          .filter((approval) => approval.agentId === row.id)
-          .map((approval) => ({
-            tool: approval.tool,
-            decision: approval.decision,
-            askEveryCall: approval.askEveryCall,
-            toolVersionId: approval.toolVersionId,
-            forCurrentVersion: isForVersion(approval, approval.tool.currentVersionId),
-            decidedAt: approval.decidedAt,
-          })),
+        toolApprovals: (answersOf.get(row.id) ?? []).map((approval) => ({
+          tool: approval.tool,
+          decision: approval.decision,
+          askEveryCall: approval.askEveryCall,
+          toolVersionId: approval.toolVersionId,
+          forCurrentVersion: isForVersion(approval, approval.tool.currentVersionId),
+          decidedAt: approval.decidedAt,
+        })),
         vendorApproval: standing
           ? { includesDestructive: standing.includesDestructive, grantedAt: standing.grantedAt }
           : null,
