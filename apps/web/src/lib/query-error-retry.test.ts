@@ -165,3 +165,44 @@ describe("the query-error toast", () => {
     expect(toast.dismiss).not.toHaveBeenCalled();
   });
 });
+
+describe("a query that draws its own failure (GRA-334)", () => {
+  beforeEach(() => {
+    vi.mocked(toast.error).mockClear();
+  });
+
+  const quietOnRefusal = { quietError: (error: unknown) => error instanceof ApiError };
+
+  it("raises no toast for an error its meta.quietError admits", async () => {
+    const client = createQueryClient();
+    await client
+      .fetchQuery({
+        queryKey: ["pending-actions", "pa_1", "h_token"],
+        queryFn: async () => {
+          throw new ApiError(409, "CONFLICT", "This handoff link was already used", {
+            reason: "consumed",
+          });
+        },
+        meta: quietOnRefusal,
+      })
+      .catch(() => {});
+
+    expect(toast.error).not.toHaveBeenCalled();
+  });
+
+  it("still toasts an error the predicate does not admit", async () => {
+    const client = createQueryClient();
+    await client
+      .fetchQuery({
+        queryKey: ["pending-actions", "pa_2", "h_token"],
+        queryFn: async () => {
+          throw new TypeError("Failed to fetch");
+        },
+        retry: false,
+        meta: quietOnRefusal,
+      })
+      .catch(() => {});
+
+    expect(toast.error).toHaveBeenCalledWith("Could not reach the server", expect.anything());
+  });
+});
