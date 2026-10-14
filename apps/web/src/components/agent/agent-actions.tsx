@@ -3,19 +3,26 @@ import { useRef, useState } from "react";
 
 import { AgentConnectionDialog } from "@/components/agent/agent-connection-dialog";
 import { EditAgentDialog } from "@/components/agent/edit-agent-dialog";
+import { RevokeAgentDialog } from "@/components/agent/revoke-agent-dialog";
 import { MoreHorizIcon } from "@/components/icons";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import type { Agent } from "@/lib/agent-queries";
 
+/**
+ * An agent's menu, on its card (GRA-324): View, *Connect an agent*, Edit (name, cap, idle window)
+ * and Revoke, the same confirmation the agent's page opens. A revoked agent keeps View alone.
+ */
 export function AgentActions({ agent }: { agent: Agent }) {
   const trigger = useRef<HTMLButtonElement>(null);
   const [editing, setEditing] = useState(false);
+  const [revoking, setRevoking] = useState(false);
   const [connecting, setConnecting] = useState(false);
   const active = !agent.revokedAt;
 
@@ -41,6 +48,14 @@ export function AgentActions({ agent }: { agent: Agent }) {
           <DropdownMenuItem disabled={!active} onClick={() => setEditing(true)}>
             Edit
           </DropdownMenuItem>
+          {active ? (
+            <>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem variant="destructive" onClick={() => setRevoking(true)}>
+                Revoke
+              </DropdownMenuItem>
+            </>
+          ) : null}
         </DropdownMenuContent>
       </DropdownMenu>
       {connecting && active ? (
@@ -49,6 +64,9 @@ export function AgentActions({ agent }: { agent: Agent }) {
           onClose={() => setConnecting(false)}
           returnFocus={trigger}
         />
+      ) : null}
+      {active ? (
+        <RevokeAgentDialog agent={agent} open={revoking} onOpenChange={setRevoking} />
       ) : null}
       {editing ? (
         <EditAgentDialog agent={agent} onClose={() => setEditing(false)} returnFocus={trigger} />
