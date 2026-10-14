@@ -161,6 +161,7 @@ export {
   HANDOFF_PATH,
   HANDOFF_TOKEN_PARAM,
   type HandoffConfig,
+  type HandoffRefusalReason,
   type HandoffSubject,
   type HandoffVerdict,
   handoffUrl,
