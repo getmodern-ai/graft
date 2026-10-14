@@ -3,11 +3,11 @@ import { useEffect, useState } from "react";
 
 import { AddConnectionDialog } from "@/components/connection/add-connection-dialog";
 import { AddIcon, InfoIcon, KeyboardArrowDownIcon, SearchIcon } from "@/components/icons";
+import { IntegrationMark } from "@/components/marks";
 import { RetryNotice } from "@/components/retry-notice";
 import { DiscardJobDialog } from "@/components/setup/discard-job-dialog";
 import { SetupChoice, type SetupChoiceOption } from "@/components/setup/setup-choice";
 import { SetupFooter } from "@/components/setup/setup-footer";
-import { SetupLogo } from "@/components/setup/setup-logo";
 import { useSetupMutation } from "@/components/setup/use-setup-mutation";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -124,7 +124,13 @@ export function VendorChoice({
       description: entry.description ? (
         <span className="line-clamp-2">{entry.description}</span>
       ) : undefined,
-      media: <SetupLogo starterId={entry.starterId} url={entry.logoUrl} />,
+      media: (
+        <IntegrationMark
+          slug={entry.starterId ?? entry.slug}
+          name={entry.name}
+          logoUrl={entry.logoUrl}
+        />
+      ),
     })),
     {
       value: ANOTHER_VENDOR,
@@ -295,10 +301,11 @@ export function VendorChoice({
           summary={
             picked && picked !== ANOTHER_VENDOR ? (
               <>
-                <SetupLogo
-                  starterId={picked.starterId}
-                  url={picked.logoUrl}
-                  tile={false}
+                <IntegrationMark
+                  slug={picked.starterId ?? picked.slug}
+                  name={picked.name}
+                  logoUrl={picked.logoUrl}
+                  tile="none"
                   className="size-5"
                 />
                 <span className="font-medium text-foreground">{picked.name}</span>
