@@ -98,7 +98,19 @@ export type DocsProposalStats = {
   characters: number;
   outcome: ConnectionProposalOutcome | null;
   usage: ModelUsage;
+  /** The provider's failure message, cut to `PROPOSAL_ERROR_MAX_CHARS`, when the model call failed; for the log alone. */
+  error?: string;
 };
+
+/** How much of a provider's failure message the log is handed. */
+export const PROPOSAL_ERROR_MAX_CHARS = 300;
+
+/**
+ * How long the address check may take, every host together (Greptile on #231): the lookups run at
+ * once, and a host whose answer has not arrived by then is listed as unresolved rather than holding
+ * the person's one proposal in flight.
+ */
+export const ADDRESS_CHECK_TIMEOUT_MS = 5_000;
 
 export type DocsProposalResult =
   | {
@@ -116,6 +128,8 @@ export type DocsProposalDeps = {
   readWebPage: ReadWebPage;
   /** Answers a hostname's addresses; DNS through `readWebPage`'s own resolver when absent. */
   resolveHost?: (hostname: string) => Promise<ResolvedAddress[]>;
+  /** The address check's bound; `ADDRESS_CHECK_TIMEOUT_MS` when absent. */
+  addressCheckTimeoutMs?: number;
 };
 
 export type DocsProposalInput = { personId: string; name: string; docsUrl: string };
@@ -296,6 +310,7 @@ export async function proposeConnectionFromDocs(
   });
   stats.outcome = answer.outcome;
   stats.usage = answer.usage;
+  if (answer.error) stats.error = answer.error.slice(0, PROPOSAL_ERROR_MAX_CHARS);
   if (answer.outcome === "declined") {
     return fail({
       reason: "not_found",
@@ -328,17 +343,21 @@ export async function proposeConnectionFromDocs(
   const { payload } = verdict;
   found.scheme = payload.scheme;
   found.primaryHost = hostnameOf(payload.primaryHost);
+  // The sign-in line is done once the rules took the scheme: polls during the lookups show it.
+  onStage("checking_address", { ...found });
   const resolve = deps.resolveHost ?? defaultWebPageDeps.resolve;
+  const hostnames = [...new Set(payload.hosts.map((host) => host.replace(/:\d+$/, "")))].filter(
+    // A literal was judged by the rules above.
+    (hostname) => isIP(hostname) === 0,
+  );
+  const resolved = await resolveWithin(
+    hostnames,
+    resolve,
+    deps.addressCheckTimeoutMs ?? ADDRESS_CHECK_TIMEOUT_MS,
+  );
   const unresolvedHosts: string[] = [];
-  for (const host of payload.hosts) {
-    const hostname = host.replace(/:\d+$/, "");
-    if (isIP(hostname) !== 0) continue; // A literal was judged by the rules above.
-    let addresses: ResolvedAddress[];
-    try {
-      addresses = await resolve(hostname);
-    } catch {
-      addresses = [];
-    }
+  for (const [index, hostname] of hostnames.entries()) {
+    const addresses = resolved[index] ?? [];
     if (addresses.length === 0) {
       unresolvedHosts.push(hostname);
       continue;
@@ -370,6 +389,32 @@ export async function proposeConnectionFromDocs(
     unresolvedHosts,
     stats,
   };
+}
+
+/**
+ * Every hostname's addresses, looked up at once and bounded together: a lookup that fails, or has
+ * not answered when the bound passes, answers none.
+ */
+async function resolveWithin(
+  hostnames: readonly string[],
+  resolve: (hostname: string) => Promise<ResolvedAddress[]>,
+  timeoutMs: number,
+): Promise<ResolvedAddress[][]> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<"timeout">((done) => {
+    timer = setTimeout(() => done("timeout"), timeoutMs);
+  });
+  try {
+    return await Promise.all(
+      hostnames.map(async (hostname) => {
+        const lookup = resolve(hostname).catch(() => [] as ResolvedAddress[]);
+        const answer = await Promise.race([lookup, deadline]);
+        return answer === "timeout" ? [] : answer;
+      }),
+    );
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 function hostnameOf(url: string): string | null {

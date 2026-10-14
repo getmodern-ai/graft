@@ -299,6 +299,34 @@ describe("createConnectionProposalStore", () => {
     }
   });
 
+  it("never evicts a running job for room, and refuses a start when every slot runs", async () => {
+    const reader = gatedReader();
+    const store = createConnectionProposalStore({
+      deps: {
+        model: createScriptedModel([], { connectionProposal: UNLEASHED }),
+        readWebPage: reader.read,
+        resolveHost: async () => PUBLIC,
+      },
+      max: 2,
+    });
+    const a = store.start("person_a", { name: "Acme", docsUrl: DOCS_URL });
+    const b = store.start("person_b", { name: "Acme", docsUrl: DOCS_URL });
+    expect(() => store.start("person_c", { name: "Acme", docsUrl: DOCS_URL })).toThrow(
+      expect.objectContaining({ details: { reason: "proposals_busy" } }),
+    );
+    expect(store.get("person_a", a.id).status).toBe("running");
+    expect(store.get("person_b", b.id).status).toBe("running");
+
+    reader.release();
+    await store.idle();
+    // Settled, the oldest makes room.
+    const c = store.start("person_c", { name: "Acme", docsUrl: DOCS_URL });
+    expect(() => store.get("person_a", a.id)).toThrow("No such connection proposal");
+    expect(store.get("person_b", b.id).status).toBe("ready");
+    expect(store.get("person_c", c.id).status).toBe("running");
+    await store.idle();
+  });
+
   it("fails the job, with the throw for the log alone, when the model throws", async () => {
     const events: ConnectionProposalSettled[] = [];
     const throwing: ModelAdapter = {

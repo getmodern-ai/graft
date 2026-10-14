@@ -38,6 +38,8 @@ export const CONNECTION_PROPOSAL_MAX = 1000;
 
 /** The refusal's reason for a start while the person's last job still runs. */
 export const PROPOSAL_RUNNING = "proposal_running";
+/** The refusal's reason when every slot the process holds is a running job. */
+export const PROPOSALS_BUSY = "proposals_busy";
 
 /** What the console shows when no model can read the docs: the variables the operator sets. */
 export const CONNECTION_PROPOSAL_UNCONFIGURED_MESSAGE =
@@ -114,16 +116,21 @@ export function createConnectionProposalStore(
   const now = options.now ?? (() => new Date());
   const jobs = new Map<string, Held>();
 
+  // A running job is never forgotten, by the window or by the cap (Greptile on #231): its person
+  // would poll a 404 while it ran on, and could start a second beside it. Every stage is bounded, so
+  // a running job settles.
   const live = (held: Held | undefined): held is Held =>
-    held !== undefined && now().getTime() - held.state.startedAt.getTime() < ttlMs;
+    held !== undefined &&
+    (held.state.status === "running" || now().getTime() - held.state.startedAt.getTime() < ttlMs);
 
-  const prune = () => {
+  /** Room for one more job: the expired forgotten, then the oldest settled; false when every slot runs. */
+  const makeRoom = (): boolean => {
     for (const [id, held] of jobs) if (!live(held)) jobs.delete(id);
-    while (jobs.size >= max) {
-      const oldest = jobs.keys().next().value;
-      if (oldest === undefined) break;
-      jobs.delete(oldest);
+    for (const [id, held] of jobs) {
+      if (jobs.size < max) break;
+      if (held.state.status !== "running") jobs.delete(id);
     }
+    return jobs.size < max;
   };
 
   const runningFor = (personId: string): Held | null => {
@@ -169,7 +176,13 @@ export function createConnectionProposalStore(
           { details: { reason: PROPOSAL_RUNNING, id: running.state.id } },
         );
       }
-      prune();
+      if (!makeRoom()) {
+        throw new ServiceError(
+          "CONFLICT",
+          "Graft is reading documentation for too many people at once. Try again in a minute.",
+          { details: { reason: PROPOSALS_BUSY } },
+        );
+      }
       const state: ConnectionProposalState = {
         id: `cprop_${randomUUID()}`,
         status: "running",

@@ -1,9 +1,11 @@
-import { createScriptedModel, type RawConnectionProposal } from "@graft/model";
+import { createScriptedModel, type ModelAdapter, type RawConnectionProposal } from "@graft/model";
 import { describe, expect, it } from "vitest";
 
 import {
+  type DocsProposalFound,
   type DocsProposalStage,
   PROPOSAL_DOC_WINDOWS,
+  PROPOSAL_ERROR_MAX_CHARS,
   proposeConnectionFromDocs,
   readDocsProposalInput,
   vendorSlugOf,
@@ -57,29 +59,50 @@ async function run(
   overrides: {
     read?: ReadWebPage;
     resolveHost?: (host: string) => Promise<ResolvedAddress[]>;
+    addressCheckTimeoutMs?: number;
+    model?: ModelAdapter;
   } = {},
 ) {
-  const model = createScriptedModel(
-    [],
-    proposal === undefined ? {} : { connectionProposal: proposal },
-  );
+  const model =
+    overrides.model ??
+    createScriptedModel([], proposal === undefined ? {} : { connectionProposal: proposal });
   const stages: DocsProposalStage[] = [];
+  const snapshots: DocsProposalFound[] = [];
   const result = await proposeConnectionFromDocs(
     { personId: "person_a", name: "Acme Unleashed", docsUrl: DOCS_URL },
     {
       model,
       readWebPage: overrides.read ?? pagedDocs("Use the api-auth-id header.", 1000).read,
       resolveHost: overrides.resolveHost ?? publicDns,
+      ...(overrides.addressCheckTimeoutMs
+        ? { addressCheckTimeoutMs: overrides.addressCheckTimeoutMs }
+        : {}),
     },
-    (stage) => stages.push(stage),
+    (stage, found) => {
+      stages.push(stage);
+      snapshots.push(found);
+    },
   );
-  return { result, stages, model };
+  return { result, stages, snapshots, model };
 }
 
 describe("proposeConnectionFromDocs", () => {
   it("goes from the URL to a proposal the connection rules accept, through the four stages", async () => {
-    const { result, stages, model } = await run(UNLEASHED);
-    expect(stages).toEqual(["reading_docs", "finding_sign_in", "checking_address", "preparing"]);
+    const { result, stages, snapshots, model } = await run(UNLEASHED);
+    // The address check is announced twice: once with the address, again once the rules took the
+    // scheme, so a poll during the lookups shows the sign-in line done.
+    expect(stages).toEqual([
+      "reading_docs",
+      "finding_sign_in",
+      "checking_address",
+      "checking_address",
+      "preparing",
+    ]);
+    expect(snapshots[3]).toEqual({
+      docsHost: "apidocs.unleashed.example",
+      scheme: "api_key_header",
+      primaryHost: "api.unleashed.example",
+    });
     expect(result).toEqual({
       ok: true,
       proposal: {
@@ -155,6 +178,38 @@ describe("proposeConnectionFromDocs", () => {
       },
     });
     expect(result).toMatchObject({ ok: true, unresolvedHosts: ["api.unleashed.example"] });
+  });
+
+  it("lists a host whose lookup outlasts the bound as unresolved, and does not wait on it", async () => {
+    const { result } = await run(
+      { ...UNLEASHED, hosts: ["files.unleashed.example"] },
+      {
+        addressCheckTimeoutMs: 20,
+        resolveHost: async (host) =>
+          host === "files.unleashed.example" ? new Promise(() => {}) : PUBLIC,
+      },
+    );
+    expect(result).toMatchObject({ ok: true, unresolvedHosts: ["files.unleashed.example"] });
+  });
+
+  it("keeps the provider's failure message, bounded, for the log", async () => {
+    const failing: ModelAdapter = {
+      name: "failing",
+      open: () => {
+        throw new Error("never opened");
+      },
+      proposeConnection: async () => ({
+        proposal: null,
+        outcome: "failed",
+        usage: { inputTokens: 0, outputTokens: 0 },
+        error: `529 overloaded ${"x".repeat(1000)}`,
+      }),
+    };
+    const { result } = await run(undefined, { model: failing });
+    expect(result).toMatchObject({ ok: false, failure: { reason: "model_failed" } });
+    expect(result.stats.error?.startsWith("529 overloaded")).toBe(true);
+    expect(result.stats.error?.length).toBe(PROPOSAL_ERROR_MAX_CHARS);
+    if (!result.ok) expect(result.failure.message).not.toContain("529");
   });
 
   it("refuses a proposal that breaks a scheme rule, naming it", async () => {
