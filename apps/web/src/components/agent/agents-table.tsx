@@ -53,12 +53,12 @@ export function AgentsTable({
       <TableHeader>
         <TableRow>
           <TableHead>Agent</TableHead>
-          <TableHead className="hidden md:table-cell md:w-36 xl:w-60">Harnesses</TableHead>
+          <TableHead className="hidden md:table-cell md:w-36 xl:w-60">Connected from</TableHead>
           <TableHead className="hidden xl:table-cell xl:w-36">Token</TableHead>
           <TableHead className="hidden lg:table-cell lg:w-32">Working set</TableHead>
           <TableHead className="hidden lg:table-cell lg:w-28">Idle window</TableHead>
           <TableHead className="w-26 md:w-36">Created</TableHead>
-          {/* Wide enough for the longest chip, *Awaiting harness* (ADR 0024). */}
+          {/* Wide enough for the longest chip, *Not connected yet* (ADR 0024). */}
           <TableHead className="w-30 md:w-36">Status</TableHead>
           <TableHead className="w-12">
             <span className="sr-only">Actions</span>
@@ -80,7 +80,7 @@ export function AgentsTable({
           </TableBodyNote>
         ) : agents.length === 0 ? (
           <TableBodyNote colSpan={COLUMNS} className="text-center">
-            No agents yet. Create one to connect your harness
+            No agents yet. Create one to connect your agent to Graft
             {offerSetup ? (
               <>
                 , or let Setup walk you through a first connection and tool.{" "}
@@ -194,10 +194,10 @@ function AgentHarnesses({ agent }: { agent: AgentTableRow }) {
           ref={trigger}
           variant="link"
           className="h-auto p-0 text-info"
-          aria-label={`Set up harness for ${agent.name}`}
+          aria-label={`Connect ${agent.name}`}
           onClick={() => setConnecting(true)}
         >
-          Set up harness
+          Connect agent
         </Button>
         {connecting ? (
           <AgentConnectionDialog

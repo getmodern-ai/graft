@@ -106,7 +106,7 @@ function AgentRoute() {
         {agent.revokedAt ? null : (
           <PageHeaderActions>
             <Button ref={connectionTrigger} variant="outline" onClick={() => setConnecting(true)}>
-              Connect a harness
+              Connect an agent
             </Button>
             {tokenRotatable(agent) ? (
               <Button variant="outline" onClick={() => setRotating(true)}>

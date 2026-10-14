@@ -1547,7 +1547,7 @@ export function createApi(options: ApiOptions): Hono {
 
   /**
    * The static token of an agent **awaiting its harness** (ADR 0024; GRA-208), for Setup's finish
-   * step and *Connect a harness* on such an agent, answered once, `201 { agent, token }`, as
+   * step and *Connect an agent* on such an agent, answered once, `201 { agent, token }`, as
    * `POST /agents` answers. For the agent Setup runs as, while Setup is not completed and no client
    * holds the agent, a **replacement** (ADR 0024 as amended 2026-09-25): the finish step held the
    * only plaintext, so a reload lost it, and the new hash replaces the old one, which stops

@@ -308,7 +308,7 @@ describe("createAgentAwaitingHarness", () => {
   });
 });
 
-/** ADR 0024 (GRA-208): the token Setup's finish step and *Connect a harness* issue, once. */
+/** ADR 0024 (GRA-208): the token Setup's finish step and *Connect an agent* issue, once. */
 describe("issueAwaitingAgentToken", () => {
   it("mints once for an agent awaiting its harness and stores only the hash and the prefix", async () => {
     const deps = fakeDeps({ findAgent: vi.fn(async () => awaitingRow) });

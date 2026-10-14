@@ -35,7 +35,7 @@ export function AgentActions({ agent }: { agent: Agent }) {
           </DropdownMenuItem>
           {active ? (
             <DropdownMenuItem onClick={() => setConnecting(true)}>
-              Connect a harness
+              Connect an agent
             </DropdownMenuItem>
           ) : null}
           <DropdownMenuItem disabled={!active} onClick={() => setEditing(true)}>

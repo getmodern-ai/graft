@@ -21,7 +21,7 @@ import { promptHarnessOfClient } from "@/lib/setup-prompt-harness";
 
 /**
  * Reopens setup without retrieving a token (ADR 0007, ADR 0018). Named for what the person does,
- * "Connect a harness", never "connection": that word is a vendor account (CONTEXT.md) and the
+ * "Connect an agent", never "connection": that word is a vendor account (CONTEXT.md) and the
  * screen beside this one (GRA-168). Both forms end with the setup prompt for the agent (GRA-205):
  * the harness the person picks for a static token, the client that consented for an OAuth agent.
  *
@@ -54,9 +54,9 @@ export function AgentConnectionDialog({
     >
       <DialogContent className="sm:max-w-lg" finalFocus={returnFocus}>
         <DialogHeader>
-          <DialogTitle>Connect a harness</DialogTitle>
+          <DialogTitle>Connect an agent</DialogTitle>
           <DialogDescription>
-            Point the harness that will run as {agent.name} at Graft with the settings below.
+            Connect {agent.name} to Graft with the settings below.
           </DialogDescription>
         </DialogHeader>
         <div className="flex min-w-0 flex-col gap-4">
@@ -97,8 +97,8 @@ function OAuthSetup({
       />
       <p className="text-muted-foreground">
         {awaiting
-          ? `For a harness that signs in with OAuth (Claude, ChatGPT, Claude Code, Codex): add this URL, then sign in to Graft; ${agent.name} is already chosen on the consent page. OAuth manages the token for you.`
-          : `Add this URL to your harness, then sign in to Graft and choose ${agent.name} on the connection screen. OAuth manages the token for you.`}
+          ? `For an agent that signs in with OAuth (Claude, ChatGPT, Claude Code, Codex): add this URL, then sign in to Graft; ${agent.name} is already chosen on the consent page. OAuth manages the token for you.`
+          : `Add this URL to your agent, then sign in to Graft and choose ${agent.name} on the connection screen. OAuth manages the token for you.`}
       </p>
       {children}
       <SetupPromptBlock
@@ -123,7 +123,7 @@ function AwaitingHarness({ agent, onIssued }: { agent: Agent; onIssued: (token: 
     <OAuthSetup agent={agent} awaiting>
       <div className="flex flex-col gap-2">
         <p className="text-muted-foreground">
-          For a harness that takes a static token (Hermes, OpenClaw, another MCP client), issue{" "}
+          For an agent that takes a static token (Hermes, OpenClaw, another MCP client), issue{" "}
           {agent.name}'s token here. It is shown once.
         </p>
         <div>
