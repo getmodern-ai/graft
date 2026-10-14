@@ -3,7 +3,7 @@ import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { createAuth } from "@graft/auth";
+import { createAuth, setFirstPassword } from "@graft/auth";
 import {
   addConnectionToAgentScope,
   allowVendor,
@@ -263,6 +263,54 @@ describe.skipIf(!adminUrl)("the schema, the account and the services over a real
     await expect(
       auth.api.signInEmail({ body: { email, password: "wrong-password-entirely" } }),
     ).rejects.toThrow();
+  });
+
+  /**
+   * GRA-298: Better Auth's server-only `setPassword`, through `setFirstPassword`. A social-only
+   * person is made from a password one by swapping its credential row for a Google row under the
+   * same session, which is the shape a Google sign-up leaves.
+   */
+  it("sets a first password for a social-only account, and never over one that holds a password", async () => {
+    const auth = createAuth({ db, secret: AUTH_SECRET, baseURL: "http://localhost:3000" });
+    const password = "a-password-that-is-long-enough";
+    const signIn = async (email: string, pw: string) => {
+      const { headers } = await auth.api.signInEmail({
+        body: { email, password: pw },
+        returnHeaders: true,
+      });
+      return new Headers({ cookie: headers.get("set-cookie") ?? "" });
+    };
+
+    const holder = "pw-holder@example.com";
+    await auth.api.signUpEmail({ body: { email: holder, password, name: "Holder" } });
+    await markPersonEmailVerified(db, holder);
+    const holderHeaders = await signIn(holder, password);
+    expect(await setFirstPassword(auth, holderHeaders, "another-long-password")).toBe(
+      "password_exists",
+    );
+    // The old password still opens the door; nothing was set over it.
+    await expect(signIn(holder, password)).resolves.toBeInstanceOf(Headers);
+
+    const social = "social-only@example.com";
+    await auth.api.signUpEmail({ body: { email: social, password, name: "Social" } });
+    await markPersonEmailVerified(db, social);
+    const socialHeaders = await signIn(social, password);
+    const session = await auth.api.getSession({ headers: socialHeaders });
+    const personId = session?.user.id ?? "";
+    await db.execute(
+      sql`delete from account where user_id = ${personId} and provider_id = 'credential'`,
+    );
+    await db.execute(
+      sql`insert into account (id, account_id, provider_id, user_id, created_at, updated_at)
+          values (${`acc_${personId}`}, 'google-sub-1', 'google', ${personId}, now(), now())`,
+    );
+    await expect(signIn(social, password)).rejects.toThrow();
+
+    expect(await setFirstPassword(auth, socialHeaders, "a-first-password-of-mine")).toBe("set");
+    await expect(signIn(social, "a-first-password-of-mine")).resolves.toBeInstanceOf(Headers);
+    expect(await setFirstPassword(auth, socialHeaders, "and-again-a-password")).toBe(
+      "password_exists",
+    );
   });
 
   it("returns an agent's token once, stores a hash, and resolves the token to that agent and no other", async () => {
