@@ -6,14 +6,16 @@ import {
   NAVIGATION_ITEMS,
   type PaletteItem,
 } from "./command-palette";
-import { NAV_ITEMS } from "./main-sidebar-nav-items";
+import { SCREEN_NAV_ITEMS } from "./main-sidebar-nav-items";
 
 const labels = (query: string) =>
   filterPalette(NAVIGATION_ITEMS, query).flatMap((group) => group.items.map((item) => item.label));
 
 describe("NAVIGATION_ITEMS", () => {
   it("lists the sidebar's screens, in its order", () => {
-    expect(NAVIGATION_ITEMS.map((item) => item.to)).toEqual(NAV_ITEMS.map((item) => item.to));
+    expect(NAVIGATION_ITEMS.map((item) => item.to)).toEqual(
+      SCREEN_NAV_ITEMS.map((item) => item.to),
+    );
   });
 
   it("gives every row its own id", () => {
@@ -31,18 +33,18 @@ describe("filterPalette", () => {
 
   it("matches the start of a word of the label, ignoring case", () => {
     expect(labels("SET")).toEqual(["Settings"]);
-    expect(labels("act")).toEqual(["Pending actions"]);
+    expect(labels("REQ")).toEqual(["Requests"]);
     expect(labels("tings")).toEqual([]);
   });
 
   it("needs every word of the query to match", () => {
-    expect(labels("pen act")).toEqual(["Pending actions"]);
+    expect(labels("pen act")).toEqual(["Requests"]);
     expect(labels("pending agents")).toEqual([]);
   });
 
   it("matches the words a screen answers to beside its label", () => {
-    expect(labels("requests")).toEqual(["Pending actions"]);
-    expect(labels("integ")).toEqual(["Connections"]);
+    expect(labels("pending")).toEqual(["Requests"]);
+    expect(labels("conn")).toEqual(["Integrations"]);
   });
 
   it("omits a group with nothing left, so no heading stands over an empty list", () => {

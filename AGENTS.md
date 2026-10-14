@@ -1656,10 +1656,11 @@ the `Sidebar` primitive off canvas at its own 16rem — the `sidebar_state` cook
 back by `src/lib/sidebar-state.ts`, ⌘B toggles it, and below `md` it is the drawer, closed on the
 router's `onBeforeNavigate` — with `SkipNav` first in the tree and the `<main>` region carrying
 `MAIN_CONTENT_ID`. `main-sidebar.tsx` draws the wordmark (`src/components/graft-wordmark.tsx` — the
-supplied SVG with outlined lettering, also used by `AuthHeader`, drawn in tokens; GRA-108), the four
-destinations from `src/lib/main-sidebar-nav-items.ts` (a pure data
-module, tested) with the open-ask count as a `SidebarMenuBadge` and the count in the link's own
-name, and `account-menu.tsx` at the foot: name and email, the Theme radio group (label *inside* the
+supplied SVG with outlined lettering, also used by `AuthHeader`, drawn in tokens; GRA-108) linking to Home at `/`, the
+main group and the footer group (Docs & help, out to `DOCS_URL`, then Settings) from
+`src/lib/main-sidebar-nav-items.ts` (a pure data module, tested, which the palette's rows derive
+from too; GRA-309) with the open-ask count as a `SidebarMenuBadge` on Requests and the count in the
+link's own name, and `account-menu.tsx` at the foot: name and email, the Theme radio group (label *inside* the
 group — Base UI's `Menu.GroupLabel` throws outside one), Sign out through `src/lib/sign-out.ts`,
 which removes the session entry and clears the cache before anyone navigates. The screen's title is
 written once, with `useScreenTitle` (`shell/screen-title.tsx`), and shown by two bars — the 48px
