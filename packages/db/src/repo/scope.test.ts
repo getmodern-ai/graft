@@ -62,6 +62,7 @@ import {
   findConnectionForNoKeyUpdate,
   findConnectionForUpdate,
   findVendorConnectionsForUpdate,
+  lockConnectionKey,
   revokeConnection,
   setConnectionProviderRef,
 } from "./connection";
@@ -730,6 +731,14 @@ describe("agent-scoped writes take both ids too, so a mis-scoped write edits not
     const s = only();
     expect(s.sql).toBe("select pg_advisory_xact_lock(hashtext($1))");
     expect(s.params).toEqual(["authored-tool:person_1:open-meteo:current-weather"]);
+  });
+
+  /** The console connect's find-or-make (GRA-304) is serialised per person and key. */
+  it("locking a connection key takes a transaction-scoped advisory lock on the hash of person and key", async () => {
+    await lockConnectionKey(db, "person_1", "keyring:open-meteo");
+    const s = only();
+    expect(s.sql).toBe("select pg_advisory_xact_lock(hashtext($1))");
+    expect(s.params).toEqual(["connection:person_1:keyring:open-meteo"]);
   });
 });
 

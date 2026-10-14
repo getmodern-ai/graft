@@ -32,6 +32,9 @@ export type AnalyticsEvent =
   | "agent_token_rotated"
   | "mcp_client_consented"
   | "connection_created"
+  // The console connect, with no agent asking (GRA-304): `kind` (connected | form | link),
+  // `access` (full | ask), and `created` (whether a row was made at once).
+  | "connection_started"
   | "connection_confirmed"
   | "credential_entered"
   | "connection_revoked"

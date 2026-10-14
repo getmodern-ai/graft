@@ -225,6 +225,16 @@ export {
   widenProviderConnectionHosts,
 } from "./connection/connection.service";
 export {
+  type ConnectionAccessDeps,
+  defaultConnectionAccessDeps,
+} from "./connection/connection-access.deps";
+export {
+  type AgentConnectionAccess,
+  type ConnectionAccess,
+  type ConnectionAccessToolApproval,
+  getConnectionAccess,
+} from "./connection/connection-access.service";
+export {
   DIRECTORY_PAGE_LIMIT,
   type DirectoryCategory,
   type DirectoryConnectKind,
@@ -258,10 +268,14 @@ export {
   readLinkCallbackSearch,
 } from "./connection/link.rules";
 export {
+  type ConsoleLinkStatePayload,
+  type ConsoleLinkStateVerdict,
   LINK_STATE_TTL_MS,
   type LinkStatePayload,
   type LinkStateVerdict,
+  signConsoleLinkState,
   signLinkState,
+  verifyConsoleLinkState,
   verifyLinkState,
 } from "./connection/link-state";
 export {
