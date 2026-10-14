@@ -74,6 +74,8 @@ export async function runAgentTool(
   ids: { agentId: string; vendor: string; name: string },
   input: unknown,
   deps: AgentToolRunDeps,
+  /** The connection to run over, named by the caller (`AuthoredRunArgs.connectionId`). */
+  options: { connectionId?: string } = {},
 ): Promise<AgentToolRunOutput> {
   const agent = orNotFound(
     await getAgent(ctx, principal, ids.agentId, deps.agent),
@@ -89,7 +91,12 @@ export async function runAgentTool(
   // The person's tool, or a stock tool of the name copied in first, by the road `run_tool` takes
   // (`@graft/mcp`'s `ensureToolForAgent`, GRA-238; Greptile on #184), so a first console run of
   // stock is judged by the rules below rather than refused as not found.
-  const ensured = await ensureToolForAgent(deps.mcp, scope, { vendor: ids.vendor, name: ids.name });
+  const ensured = await ensureToolForAgent(
+    deps.mcp,
+    scope,
+    { vendor: ids.vendor, name: ids.name },
+    options,
+  );
   if (!ensured.ok) {
     if (ensured.reason === "tool_not_found") {
       throw new ServiceError("NOT_FOUND", `No tool named ${wire} is in this toolbox`);
@@ -129,6 +136,7 @@ export async function runAgentTool(
     input,
     mode: { detached: false, timeoutSeconds: DEFAULT_COMMAND_TIMEOUT_SECONDS, dryRun: false },
     channel: NO_ELICITATION,
+    ...(options.connectionId ? { connectionId: options.connectionId } : {}),
     admit: async (current) => {
       const refusal = await unrunnable(current);
       judged.refusal = refusal;
