@@ -609,14 +609,14 @@ function ChangeMenuItems({
             <DropdownMenuRadioItem value="except">
               <Choice
                 title="Except ones that delete"
-                detail="Tools that can delete still ask first."
+                detail="Tools that can delete ask first, unless you answered one on its own."
               />
             </DropdownMenuRadioItem>
             <DropdownMenuRadioItem value="including">
               <Choice
                 destructive
                 title="Including ones that delete"
-                detail={`${agent} won't ask for anything in ${integrationName}, even deleting.`}
+                detail={`${agent} won't ask for anything in ${integrationName}, even deleting. A tool you denied or set to ask every time still does that.`}
               />
             </DropdownMenuRadioItem>
           </DropdownMenuRadioGroup>
@@ -660,8 +660,8 @@ function changedToast(action: ChangeAction, agent: string, integrationName: stri
         : `${agent} asks next time`;
     case "vendor_destructive":
       return action.on
-        ? `${agent} no longer asks for ${integrationName} tools that delete`
-        : `${integrationName} tools that delete ask ${agent} first`;
+        ? `${agent} no longer asks for ${integrationName} tools that delete, except ones you denied or set to ask every time`
+        : `${integrationName} tools that delete ask ${agent} first, unless you answered one on its own`;
     case "remove_vendor":
       return `Each ${integrationName} tool asks ${agent} on its own again`;
     case "withdraw_build":
