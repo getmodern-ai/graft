@@ -193,7 +193,15 @@ export function doneRowCopy(card: DoneRequest, agentActive: boolean): DoneRowCop
         ...base,
         title: `${agent} can use ${name}`,
         detail: build ? "And build its own tools for it" : null,
-        change: agentActive && build ? buildTargets(ask.payload.connectionId) : null,
+        // An allow may grant the build approval and every non-destructive tool beside it (Full
+        // access), each a row of its own: Change opens both, and the dialog shows what stands.
+        change: agentActive
+          ? {
+              tool: null,
+              vendor: { slug: ask.payload.vendor, integrationName: name },
+              buildConnectionId: ask.payload.connectionId,
+            }
+          : null,
       };
     }
     case "connection":

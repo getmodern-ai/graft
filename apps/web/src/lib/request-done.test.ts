@@ -137,21 +137,31 @@ describe("doneRowCopy: build, scope and connection asks", () => {
     expect(copy.change).toBeNull();
   });
 
-  it("says a scope allowed, with Change only where it granted the build too", () => {
+  it("says a scope allowed, and opens the build and integration approvals it may have granted", () => {
     const scope = {
       connectionId: "con_2",
       vendor: "google_drive",
       displayName: "Google Drive",
       hosts: ["www.googleapis.com"],
     };
+    const targets = {
+      tool: null,
+      vendor: { slug: "google_drive", integrationName: "Google Drive" },
+      buildConnectionId: "con_2",
+    };
     expect(doneRowCopy(card("scope", scope), true)).toMatchObject({
       title: "Codex can use Google Drive",
-      change: null,
+      detail: null,
+      change: targets,
     });
+    // Full access: the build approval and every non-destructive tool, both reachable from Change.
     expect(
-      doneRowCopy(card("scope", scope, { answer: { allow: true, approveBuild: true } }), true)
-        .change,
-    ).toEqual({ tool: null, vendor: null, buildConnectionId: "con_2" });
+      doneRowCopy(
+        card("scope", scope, { answer: { allow: true, approveBuild: true, allowVendor: true } }),
+        true,
+      ),
+    ).toMatchObject({ detail: "And build its own tools for it", change: targets });
+    expect(doneRowCopy(card("scope", scope), false).change).toBeNull();
   });
 
   it("says a connection made, and opens what its confirmation may have granted", () => {
