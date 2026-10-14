@@ -1,7 +1,11 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 
-import { HomeListFailed, HomePanel } from "@/components/home/home-panel";
+import {
+  HomeListFailed,
+  HomePanel,
+  useRefetchWhenRequestsChange,
+} from "@/components/home/home-panel";
 import { AddIcon } from "@/components/icons";
 import { IntegrationMark } from "@/components/marks";
 import { RequestList } from "@/components/pending/request-row";
@@ -24,6 +28,8 @@ import {
  */
 export function SuggestedPanel() {
   const suggested = useQuery(suggestedIntegrationsQuery);
+  // A decline on Home closes the ask a tile names, and refreshes nothing of this read's.
+  useRefetchWhenRequestsChange(suggested.refetch);
   const integrations = useQuery(integrationsQuery);
   const tiles = homeSuggestions(
     suggested.data?.suggestions ?? [],

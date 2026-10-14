@@ -1,5 +1,6 @@
+import { useQuery } from "@tanstack/react-query";
 import type * as React from "react";
-import { useId } from "react";
+import { useEffect, useId, useRef } from "react";
 
 import { ArrowForwardIcon } from "@/components/icons";
 import { RequestListNote } from "@/components/pending/request-row";
@@ -7,6 +8,7 @@ import { RetryNotice } from "@/components/retry-notice";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
+import { pendingActionsQuery } from "@/lib/pending-action-queries";
 import { cn } from "@/lib/utils";
 
 /**
@@ -136,4 +138,22 @@ export function HomeListFailed({
       />
     </RequestListNote>
   );
+}
+
+/**
+ * Read a panel again whenever the set of open requests changes: an answer given on Home (which
+ * refreshes the open requests and nothing else of Home's), or an ask that arrives or closes
+ * elsewhere. Through the sidebar's read and poll, so the answer paths shared with Requests stay
+ * as they are. The first answer of the read is no change, since the panel's read started beside it.
+ */
+export function useRefetchWhenRequestsChange(refetch: () => unknown) {
+  const pending = useQuery({ ...pendingActionsQuery, refetchInterval: 15_000 });
+  const openIds = pending.data?.pendingActions.map((action) => action.id).join(",");
+  const seen = useRef(openIds);
+  useEffect(() => {
+    if (openIds === undefined || seen.current === openIds) return;
+    const first = seen.current === undefined;
+    seen.current = openIds;
+    if (!first) void refetch();
+  }, [openIds, refetch]);
 }
