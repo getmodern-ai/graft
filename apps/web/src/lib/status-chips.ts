@@ -163,6 +163,20 @@ export const APPROVAL_DECISION_CHIP = {
 } as const satisfies Record<Approval["decision"], StatusChip>;
 
 /**
+ * An answer as the integration page's *Your answers* lists it (GRA-318): `success` where the agent
+ * runs without asking, `destructive` for a refusal, `secondary` for a tool set to ask every time,
+ * the person's own choice and not a fault, and `outline` for an allow given for an earlier
+ * version, which waits on the next call's ask (GRA-245).
+ */
+export const ANSWER_CHIP = {
+  always: { variant: "success", label: "Always allowed" },
+  allowed: { variant: "success", label: "Allowed" },
+  ask_every_time: { variant: "secondary", label: "Asks every time" },
+  denied: { variant: "destructive", label: "Denied" },
+  asks_next_time: { variant: "outline", label: "Asks next time" },
+} as const satisfies Record<string, StatusChip>;
+
+/**
  * Whether destructive tools pass under an integration's standing approval (GRA-237; ADR 0008 as
  * amended 2026-10-09): `success` when they run too, `secondary` when they keep asking first, the
  * neutral rest, since a tool that asks is not a fault.

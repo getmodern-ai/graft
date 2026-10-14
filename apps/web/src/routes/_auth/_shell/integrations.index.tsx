@@ -2,7 +2,6 @@ import { useQuery } from "@tanstack/react-query";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useState } from "react";
 
-import { AddConnectionDialog } from "@/components/connection/add-connection-dialog";
 import { ConnectionCard } from "@/components/connection/connection-card";
 import {
   AddIcon,
@@ -11,6 +10,7 @@ import {
   KeyboardArrowUpIcon,
   SearchIcon,
 } from "@/components/icons";
+import { DiscoverTab } from "@/components/integration/discover-tab";
 import { IntegrationsTable } from "@/components/integration/integrations-table";
 import { SuggestedBanner } from "@/components/integration/suggested-banner";
 import { PageContainer } from "@/components/page/page-container";
@@ -49,9 +49,10 @@ import { cn } from "@/lib/utils";
 
 /**
  * The Integrations screen (GRA-321; Figma 2059:7655): what the person has connected, one row per
- * integration (GRA-291), with Connected and Discover tabs. Discover is GRA-322's; until it lands
- * `?tab=discover` is a placeholder that keeps Add connection, so the banner's link and the tab
- * have somewhere to go. `/connections` redirects here.
+ * integration (GRA-291), with Connected and Discover tabs. Discover (`?tab=discover`, GRA-322)
+ * is the directory, where an integration is connected with no agent asking, so the header carries
+ * no Add connection of its own; its *Add a custom API* opens Flow C over Discover (GRA-323).
+ * `/connections` redirects here.
  *
  * Revoked connections are on no row (GRA-291), and this is still where one is reconnected or its
  * provider's release retried (ADR 0007, ADR 0019), so they stay below the table as the connection
@@ -70,9 +71,8 @@ export const Route = createFileRoute("/_auth/_shell/integrations/")({
 });
 
 function IntegrationsRoute() {
-  const { tab = "connected" } = Route.useSearch();
+  const { tab = "connected", q, custom } = Route.useSearch();
   const integrations = useQuery(integrationsQuery);
-  const [adding, setAdding] = useState(false);
   const rows = integrations.data?.integrations ?? [];
 
   useScreenTitle("Integrations");
@@ -88,10 +88,19 @@ function IntegrationsRoute() {
           </PageHeaderDescription>
         </PageHeaderContent>
         <PageHeaderActions>
-          {/* Until Discover lands (GRA-322), the way to connect one with no agent asking. */}
-          <Button onClick={() => setAdding(true)}>
+          {/* Flow C (GRA-323) through Discover's `custom` param, so the dialog has one home. */}
+          <Button
+            variant="outline"
+            nativeButton={false}
+            render={
+              <Link
+                to="/integrations"
+                search={{ tab: "discover", ...(q ? { q } : {}), custom: "" }}
+              />
+            }
+          >
             <AddIcon />
-            Add connection
+            Add a custom API
           </Button>
         </PageHeaderActions>
       </PageHeader>
@@ -108,14 +117,10 @@ function IntegrationsRoute() {
             onRetry={() => void integrations.refetch()}
           />
         ) : (
-          <p className="text-muted-foreground text-sm">
-            The integrations you can connect, and the ones your agents asked about, will be listed
-            here. Until then, Add connection connects one by its address.
-          </p>
+          // Keyed by `q`, so a deep link to another search on this route starts from it.
+          <DiscoverTab key={q ?? ""} q={q} custom={custom} />
         )}
       </div>
-
-      <AddConnectionDialog open={adding} onOpenChange={setAdding} />
     </PageContainer>
   );
 }

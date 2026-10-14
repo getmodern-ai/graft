@@ -17,6 +17,7 @@ import {
   withdrawVendorApproval,
 } from "@/lib/approval-queries";
 import { connectionsQuery } from "@/lib/connection-queries";
+import { activityKeys } from "@/lib/integration-activity";
 import { VENDOR_APPROVAL_DESTRUCTIVE_CHIP } from "@/lib/status-chips";
 import { integrationNameOfVendor } from "@/lib/tool-ask-copy";
 
@@ -40,7 +41,11 @@ export function IntegrationApprovalsCard({ agent }: { agent: Agent }) {
   const withdraw = useMutation({
     mutationFn: (vendor: string) => withdrawVendorApproval(agent.id, vendor),
     onSuccess: async (_result, vendor) => {
-      await queryClient.invalidateQueries({ queryKey: approvalKeys.vendorsOfAgent(agent.id) });
+      // The activity reads an integration's standing approval as a row (GRA-308).
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: approvalKeys.vendorsOfAgent(agent.id) }),
+        queryClient.invalidateQueries({ queryKey: activityKeys.all }),
+      ]);
       toast.success("Withdrawn", {
         description: `${integrationNameOfVendor(vendor, named)} tools ask again, each once, unless a tool's own answer stands.`,
       });

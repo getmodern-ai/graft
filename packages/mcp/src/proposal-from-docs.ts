@@ -1,6 +1,6 @@
 import { isIP } from "node:net";
 
-import { VENDOR_MAX_LENGTH, validateDisplayName, validateVendor } from "@graft/core";
+import { validateDisplayName, validateVendor, vendorSlugOf } from "@graft/core";
 import {
   CONNECTION_PROPOSAL_INPUT_MAX_CHARS,
   type ConnectionProposalOutcome,
@@ -14,6 +14,10 @@ import { SCHEME_PARAMETERS } from "@graft/proxy/scheme-parameters";
 import { AUTH_SCHEMES, type AuthScheme } from "@graft/proxy/types";
 
 import { normaliseProposal } from "./connection-request";
+
+/** Moved to `@graft/core`'s browser-safe rules so the console's Flow C fallback form slugs a name as the job does (GRA-323). */
+export { vendorSlugOf };
+
 import { defaultWebPageDeps, type ReadWebPage, type ResolvedAddress } from "./web-page";
 
 /**
@@ -224,19 +228,6 @@ export function readDocsProposalInput(input: {
     };
   }
   return { ok: true, name, docsUrl: url.toString() };
-}
-
-/** The person's name as a vendor slug, for a model that answered none the rules take. */
-export function vendorSlugOf(name: string): string {
-  const slug = name
-    .normalize("NFKD")
-    .replace(/\p{M}/gu, "")
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, VENDOR_MAX_LENGTH)
-    .replace(/-+$/, "");
-  return slug === "" ? "integration" : slug;
 }
 
 const MODEL_FAILURES: Record<
