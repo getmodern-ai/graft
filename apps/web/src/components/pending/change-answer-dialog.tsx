@@ -118,7 +118,9 @@ export function ChangeAnswerDialog({
   });
   const withdrawTool = useMutation({
     mutationFn: (toolId: string) => withdrawApproval(agentId, toolId),
-    onSuccess: () => settled("Withdrawn", "The tool asks again on its next call."),
+    // Says what changed, never how the tool runs next: an integration's approval may still pass
+    // it, and the dialog's line, read again, says which.
+    onSuccess: () => settled("Withdrawn", "This tool's own answer is gone."),
   });
   const widen = useMutation({
     mutationFn: ({ vendor, on }: { vendor: string; on: boolean }) =>
@@ -127,13 +129,14 @@ export function ChangeAnswerDialog({
       settled(
         on ? "Includes ones that delete" : "Except ones that delete",
         on
-          ? "Tools that can delete or overwrite data run without asking too."
-          : "Tools that can delete or overwrite data ask you first.",
+          ? "Tools that can delete or overwrite data pass on this approval too."
+          : "Tools that can delete or overwrite data no longer pass on this approval.",
       ),
   });
   const withdrawVendor = useMutation({
     mutationFn: (vendor: string) => withdrawVendorApproval(agentId, vendor),
-    onSuccess: () => settled("Withdrawn", "Its tools ask again, each once."),
+    onSuccess: () =>
+      settled("Withdrawn", "The integration's approval is gone. A tool's own answer still holds."),
   });
   const withdrawBuild = useMutation({
     mutationFn: (connectionId: string) => withdrawBuildApproval(agentId, connectionId),
