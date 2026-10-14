@@ -183,8 +183,10 @@ export {
 } from "./connection/connection.rules";
 export {
   type ConnectionOutput,
+  type ConnectionState,
   type ConnectThroughProviderInput,
   completeOAuthConsent,
+  connectionStateOf,
   connectThroughProvider,
   getConnection,
   isConnectionUsable,
@@ -325,6 +327,15 @@ export {
   ServiceError,
   type ServiceErrorCode,
 } from "./errors";
+export { createIntegrationDeps, type IntegrationDeps } from "./integration/integration.deps";
+export {
+  type IntegrationAgentOutput,
+  type IntegrationAttentionReason,
+  type IntegrationConnectionOutput,
+  type IntegrationOutput,
+  listIntegrations,
+  worstAttention,
+} from "./integration/integration.service";
 export { isKebabCase } from "./kebab-case";
 export { defaultLedgerDeps, type LedgerDeps } from "./ledger/ledger.deps";
 export {

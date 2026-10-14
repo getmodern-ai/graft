@@ -17,6 +17,7 @@ import {
   addAgentConnection,
   findAgentForUpdate,
   issueAgentToken,
+  listActiveAgentReach,
   listAgentConnectionIds,
   listAgentIdsForConnection,
   listAgentPersonIds,
@@ -85,6 +86,7 @@ import {
   lockStockCatalogue,
 } from "./stock";
 import {
+  countLiveToolsByVendor,
   findAuthoredToolForUpdate,
   findToolVersion,
   listAuthoredToolsForVendor,
@@ -93,7 +95,7 @@ import {
   lockAuthoredToolName,
   setCurrentToolVersion,
 } from "./tool";
-import { lastRunByToolForPerson, listUsage, listUsageForVendor } from "./usage";
+import { lastRunByToolForPerson, lastUsedAtByVendor, listUsage, listUsageForVendor } from "./usage";
 import {
   deleteWorkingSetEntriesForConnection,
   deleteWorkingSetEntry,
@@ -631,6 +633,56 @@ describe("person-scoped statements take the person", () => {
     expect(s.sql).toContain('"agent"."person_id" = $');
     expect(s.sql).toContain('"authored_tool"."vendor" = $');
     expect(s.params).toEqual(["person_1", "demo", "execute__conn_1", 10]);
+  });
+
+  /**
+   * The integrations list (GRA-291): three statements beside `listConnections`, each under the
+   * person, so the list costs four whatever the person holds.
+   */
+  it("the integrations list's agent reach takes the person on both sides of the pair", async () => {
+    await listActiveAgentReach(db, "person_1");
+    const s = only();
+    expect(s.sql).toMatch(/^select .* from "agent" inner join "connection" on/);
+    expect(s.sql).toContain('"connection"."person_id" = $1');
+    expect(s.sql).toContain('"connection"."revoked_at" is null');
+    expect(s.sql).toContain('"agent"."scope_mode" = $2');
+    expect(s.sql).toContain(
+      'exists (select "agent_id" from "agent_connection" where ("agent_connection"."agent_id" = "agent"."id" and "agent_connection"."connection_id" = "connection"."id"))',
+    );
+    expect(s.sql).toContain('where ("agent"."person_id" = $3 and "agent"."revoked_at" is null)');
+    expect(s.params).toEqual(["person_1", "all", "person_1"]);
+  });
+
+  it("the integrations list's tool counts, live tools of the person per vendor", async () => {
+    await countLiveToolsByVendor(db, "person_1");
+    const s = only();
+    expect(s.sql).toBe(
+      'select "vendor", count(*) from "authored_tool" where ("authored_tool"."person_id" = $1 and "authored_tool"."current_version_id" is not null) group by "authored_tool"."vendor" order by "authored_tool"."vendor" asc',
+    );
+    expect(s.params).toEqual(["person_1"]);
+  });
+
+  it("the integrations list's last call per vendor, by the vendor-usage rule, through the agent's owner", async () => {
+    await lastUsedAtByVendor(db, "person_1", { toolNames: ["execute__conn_1", "execute__conn_2"] });
+    const s = only();
+    expect(s.sql).toContain('inner join "agent" on "usage_ledger"."agent_id" = "agent"."id"');
+    expect(s.sql).toContain(
+      'left join "authored_tool" on "usage_ledger"."tool_id" = "authored_tool"."id"',
+    );
+    expect(s.sql).toContain(
+      'where ("agent"."person_id" = $1 and ("authored_tool"."vendor" is not null or "usage_ledger"."tool_name" in ($2, $3)))',
+    );
+    expect(s.sql).toMatch(/group by "authored_tool"\."vendor", case when/);
+    expect(s.params).toEqual(["person_1", "execute__conn_1", "execute__conn_2"]);
+  });
+
+  it("the integrations list's last call with no execute names reads the tool rows alone", async () => {
+    await lastUsedAtByVendor(db, "person_1", { toolNames: [] });
+    const s = only();
+    expect(s.sql).toContain(
+      'where ("agent"."person_id" = $1 and "authored_tool"."vendor" is not null)',
+    );
+    expect(s.params).toEqual(["person_1"]);
   });
 
   /**
