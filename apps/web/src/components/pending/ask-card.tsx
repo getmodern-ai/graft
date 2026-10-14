@@ -3,8 +3,8 @@ import type * as React from "react";
 import { toast } from "sonner";
 
 import { OpenInNewIcon } from "@/components/icons";
+import { IntegrationMark } from "@/components/marks";
 import { SetupAppCard } from "@/components/setup/setup-app-card";
-import { SetupLogo } from "@/components/setup/setup-logo";
 import { Time } from "@/components/time";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -110,10 +110,11 @@ export function AskCard({
     return (
       <SetupAppCard
         media={
-          <SetupLogo
-            starterId={compact.vendor}
-            url={cachedDirectoryLogo(queryClient, compact.vendor)}
-            tile={false}
+          <IntegrationMark
+            slug={compact.vendor}
+            name={compact.name}
+            logoUrl={cachedDirectoryLogo(queryClient, compact.vendor)}
+            tile="none"
             className="size-8"
           />
         }

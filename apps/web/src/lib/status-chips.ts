@@ -3,6 +3,7 @@ import { isAwaitingHarness } from "@graft/core/setup/setup.rules";
 import type { Agent, WorkingSetChange } from "./agent-queries";
 import type { Approval } from "./approval-queries";
 import type { Connection, ConnectionCall, ConnectionStatus } from "./connection-queries";
+import type { ModelStatus } from "./model-status";
 
 /**
  * Every status chip the console draws, from one place (GRA-47).
@@ -132,6 +133,18 @@ export const MODEL_KEY_STATUS_CHIP = {
   set: { variant: "success", label: "Set" },
   unset: { variant: "outline", label: "Not set" },
 } as const satisfies Record<"set" | "unset", StatusChip>;
+
+/**
+ * What answers the person's `acquire` jobs (GRA-297; `lib/model-status.ts` decides which): the
+ * deployment's model or their own key work; a deployment that needs a key, or has no model at
+ * all, builds nothing until someone acts.
+ */
+export const MODEL_STATUS_CHIP = {
+  included: { variant: "success", label: "Included" },
+  own_key: { variant: "success", label: "In use" },
+  needs_key: { variant: "destructive", label: "Needs a key" },
+  unconfigured: { variant: "destructive", label: "Not configured" },
+} as const satisfies Record<ModelStatus, StatusChip>;
 
 /**
  * A tool's annotations as the check derived them (ADR 0008): read-only passes without asking; write

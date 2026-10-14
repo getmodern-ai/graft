@@ -1,4 +1,4 @@
-import { and, desc, eq, gte, inArray, isNotNull, max, or, sql } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, isNotNull, max, ne, or, sql } from "drizzle-orm";
 
 import type { DbOrTx } from "../index";
 import { agent } from "../schema/agent";
@@ -134,5 +134,52 @@ export async function lastUsedAtByVendor(
     row.lastUsedAt
       ? [{ vendor: row.vendor, toolName: row.toolName, lastUsedAt: row.lastUsedAt }]
       : [],
+  );
+}
+
+/** The last run of one tool across the person's agents, with the agent that made it. */
+export type ToolLastRunRow = {
+  toolId: string;
+  lastRunAt: Date;
+  outcome: "ok" | "error";
+  agentId: string;
+  agentName: string;
+};
+
+/**
+ * When each of the person's tools of one vendor last ran, and for which agent: the integration
+ * page's "Ran 2m ago by Codex" (GRA-293). Person-wide, unlike `lastUsedAtByTool`, so scoped through
+ * both owners, `agent.person_id` and `authored_tool.person_id`. A dry run is a proof and not a run,
+ * and a refused call never reached the sandbox, so neither counts; a revoked agent's runs do, since
+ * they happened. One row per tool, `distinct on` the tool, the newest line winning.
+ */
+export async function lastRunByToolForPerson(
+  db: DbOrTx,
+  personId: string,
+  args: { vendor: string },
+): Promise<ToolLastRunRow[]> {
+  const rows = await db
+    .selectDistinctOn([usageLedger.toolId], {
+      toolId: usageLedger.toolId,
+      lastRunAt: usageLedger.createdAt,
+      outcome: usageLedger.outcome,
+      agentId: usageLedger.agentId,
+      agentName: agent.name,
+    })
+    .from(usageLedger)
+    .innerJoin(agent, eq(usageLedger.agentId, agent.id))
+    .innerJoin(authoredTool, eq(usageLedger.toolId, authoredTool.id))
+    .where(
+      and(
+        eq(agent.personId, personId),
+        eq(authoredTool.personId, personId),
+        eq(authoredTool.vendor, args.vendor),
+        eq(usageLedger.dryRun, false),
+        ne(usageLedger.outcome, "refused"),
+      ),
+    )
+    .orderBy(usageLedger.toolId, desc(usageLedger.createdAt), desc(usageLedger.id));
+  return rows.flatMap(({ toolId, outcome, ...rest }) =>
+    toolId && outcome !== "refused" ? [{ ...rest, toolId, outcome }] : [],
   );
 }
