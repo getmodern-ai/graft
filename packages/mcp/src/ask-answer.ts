@@ -280,7 +280,8 @@ async function recordAnswer(
 /**
  * A `scope` ask's yes (GRA-104): the connection joins the asking agent's scope — and no other
  * agent's (ADR 0007) — through the write the agent page's picker makes, and the build approval
- * is granted for it when the person left GRA-75's choice on; the scope first, so a recorded
+ * is granted for it when the person left GRA-75's choice on, and the integration's tools are
+ * allowed with `allowVendor` (GRA-314); the scope first, so a recorded
  * approval never lacks the scope it is for. A no writes nothing. Either way the answer stays for
  * the waiting `request_connection` to read (the header says why).
  */
@@ -308,7 +309,24 @@ async function grantScope(
         deps.approval,
       )
     : undefined;
-  return { pendingAction: action, connectionIds, ...(buildApproval ? { buildApproval } : {}) };
+  // *Full access* on the handoff page (GRA-314): the integration's tools, never destructive ones,
+  // and never narrowing an allow that stands, as the connection confirmation records it.
+  const vendor = typeof action.payload.vendor === "string" ? action.payload.vendor : null;
+  const vendorApproval =
+    said.allowVendor && vendor
+      ? await allowVendorWhenConnecting(
+          scoped,
+          { personId: principal.personId, agentId: action.agentId },
+          vendor,
+          deps.approval,
+        )
+      : undefined;
+  return {
+    pendingAction: action,
+    connectionIds,
+    ...(buildApproval ? { buildApproval } : {}),
+    ...(vendorApproval ? { vendorApproval } : {}),
+  };
 }
 
 /**
