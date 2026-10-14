@@ -84,4 +84,31 @@ describe("the handoff URL", () => {
       }),
     ).toEqual({ ok: true });
   });
+
+  it("says closed for an ask a revoke closed unanswered, though the revoke moved the expiry the mark was made over (GRA-314)", () => {
+    const token = signHandoffToken(subject, SECRET);
+    for (const closedReason of ["agent_revoked", "connection_revoked"] as const) {
+      const closed = { ...subject, expiresAt: NOW, consumedAt: NOW, closedReason };
+      expect(verifyHandoff({ token, subject: closed, secret: SECRET, now: NOW })).toMatchObject({
+        ok: false,
+        reason: "closed",
+        closedReason,
+        message: expect.stringMatching(
+          closedReason === "agent_revoked" ? /its agent was revoked/ : /its connection was revoked/,
+        ),
+      });
+    }
+    // An answer given before the revoke is the answer, not a close, though the revoke moved the
+    // expiry its token was signed over (Greptile on #250).
+    const answered = {
+      ...subject,
+      expiresAt: NOW,
+      consumedAt: NOW,
+      answeredAt: NOW,
+      closedReason: "agent_revoked" as const,
+    };
+    expect(verifyHandoff({ token, subject: answered, secret: SECRET, now: NOW })).toMatchObject({
+      reason: "consumed",
+    });
+  });
 });

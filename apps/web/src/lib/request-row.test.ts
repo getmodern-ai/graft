@@ -15,7 +15,7 @@ function action(kind: string, payload: Record<string, unknown>): PendingAction {
   return {
     id: "pa_1",
     agentId: "agt_1",
-    agent: { id: "agt_1", name: "Codex" },
+    agent: { id: "agt_1", name: "Codex", clientName: null },
     kind,
     payload,
     expiresAt: "2026-10-15T12:00:00.000Z",
