@@ -578,6 +578,10 @@ export function createFakeDeps(store: FakeStore): FakeDeps {
       const row = store.connections.get(id);
       return row && row.personId === personId ? row : null;
     },
+    findConnectionForShare: async (_db, personId, id) => {
+      const row = store.connections.get(id);
+      return row && row.personId === personId ? row : null;
+    },
     findConnectionByIdUnscoped: async (_db, id) => store.connections.get(id) ?? null,
     listConnections: async (_db, personId) =>
       [...store.connections.values()].filter((row) => row.personId === personId),

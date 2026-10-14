@@ -79,12 +79,12 @@ function harness(
     lockConnectionKey: async (_db: unknown, personId: string, key: string) => {
       locks.push(`${personId} ${key}`);
     },
-    findConnectionForUpdate: async (
-      db: Parameters<typeof fake.connection.findConnectionForUpdate>[0],
+    findConnectionForShare: async (
+      db: Parameters<typeof fake.connection.findConnectionForShare>[0],
       personId: string,
       id: string,
     ) => {
-      const row = await fake.connection.findConnectionForUpdate(db, personId, id);
+      const row = await fake.connection.findConnectionForShare(db, personId, id);
       return row && options.revokeBeforeApprovals ? { ...row, revokedAt: new Date() } : row;
     },
   };

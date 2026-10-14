@@ -55,6 +55,7 @@ import {
   addConnectionHosts,
   findConnection,
   findConnectionByIdUnscoped,
+  findConnectionForShare,
   findConnectionForUpdate,
   findVendorConnectionsForUpdate,
   lockConnectionKey,
@@ -653,6 +654,15 @@ describe("person-scoped statements take the person", () => {
     const s = only();
     expect(s.sql).toContain('"connection"."person_id" = $');
     expect(s.sql).toMatch(/ for update$/);
+    expect(s.params).toEqual(["conn_1", "person_1", 1]);
+  });
+
+  /** The console connect's access (GRA-304): the row share-locked, so a revoke waits and a foreign-key check does not. */
+  it("a connection read for share takes the person and share-locks the row", async () => {
+    await findConnectionForShare(db, "person_1", "conn_1");
+    const s = only();
+    expect(s.sql).toContain('"connection"."person_id" = $');
+    expect(s.sql).toMatch(/ for share$/);
     expect(s.params).toEqual(["conn_1", "person_1", 1]);
   });
 

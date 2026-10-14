@@ -216,6 +216,7 @@ function connectionDeps(): ConnectionDeps {
     ),
     findConnection: vi.fn(async () => connectionRow),
     findConnectionForUpdate: vi.fn(async () => connectionRow),
+    findConnectionForShare: vi.fn(async () => connectionRow),
     findConnectionByIdUnscoped: vi.fn(async () => connectionRow),
     listConnections: vi.fn(async () => [connectionRow]),
     lockConnectionKey: vi.fn(async () => {}),
