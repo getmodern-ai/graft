@@ -197,6 +197,7 @@ function agentDeps(): AgentDeps {
     setAgentConnectedVia: vi.fn(async () => agentRow),
     replaceAgentConnections: vi.fn(async () => {}),
     addAgentConnection: vi.fn(async () => {}),
+    removeAgentConnection: vi.fn(async () => {}),
     listAgentConnectionIds: vi.fn(async () => ["conn_1"]),
     listScopeConnectionIds: vi.fn(async () => ["conn_1"]),
     findConnectionsByIds: vi.fn(async (_db, _p, ids: readonly string[]) =>
@@ -944,6 +945,94 @@ describe("agents", () => {
 
     const revoked = await app.request("/api/agents/agent_1/revoke", from("POST"));
     expect(await revoked.json()).toMatchObject({ agent: { revokedAt: NOW.toISOString() } });
+  });
+
+  it("tells the agent's session after a scope write", async () => {
+    const { app, notifier } = harness({ user: { id: "person_1" } });
+    await app.request("/api/agents/agent_1/scope", json({ mode: "all" }, "PUT"));
+    expect(notifier.changed.mock.calls).toEqual([["agent_1"]]);
+  });
+});
+
+/** GRA-294: one connection on or off for one agent, under the agent's row lock. */
+describe("PUT and DELETE /api/connections/:id/agents/:agentId", () => {
+  const SCOPE = { personId: "person_1", agentId: "agent_1" };
+
+  it("grants one connection to a listed agent with one insert, and tells its session", async () => {
+    const { app, deps, notifier } = harness({ user: { id: "person_1" } });
+    const res = await app.request("/api/connections/conn_2/agents/agent_1", from("PUT"));
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({
+      agent: { id: "agent_1", scopeMode: "listed" },
+      connectionIds: ["conn_1"],
+      materialised: false,
+    });
+    expect(deps.agent.findAgentForUpdate).toHaveBeenCalledWith(fakeDb, "person_1", "agent_1");
+    expect(deps.agent.addAgentConnection).toHaveBeenCalledWith(fakeDb, SCOPE, "conn_2");
+    expect(deps.agent.replaceAgentConnections).not.toHaveBeenCalled();
+    expect(notifier.changed.mock.calls).toEqual([["agent_1"]]);
+  });
+
+  it("a grant to an agent on all writes nothing and tells nobody", async () => {
+    const { app, deps, notifier } = harness({ user: { id: "person_1" } });
+    vi.mocked(deps.agent.findAgentForUpdate).mockResolvedValueOnce({
+      ...agentRow,
+      scopeMode: "all",
+    });
+    const res = await app.request("/api/connections/conn_2/agents/agent_1", from("PUT"));
+    expect(await res.json()).toMatchObject({ agent: { scopeMode: "all" }, materialised: false });
+    expect(deps.agent.addAgentConnection).not.toHaveBeenCalled();
+    expect(notifier.changed).not.toHaveBeenCalled();
+  });
+
+  it("removes one connection from a listed agent with one delete, and tells its session", async () => {
+    const { app, deps, notifier } = harness({ user: { id: "person_1" } });
+    const res = await app.request("/api/connections/conn_1/agents/agent_1", from("DELETE"));
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ agent: { scopeMode: "listed" }, materialised: false });
+    expect(deps.agent.removeAgentConnection).toHaveBeenCalledWith(fakeDb, SCOPE, "conn_1");
+    expect(notifier.changed.mock.calls).toEqual([["agent_1"]]);
+  });
+
+  it("a removal from an agent on all materialises listed without it, and says so", async () => {
+    const { app, deps, notifier } = harness({ user: { id: "person_1" } });
+    vi.mocked(deps.agent.findAgentForUpdate).mockResolvedValueOnce({
+      ...agentRow,
+      scopeMode: "all",
+    });
+    vi.mocked(deps.agent.listScopeConnectionIds).mockResolvedValueOnce(["conn_1", "conn_2"]);
+    const res = await app.request("/api/connections/conn_1/agents/agent_1", from("DELETE"));
+    expect(await res.json()).toMatchObject({
+      agent: { scopeMode: "listed" },
+      connectionIds: ["conn_2"],
+      materialised: true,
+    });
+    expect(deps.agent.updateAgent).toHaveBeenCalledWith(fakeDb, "person_1", "agent_1", {
+      scopeMode: "listed",
+    });
+    expect(deps.agent.replaceAgentConnections).toHaveBeenCalledWith(fakeDb, SCOPE, ["conn_2"]);
+    expect(notifier.changed.mock.calls).toEqual([["agent_1"]]);
+  });
+
+  it("is a 404 for another person's agent or connection, writing nothing and telling nobody", async () => {
+    for (const method of ["PUT", "DELETE"] as const) {
+      const { app, deps, notifier } = harness({ user: { id: "person_1" } });
+      vi.mocked(deps.agent.findAgentForUpdate).mockResolvedValueOnce(null);
+      const noAgent = await app.request("/api/connections/conn_1/agents/agent_x", from(method));
+      expect(noAgent.status).toBe(404);
+
+      vi.mocked(deps.agent.findConnectionsByIds).mockResolvedValueOnce([]);
+      const noConnection = await app.request(
+        "/api/connections/conn_x/agents/agent_1",
+        from(method),
+      );
+      expect(noConnection.status).toBe(404);
+
+      expect(deps.agent.addAgentConnection).not.toHaveBeenCalled();
+      expect(deps.agent.removeAgentConnection).not.toHaveBeenCalled();
+      expect(deps.agent.replaceAgentConnections).not.toHaveBeenCalled();
+      expect(notifier.changed).not.toHaveBeenCalled();
+    }
   });
 });
 

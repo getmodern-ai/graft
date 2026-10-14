@@ -491,6 +491,10 @@ export function createFakeDeps(store: FakeStore): FakeDeps {
       current.add(connectionId);
       store.agentConnections.set(scope.agentId, current);
     },
+    removeAgentConnection: async (_db, scope, connectionId) => {
+      if (!ownsAgent(scope)) return;
+      store.agentConnections.get(scope.agentId)?.delete(connectionId);
+    },
     listAgentConnectionIds: async (_db, scope) =>
       ownsAgent(scope) ? [...(store.agentConnections.get(scope.agentId) ?? [])].sort() : [],
     // The repo's one statement, as the store sees it (ADR 0007 as amended 2026-09-19): every

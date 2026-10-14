@@ -532,6 +532,66 @@ export async function addConnectionToAgentScope(
 }
 
 /**
+ * What a one-connection scope write answers (`PUT`/`DELETE /api/connections/:id/agents/:agentId`):
+ * the agent, its scope as it now resolves, and whether the write **materialised** an agent on
+ * `all` as `listed` — which also means connections the person makes later no longer reach it, so
+ * the console can say so. Always false for a grant.
+ */
+export type AgentScopeToggleOutput = {
+  agent: AgentOutput;
+  connectionIds: string[];
+  materialised: boolean;
+};
+
+/**
+ * Take one connection out of an agent's scope, keeping the rest — the integration page's *Agents
+ * with access* and the agent page's per-integration switch turned off (GRA-294), the counterpart
+ * of `addConnectionToAgentScope` and taking the same lock first (`findAgentForUpdate`), inside one
+ * transaction, so it serialises with `setAgentScope` and every grant rather than interleaving.
+ * Under `listed`, one delete on the scope's key (`removeAgentConnection`); removing one the list
+ * does not name changes nothing. **Under `all` the scope is materialised** (ADR 0007 as amended
+ * 2026-09-19): the mode becomes `listed` and the list every connection the scope resolved to, read
+ * after the lock, less this one — revoked rows kept, as `setAgentScope`'s materialisation keeps
+ * them, so a reconnection still reaches the agent (GRA-69). The answer's `materialised` says so.
+ * The connection is checked to be the person's under either mode, so a foreign id is `NOT_FOUND`.
+ */
+export async function removeConnectionFromAgentScope(
+  ctx: ServiceContext,
+  principal: Principal,
+  agentId: string,
+  connectionId: string,
+  deps: AgentDeps,
+): Promise<AgentScopeToggleOutput> {
+  return ctx.db.transaction(async (tx) => {
+    const scoped: ServiceContext = { db: tx };
+    const row = orNotFound(
+      await deps.findAgentForUpdate(tx, principal.personId, agentId),
+      "Agent not found",
+    );
+    await assertOwnedConnections(scoped, principal, [connectionId], deps);
+    const scope: AgentScope = { personId: principal.personId, agentId: row.id };
+    if (row.scopeMode === "listed") {
+      await deps.removeAgentConnection(tx, scope, connectionId);
+      return {
+        agent: toAgentOutput(row),
+        connectionIds: await deps.listAgentConnectionIds(tx, scope),
+        materialised: false,
+      };
+    }
+    const rest = (await deps.listScopeConnectionIds(tx, scope)).filter((id) => id !== connectionId);
+    const updated = await deps.updateAgent(tx, principal.personId, row.id, {
+      scopeMode: "listed",
+    });
+    await deps.replaceAgentConnections(tx, scope, rest);
+    return {
+      agent: toAgentOutput(updated ?? { ...row, scopeMode: "listed" }),
+      connectionIds: rest,
+      materialised: true,
+    };
+  });
+}
+
+/**
  * The connection ids in an agent's scope — what `acquire` and every exec mint tokens within —
  * resolved for the agent's mode in one statement (ADR 0007 as amended 2026-09-19): every
  * connection of the person's under `all`, the list under `listed`. Revoked rows are in the set
