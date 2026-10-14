@@ -25,6 +25,16 @@ describe("routeEvent", () => {
     expect(trackedRoute("POST", "/api/agents")?.properties).toBeUndefined();
   });
 
+  it("counts a console Create as acquire_started, with the job and the agent and never the goal", () => {
+    const route = trackedRoute("POST", "/api/connections/conn_1/acquire");
+    expect(route?.event).toBe("acquire_started");
+    expect(
+      route?.properties?.({ jobId: "job_1", agent: { id: "agent_1" }, goal: "Read my mail" }),
+    ).toEqual({ job_id: "job_1", agent_id: "agent_1" });
+    expect(route?.properties?.(null)).toEqual({ job_id: null, agent_id: null });
+    expect(routeEvent("GET", "/api/connections/conn_1/acquire-jobs")).toBeNull();
+  });
+
   it("is null for a read, an unlisted mutation and a near miss", () => {
     expect(routeEvent("GET", "/api/agents")).toBeNull();
     expect(routeEvent("PATCH", "/api/agents/ag_1")).toBeNull();

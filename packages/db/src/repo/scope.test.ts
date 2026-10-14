@@ -9,6 +9,7 @@ import {
   heartbeatAcquireJob,
   insertAcquireTrace,
   listAcquireAttempts,
+  listAcquireJobsForConnection,
   listAcquireTraces,
   listRunnableAcquireJobs,
   updateAcquireAttempt,
@@ -546,6 +547,24 @@ describe("person-scoped statements take the person", () => {
     const s = only();
     expect(s.sql).toContain('"connection"."person_id" = $');
     expect(s.params).toEqual(["conn_1", "person_1", 1]);
+  });
+
+  /**
+   * The integration page's jobs (GRA-303): across the person's agents, so the person is the scope,
+   * through the agent join, beside the connection and the window.
+   */
+  it("a connection's recent acquire jobs, through the agent's owner", async () => {
+    const since = new Date("2026-10-13T00:00:00Z");
+    await listAcquireJobsForConnection(db, "person_1", {
+      connectionId: "conn_1",
+      since,
+      limit: 20,
+    });
+    const s = only();
+    expect(s.sql).toMatch(
+      /^select .* from "acquire_job" inner join "agent" on "agent"\."id" = "acquire_job"\."agent_id" where \("agent"\."person_id" = \$1 and "acquire_job"\."connection_id" = \$2 and "acquire_job"\."created_at" >= \$3\) order by "acquire_job"\."created_at" desc, "acquire_job"\."id" desc limit \$4$/,
+    );
+    expect(s.params).toEqual(["person_1", "conn_1", since.toISOString(), 20]);
   });
 
   /** The revoke's pre-read (GRA-69): the same predicate, and the row locked so a concurrent revoke waits. */

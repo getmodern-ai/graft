@@ -97,6 +97,13 @@ import { z } from "zod";
 
 import { trackedRoute } from "./analytics-routes";
 import {
+  type ConnectionAcquireDeps,
+  type ConnectionGoalSuggestions,
+  connectionGoalSuggestions,
+  listConnectionJobs,
+  startConnectionAcquire,
+} from "./connection-acquire";
+import {
   createStarterDirectory,
   directoryProposal,
   searchSetupDirectory,
@@ -148,6 +155,11 @@ import {
 } from "./setup-prompt";
 import { runAgentTool } from "./tool-run";
 
+export type {
+  ConnectionAcquireJob,
+  ConnectionAcquireJobs,
+  ConnectionGoalSuggestions,
+} from "./connection-acquire";
 export type {
   SetupDirectoryEntry,
   SetupDirectoryHome,
@@ -465,6 +477,17 @@ const setupNextBody = z.union([
 ]);
 /** The continue's wire shape, as the console posts it. */
 export type SetupNextBody = z.input<typeof setupNextBody>;
+
+/**
+ * `POST /connections/:id/acquire` (GRA-303): the agent the person picked before Create, and the
+ * goal as they accepted or typed it, `acquire`'s bound.
+ */
+const connectionAcquireBody = z.strictObject({
+  agentId: z.string().min(1),
+  goal: z.string().trim().min(1).max(GOAL_MAX_LENGTH),
+});
+/** The Create's wire shape, as the console posts it. */
+export type ConnectionAcquireBody = z.input<typeof connectionAcquireBody>;
 
 /**
  * `POST /agents/:id/tools/:vendor/:name/run` (GRA-208): the tool's input, which the run holds to
@@ -1679,6 +1702,70 @@ export function createApi(options: ApiOptions): Hono {
       createdAt: row.createdAt,
     }));
     return c.json({ calls });
+  });
+
+  /**
+   * An integration's page gets a new tool (GRA-303; ADR 0024 as amended 2026-10-14;
+   * `connection-acquire.ts`). Create is the picked agent's build approval and starts its job, in
+   * `ConnectionAcquireJob`'s shape; the list finds the connection's recent jobs after a reload,
+   * and each is polled through `GET /agents/:id/acquire-jobs/:jobId`. The chips share Setup's memo,
+   * so the model is asked once per person and connection whichever screen asks.
+   */
+  const connectionAcquireDeps: ConnectionAcquireDeps = {
+    agent: agentDeps,
+    connection: connectionDeps,
+    approval: approvalDeps,
+    acquireJob: acquireJobDeps,
+    // Read at call time, as Setup's are: `index.ts` binds the runner after this is built.
+    get model() {
+      return options.acquire?.model ?? null;
+    },
+    get acquireRunner() {
+      return options.acquire?.acquireRunner;
+    },
+  };
+
+  api.post("/connections/:id/acquire", async (c) => {
+    const principal = await principalOf(c.req.raw.headers);
+    const body = await parseBody(c.req.raw, connectionAcquireBody);
+    const job = await startConnectionAcquire(
+      ctx,
+      principal,
+      { connectionId: c.req.param("id"), ...body },
+      connectionAcquireDeps,
+    );
+    return c.json(job, 201);
+  });
+
+  api.get("/connections/:id/acquire-jobs", async (c) => {
+    const principal = await principalOf(c.req.raw.headers);
+    return c.json(
+      await listConnectionJobs(ctx, principal, c.req.param("id"), connectionAcquireDeps),
+    );
+  });
+
+  api.get("/connections/:id/goal-suggestions", async (c) => {
+    const principal = await principalOf(c.req.raw.headers);
+    const { suggestions, build, outcome, error, cached, dropped } = await connectionGoalSuggestions(
+      ctx,
+      principal,
+      c.req.param("id"),
+      {
+        ...connectionAcquireDeps,
+        goalSuggestions,
+      },
+    );
+    useLogger().set({
+      goalSuggestions: {
+        outcome,
+        count: suggestions.length,
+        ...(dropped ? { dropped } : {}),
+        ...(cached ? { cached } : {}),
+        ...(error ? { error } : {}),
+      },
+    });
+    const body: ConnectionGoalSuggestions = { suggestions, build };
+    return c.json(body);
   });
 
   /**
