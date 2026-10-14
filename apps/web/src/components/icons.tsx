@@ -188,6 +188,16 @@ export function ExtensionIcon(props: IconProps) {
   );
 }
 
+/** Material Symbols `filter_list`, filled. */
+export function FilterListIcon(props: IconProps) {
+  return (
+    <MaterialSymbol
+      d="M400-240v-60h160v60H400ZM240-450v-60h480v60H240ZM120-660v-60h720v60H120Z"
+      {...props}
+    />
+  );
+}
+
 /** Material Symbols `help`, filled. */
 export function HelpIcon(props: IconProps) {
   return (

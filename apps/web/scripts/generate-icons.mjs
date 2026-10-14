@@ -52,6 +52,7 @@ const NAMES = [
   "error",
   "explore",
   "extension",
+  "filter_list",
   "help",
   "history",
   "home",

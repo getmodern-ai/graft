@@ -4,8 +4,8 @@ import type {
   CredentialAskPayload,
   ScopeAskPayload,
 } from "@graft/mcp/connection-request";
-import type { AnswerBody, PendingActionCard } from "@graft/server/api";
-import { type QueryClient, queryOptions } from "@tanstack/react-query";
+import type { AnswerBody, DonePendingActionsOutput, PendingActionCard } from "@graft/server/api";
+import { infiniteQueryOptions, type QueryClient, queryOptions } from "@tanstack/react-query";
 
 import { api, type Jsonified } from "./api";
 import { handoffReadIsQuiet } from "./handoff-page";
@@ -96,6 +96,8 @@ export type PendingAnswer = AnswerBody;
 
 export const pendingKeys = {
   all: ["pending-actions"] as const,
+  /** Under `all`, so every invalidation of the inbox refreshes Done too. Two parts, never a link read's three. */
+  done: ["pending-actions", "done"] as const,
   one: (id: string) => ["pending-actions", id] as const,
 };
 
@@ -103,6 +105,20 @@ export const pendingKeys = {
 export const pendingActionsQuery = queryOptions({
   queryKey: pendingKeys.all,
   queryFn: () => api<{ pendingActions: PendingAction[] }>("/pending-actions"),
+});
+
+/**
+ * Requests > Done (GRA-292's read; GRA-312): the finished asks, newest finish first, a page at a
+ * time by the server's opaque cursor, which "Show older" follows.
+ */
+export const donePendingActionsQuery = infiniteQueryOptions({
+  queryKey: pendingKeys.done,
+  queryFn: ({ pageParam }) =>
+    api<Jsonified<DonePendingActionsOutput>>(
+      `/pending-actions?state=done${pageParam ? `&cursor=${encodeURIComponent(pageParam)}` : ""}`,
+    ),
+  initialPageParam: null as string | null,
+  getNextPageParam: (page) => page.nextCursor,
 });
 
 /**

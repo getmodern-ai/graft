@@ -133,7 +133,9 @@ export function AgentCard({
         ) : target === "dialog" ? (
           <ConnectItsAgent agent={agent} />
         ) : requests > 0 ? (
-          <Badge render={<Link to="/pending" />}>{requestsLabel(requests)}</Badge>
+          <Badge render={<Link to="/pending" search={{ agent: agent.id }} />}>
+            {requestsLabel(requests)}
+          </Badge>
         ) : null}
       </div>
     </Card>
