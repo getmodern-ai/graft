@@ -116,6 +116,9 @@ export function ActivityTab({
   const agents = agentData?.agents ?? [];
   const agentsById = new Map(agents.map((agent) => [agent.id, agent]));
   const runs = activityRuns(data?.pages);
+  // `isError` is also set when an older page or a background refetch fails; the rows already
+  // loaded stay, and only a read with nothing to show takes the body to the retry notice.
+  const failedOutright = isError && data === undefined;
   const filtered = filters.agent !== undefined || filters.outcome !== undefined;
 
   const agentItems = [
@@ -197,7 +200,7 @@ export function ActivityTab({
           <TableBody>
             {isPending ? (
               <StateLoadingRows />
-            ) : isError ? (
+            ) : failedOutright ? (
               <StateNote>
                 <RetryNotice
                   error={error}
@@ -220,8 +223,8 @@ export function ActivityTab({
           </TableBody>
         </DataTable>
         {/* Below the table rather than a row of it, as the Tools tab's disclosure is: a full-span
-            row would need a cell per breakpoint for the column Agent leaves below `md`. */}
-        {hasNextPage && !isError ? (
+            row would need a cell per breakpoint for the columns that step out below `md`. */}
+        {hasNextPage && !failedOutright ? (
           <div className="flex items-center gap-3 border-border border-t px-2 py-1.5">
             <Button
               variant="ghost"
