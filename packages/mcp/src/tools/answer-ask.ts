@@ -78,7 +78,7 @@ function refuse(reason: AnswerAskRefusalReason, message: string): CallToolResult
 }
 
 const ANSWER_SHAPES =
-  "answer must be { allow, approveBuild?, allowVendor? }, { allow: true, allowVendor: true, includesDestructive }, { connect: true, approveBuild, allowVendor? } or { decline: true }";
+  "answer must be { allow }, { allow, approveBuild }, { allow, approveBuild, allowVendor }, { allow: true, allowVendor: true, includesDestructive }, { connect: true, approveBuild, allowVendor? } or { decline: true }";
 
 /** The arguments by shape: an id and one of the three answers, nothing else. */
 export function readAnswerAskInput(
@@ -299,7 +299,7 @@ async function answerScopeAsk(
   if (!("allow" in answer) || "includesDestructive" in answer) {
     return refuse(
       "input_invalid",
-      "A scope ask is answered { allow: true, approveBuild?, allowVendor? } or { allow: false }",
+      "A scope ask is answered { allow }, { allow, approveBuild } or { allow, approveBuild, allowVendor }",
     );
   }
   const { ctx, principal, scope, deps, notifier } = session;
@@ -467,7 +467,7 @@ export const answerAsk: MetaTool = {
         answer: {
           type: "object",
           description:
-            "{ allow: boolean } for a build approval or a tool's; { allow: true, allowVendor: true, includesDestructive: boolean } for a tool's yes to every tool of its integration; { allow: boolean, approveBuild?: boolean, allowVendor?: boolean } for a scope ask; { connect: true, approveBuild: boolean, allowVendor?: boolean } or { decline: true } for a connection that takes no credential, allowVendor recording the agent's standing approval for the integration's tools, destructive ones left out.",
+            "{ allow: boolean } for a build approval or a tool's; { allow: true, allowVendor: true, includesDestructive: boolean } for a tool's yes to every tool of its integration; { allow: boolean }, { allow: boolean, approveBuild: boolean } or { allow: boolean, approveBuild: boolean, allowVendor: boolean } for a scope ask; { connect: true, approveBuild: boolean, allowVendor?: boolean } or { decline: true } for a connection that takes no credential, allowVendor recording the agent's standing approval for the integration's tools, destructive ones left out.",
           properties: {
             allow: { type: "boolean" },
             allowVendor: { type: "boolean" },

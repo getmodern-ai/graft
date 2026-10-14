@@ -1,4 +1,5 @@
 import {
+  type AccessChoice,
   accessLegend,
   accessOptions,
   type ChoiceOption,
@@ -315,6 +316,24 @@ export function declineLabelOf(card: AskCard): string {
   return card.kind === "tool" ? "Deny" : "Decline";
 }
 
+/**
+ * The access choice's options for this card: the handoff page's, except that a card the server
+ * wrote without the integration's line (`vendorTools`) cannot send that allow, so its *Full access*
+ * promises the build approval alone (Greptile on #266).
+ */
+export function accessOptionsFor(card: AskCard): ChoiceOption<AccessChoice>[] {
+  const options = accessOptions(card.agentName, integrationOf(card));
+  if (card.vendorTools) return options;
+  return options.map((option) =>
+    option.value === "full"
+      ? {
+          ...option,
+          description: `${card.agentName} can build ${integrationOf(card)} tools without asking. A tool that changes data still asks the first time it runs.`,
+        }
+      : option,
+  );
+}
+
 /** The legend over a tool ask's choices, as the handoff page's. */
 export function toolAllowLegend(agentName: string): string {
   return `How much should ${agentName} get?`;
@@ -604,7 +623,7 @@ export function renderAsk(card: AskCard, handlers: CardHandlers, doc: Document):
         doc,
         `${card.pendingActionId}-access`,
         accessLegend(card.agentName),
-        accessOptions(card.agentName, integrationOf(card)),
+        accessOptionsFor(card),
         DEFAULT_ACCESS_CHOICE,
       ),
     );

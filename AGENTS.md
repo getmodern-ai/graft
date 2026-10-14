@@ -600,9 +600,9 @@ choice, pre-ticked — and posts the generic `POST /api/pending-actions/:id/answ
 `recordApprovalAnswer` in `ask-answer.ts` grows the scope (`addConnectionToAgentScope`) and grants
 the build approval in the answer's transaction, and leaves the answer for the agent's next call,
 which answers `connected` naming the execute tool, or `scope_declined`. The ask card renders
-`card.kind: "scope"` as answerable, and `answer_ask` admits `{ allow, approveBuild?, allowVendor? }`
-for it under the same gate (`allowVendor` since GRA-316). `SERVER_INSTRUCTIONS` names `scope` in its handoff list, and `session.test.ts`
-pins the word across the description and the Hermes skill.
+`card.kind: "scope"` as answerable, and `answer_ask` admits `{ allow }`, `{ allow, approveBuild }`
+or `{ allow, approveBuild, allowVendor }` for it under the same gate (the last since GRA-316).
+`SERVER_INSTRUCTIONS` names `scope` in its handoff list, and `session.test.ts` pins the word across the description and the Hermes skill.
 
 **A keyless proposal for a vendor the person already holds widens that row** (GRA-167; ADR 0006 as
 amended 2026-09-22). When `existingConnectionFor` finds no row covering a `none`-scheme proposal

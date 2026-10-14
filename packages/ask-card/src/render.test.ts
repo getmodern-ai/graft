@@ -1122,9 +1122,13 @@ describe("Full access on a connection's card that offers the integration's tools
     h.stop();
   });
 
-  it("never sends the line from a card the server wrote without it", async () => {
+  it("never sends the line from a card the server wrote without it, and promises the build approval alone there", async () => {
     const h = handlers();
     const root = renderAsk(KEYLESS, h, document);
+    expect(root.textContent).toContain(
+      "Claude can build open-meteo tools without asking. A tool that changes data still asks the first time it runs.",
+    );
+    expect(root.textContent).not.toContain("run them without asking");
     click(root, "Connect");
     await flush();
     expect(h.answer).toHaveBeenCalledWith({ connect: true, approveBuild: true });
