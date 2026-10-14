@@ -73,28 +73,34 @@ export function agentRequestCount(
 
 /**
  * Integrations it can use, "N of M": of the person's integrations (one per vendor with a live
- * connection), those with a connection in the agent's scope, named in the list's order.
+ * connection), those with a connection in the agent's scope, named in the list's order. A revoked
+ * agent can use none, whatever its scope still resolves to.
  */
 export function agentIntegrationsStat(
+  agent: Pick<Agent, "revokedAt">,
   connectionIds: readonly string[],
   integrations: readonly (Pick<Integration, "displayName"> & {
     connections: readonly { id: string }[];
   })[],
-): { usable: number; total: number; names: string[] } {
-  const inScope = new Set(connectionIds);
+): IntegrationsStat {
+  const inScope = new Set(agent.revokedAt ? [] : connectionIds);
   const names = integrations
     .filter((integration) => integration.connections.some((c) => inScope.has(c.id)))
     .map((integration) => integration.displayName);
-  return { usable: names.length, total: integrations.length, names };
+  const revoked = agent.revokedAt !== null;
+  return { usable: names.length, total: integrations.length, names, revoked };
 }
 
+export type IntegrationsStat = { usable: number; total: number; names: string[]; revoked: boolean };
+
 /** "3 of 5". */
-export function integrationsStatValue(stat: { usable: number; total: number }): string {
+export function integrationsStatValue(stat: Pick<IntegrationsStat, "usable" | "total">): string {
   return `${stat.usable} of ${stat.total}`;
 }
 
 /** The names under it, or a sentence when there are none to name. */
-export function integrationsStatDetail(stat: { usable: number; total: number; names: string[] }) {
+export function integrationsStatDetail(stat: IntegrationsStat): string {
+  if (stat.revoked) return "None, since it was revoked";
   if (stat.total === 0) return "No integrations connected yet";
   if (stat.usable === 0) return "None of yours yet";
   return stat.names.join(", ");

@@ -67,20 +67,28 @@ describe("agentIntegrationsStat", () => {
     { displayName: "HubSpot", connections: [{ id: "c4" }] },
   ];
 
+  const active = { revokedAt: null };
+
   it("counts the integrations with a connection in scope, of all the person's", () => {
-    const stat = agentIntegrationsStat(["c1", "c3"], integrations);
-    expect(stat).toEqual({ usable: 2, total: 3, names: ["Gmail", "Google Drive"] });
+    const stat = agentIntegrationsStat(active, ["c1", "c3"], integrations);
+    expect(stat).toEqual({ usable: 2, total: 3, names: ["Gmail", "Google Drive"], revoked: false });
     expect(integrationsStatValue(stat)).toBe("2 of 3");
     expect(integrationsStatDetail(stat)).toBe("Gmail, Google Drive");
   });
 
   it("words the empty cases", () => {
-    expect(integrationsStatDetail(agentIntegrationsStat([], []))).toBe(
+    expect(integrationsStatDetail(agentIntegrationsStat(active, [], []))).toBe(
       "No integrations connected yet",
     );
-    expect(integrationsStatDetail(agentIntegrationsStat([], integrations))).toBe(
+    expect(integrationsStatDetail(agentIntegrationsStat(active, [], integrations))).toBe(
       "None of yours yet",
     );
+  });
+
+  it("gives a revoked agent none, whatever its scope still resolves to", () => {
+    const stat = agentIntegrationsStat({ revokedAt: at }, ["c1", "c3"], integrations);
+    expect(integrationsStatValue(stat)).toBe("0 of 3");
+    expect(integrationsStatDetail(stat)).toBe("None, since it was revoked");
   });
 });
 

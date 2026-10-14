@@ -32,23 +32,28 @@ export function AgentStats({ agent, connectionIds }: { agent: Agent; connectionI
   const integrations = useQuery(integrationsQuery);
   const stats = useQuery(agentStatsQuery(agent.id));
   const integrationStat = integrations.data
-    ? agentIntegrationsStat(connectionIds, integrations.data.integrations)
+    ? agentIntegrationsStat(agent, connectionIds, integrations.data.integrations)
     : null;
+  const waiting = requests.data ? agentRequestCount(requests.data.pendingActions, agent.id) : 0;
 
   return (
     <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
       <StatCard label="Waiting on you" query={requests}>
         {requests.data ? (
           <>
-            <StatValue>{agentRequestCount(requests.data.pendingActions, agent.id)}</StatValue>
-            <Link
-              to="/pending"
-              search={{ agent: agent.id }}
-              className="inline-flex items-center gap-1 text-primary text-xs hover:underline"
-            >
-              See requests
-              <ArrowForwardIcon className="size-3.5" />
-            </Link>
+            <StatValue>{waiting}</StatValue>
+            {waiting > 0 ? (
+              <Link
+                to="/pending"
+                search={{ agent: agent.id }}
+                className="inline-flex items-center gap-1 text-primary text-xs hover:underline"
+              >
+                See requests
+                <ArrowForwardIcon className="size-3.5" />
+              </Link>
+            ) : (
+              <StatDetail>Nothing to answer</StatDetail>
+            )}
           </>
         ) : null}
       </StatCard>
@@ -121,5 +126,5 @@ function StatValue({ children }: { children: React.ReactNode }) {
 }
 
 function StatDetail({ children }: { children: React.ReactNode }) {
-  return <p className="truncate text-muted-foreground text-xs">{children}</p>;
+  return <p className="line-clamp-2 text-muted-foreground text-xs">{children}</p>;
 }
