@@ -1930,7 +1930,7 @@ export function createApi(options: ApiOptions): Hono {
     connection: connectionDeps,
     agent: agentDeps,
     approval: approvalDeps,
-    directory: setupDirectory,
+    directory: integrationDirectory,
     handoff,
     authUrl: options.authUrl ?? null,
     notifier: options.notifier,
