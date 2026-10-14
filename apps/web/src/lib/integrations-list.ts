@@ -16,15 +16,47 @@ import { providerLabel } from "./provider-name";
  * `components/integration/integrations-table.tsx` draw what these answer.
  */
 
-/** The list's tabs; Discover is GRA-322's, and until it lands its body is a placeholder. */
+/** The list's tabs: what the person connected, and the directory to connect more from (GRA-322). */
 export const INTEGRATIONS_LIST_TABS = ["connected", "discover"] as const;
 export type IntegrationsListTab = (typeof INTEGRATIONS_LIST_TABS)[number];
 
-/** `?tab=discover` alone sticks in the URL: Connected is the default, so `/integrations` is it. */
-export function readIntegrationsListSearch(search: Record<string, unknown>): {
+/** The longest `q` or `custom` the URL carries; a pasted docs link is well under it. */
+const SEARCH_PARAM_MAX = 2000;
+
+/** The Integrations screen's search: Discover's own two params ride only with `tab=discover`. */
+export type IntegrationsListSearch = {
   tab?: "discover";
-} {
-  return search.tab === "discover" ? { tab: "discover" } : {};
+  /** Discover's search box, as a deep link fills it. */
+  q?: string;
+  /**
+   * Flow C's hand-off (GRA-323): present, *Add a custom API* is open; its value is the name typed
+   * or the docs link pasted into Discover's search, empty when nothing was. `customApiSeed`
+   * (`integrations-discover.ts`) reads it.
+   */
+  custom?: string;
+};
+
+/** A param's text: the router reads `?q=123` as a number, which is still what was typed. */
+const textParam = (value: unknown): string | undefined =>
+  typeof value === "string"
+    ? value.slice(0, SEARCH_PARAM_MAX)
+    : typeof value === "number"
+      ? String(value)
+      : undefined;
+
+/** `?tab=discover` alone sticks in the URL: Connected is the default, so `/integrations` is it. */
+export function readIntegrationsListSearch(
+  search: Record<string, unknown>,
+): IntegrationsListSearch {
+  if (search.tab !== "discover") return {};
+  const q = textParam(search.q)?.trim();
+  const custom = textParam(search.custom);
+  return {
+    tab: "discover",
+    ...(q ? { q } : {}),
+    // Empty is kept: *Add a custom API* with nothing typed opens the dialog all the same.
+    ...(custom !== undefined ? { custom } : {}),
+  };
 }
 
 export type IntegrationsSort = "attention" | "recent" | "name";

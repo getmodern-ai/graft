@@ -63,10 +63,10 @@ import {
   type NameStepInput,
   onlySentToLine,
   type ProposalState,
-  usableDocsUrl,
   proposalChecklist,
   proposalSummary,
   readStartRefusal,
+  usableDocsUrl,
   validateNameStep,
 } from "@/lib/custom-api";
 import {
@@ -625,7 +625,8 @@ function CheckStep({
     if (!alive.current) return;
     const copy = connectedToast(displayName, access);
     toast.success(copy.title, { description: copy.description });
-    close();
+    // Leaving the screen closes the dialog. Closing it first would let a caller that keeps the
+    // dialog in the URL (Discover's `custom`) navigate back over this.
     void navigate({ to: "/integrations/$vendor", params: { vendor } });
   };
   const consent = useOAuthConsent({
