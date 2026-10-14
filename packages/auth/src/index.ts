@@ -388,6 +388,13 @@ export function createAuth(options: CreateAuthOptions) {
          */
         enabled: true,
         requireLocalEmailVerified: true,
+        /**
+         * A provider linked from Settings by a signed-in person may carry another address
+         * (GRA-287 item 8; ADR 0020 as amended 2026-10-14). Better Auth reads this only on the
+         * explicit link, whose state names the session's person, never on a sign-in, so it adds
+         * no way into an account the person does not already hold.
+         */
+        allowDifferentEmails: true,
       },
     },
     advanced: {

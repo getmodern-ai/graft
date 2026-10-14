@@ -157,6 +157,17 @@ export const MODEL_KEY_STATUS_CHIP = {
 } as const satisfies Record<"set" | "unset", StatusChip>;
 
 /**
+ * The person's own address and sign-in accounts on Settings › Account (GRA-331): a verified address
+ * and a linked provider work; an unverified address waits on the emailed link.
+ */
+export const EMAIL_STATUS_CHIP = {
+  verified: { variant: "success", label: "Verified" },
+  unverified: { variant: "outline", label: "Not verified" },
+} as const satisfies Record<"verified" | "unverified", StatusChip>;
+
+export const SIGN_IN_ACCOUNT_CHIP: StatusChip = { variant: "success", label: "Connected" };
+
+/**
  * What answers the person's `acquire` jobs (GRA-297; `lib/model-status.ts` decides which): the
  * deployment's model or their own key work; a deployment that needs a key, or has no model at
  * all, builds nothing until someone acts.

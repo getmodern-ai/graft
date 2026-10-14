@@ -82,8 +82,8 @@ export function AccountMenu() {
           </div>
         </div>
 
-        {/* The one place the console offers light mode: the shell draws no standalone theme
-            control, as Cando's does not. The label lives *inside* the radio group, not above it:
+        {/* The theme, kept here beside Settings' Theme row (GRA-331): both write the one
+            `next-themes` setting. The label lives *inside* the radio group, not above it:
             `DropdownMenuLabel` is Base UI's `Menu.GroupLabel`, which throws outright when it
             cannot find a `Menu.Group` or `Menu.RadioGroup` ancestor — the whole menu takes the
             error boundary with it. */}
