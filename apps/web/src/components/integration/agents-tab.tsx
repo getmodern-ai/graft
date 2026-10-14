@@ -164,9 +164,9 @@ export function AgentsTab({
               <TableRow>
                 <TableHead>What</TableHead>
                 <TableHead className="hidden md:table-cell md:w-36">Agent</TableHead>
-                <TableHead className="w-36">Your answer</TableHead>
-                <TableHead className="hidden md:table-cell md:w-28">When</TableHead>
-                <TableHead className="w-22">
+                <TableHead className="w-32 md:w-36">Your answer</TableHead>
+                <TableHead className="hidden md:table-cell md:w-36">When</TableHead>
+                <TableHead className="w-20 md:w-22">
                   <span className="sr-only">Change</span>
                 </TableHead>
               </TableRow>
@@ -249,6 +249,8 @@ function AgentRow({
             <span className="truncate text-muted-foreground text-xs">
               {client ?? "Not recorded"}
             </span>
+            {/* Below `md` the summary column steps out, and its line follows the name. */}
+            <span className="truncate text-muted-foreground text-xs md:hidden">{summary}</span>
           </div>
         </div>
       </TableCell>
@@ -467,6 +469,7 @@ function ChangeMenu({
 }) {
   const queryClient = useQueryClient();
   const agent = answer.agent;
+  const [open, setOpen] = useState(false);
   const change = useMutation({
     mutationFn: async (action: ChangeAction) => {
       const { change: kind } = answer;
@@ -509,7 +512,7 @@ function ChangeMenu({
   });
 
   return (
-    <DropdownMenu>
+    <DropdownMenu open={open} onOpenChange={setOpen}>
       <DropdownMenuTrigger
         render={
           <Button
@@ -526,7 +529,11 @@ function ChangeMenu({
         <ChangeMenuItems
           answer={answer}
           integrationName={integrationName}
-          onAction={(action) => change.mutate(action)}
+          onAction={(action) => {
+            // Closed here rather than by the item: a radio item keeps its menu open by default.
+            setOpen(false);
+            change.mutate(action);
+          }}
         />
       </DropdownMenuContent>
     </DropdownMenu>
