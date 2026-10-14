@@ -451,7 +451,9 @@ amended 2026-09-20): a `grfta_` request with an unknown session id, or with none
 announcing a protocol version the SDK lacks negotiates instead of being refused** (GRA-162; ADR 0018
 as amended 2026-09-22): the door drops the `MCP-Protocol-Version` header on a session-less
 `initialize` when the SDK does not speak it, so the body's version negotiates to Graft's latest —
-Claude.ai has announced `2026-07-28` on every session since 2026-09-20 — and a request that names a
+Claude.ai has announced `2026-07-28` on every session since 2026-09-20 — and on both of GRA-129's
+re-open paths, where the re-opened session negotiated for the client (GRA-232: Claude opens with a
+session-less `tools/list`, and the 400 outlived #128 by two weeks); a request that names a live
 session keeps the SDK's 400. Under `open`,
 authored code runs on the backing `GRAFT_SANDBOX_BACKEND` names:
 `docker` by default, which needs the `GRAFT_SANDBOX_IMAGE`/`GRAFT_SANDBOX_NETWORK` pair below and,
@@ -1362,9 +1364,11 @@ only where the field names match, else the schema's `default` or first `examples
 required field with no value says *This tool needs …* and Run waits (`canRun`), the required fields
 drawn first since a stored schema's keys come back in jsonb's order; JSON only for a
 schema too complex to draw (a nested object, a list of objects, a union, a composed root), where a
-required key still at the skeleton's empty object or list counts as missing. It runs the tool once
-on arrival only when the tool takes no input (`lib/setup-result.ts`'s `runsOnArrival`; a tool with
-inputs, Open-Meteo's prefilled city included, waits for Run) and shows the answer in `CodeBlock`; a
+required key still at the skeleton's empty object or list counts as missing. It runs a read-only
+tool once on arrival when the form as drawn needs nothing from the person: no input, or every
+required field at a starting value and every value in its type (`lib/setup-result.ts`'s
+`runsOnArrival`, so the ready-made Gmail search and Open-Meteo's prefilled city run at once; a
+required field nothing fills, or a JSON input, waits for Run) and shows the answer in `CodeBlock`; a
 refusal or a failure is one sentence with the raw text, cut to 500 characters, behind *Details*
 (`lib/short-failure.ts`'s `shortFailure` and `runFailure`: an HTML body reads *The integration
 answered with a web page instead of data (status N)*), and the building step's and the finish
@@ -1428,6 +1432,36 @@ a stepper in the top bar, a centred hero (`SetupEyebrowContext`), selection card
 (`setup-logo.tsx`; the Figma file's app logos and the marketing site's harness marks under
 `src/assets/setup/`) and a sticky footer with a summary; `tool-step.tsx` and `task-picker.tsx` are
 the tool screen. The rows count `setup_step_completed` as `vendor` (or `vendor_cleared`) and `goal`.
+
+**Setup offers the integration's ready-made tools before a task to build** (GRA-276; ADR 0024 as
+amended 2026-10-11; ADR 0025). Each starter names a few of its stock tools in `readyMade`
+(`{ tool, goal, replaces? }`, the curated task's best match first, the goal in the person's voice,
+`replaces` the starter's tasks it does in other words), held by `@graft/stock`'s workspace test to
+tools whose manifest is read-only, whose required inputs all have a default or are the starter's
+`runInput`, and none of whose inputs starts at an example the result step would send unchanged. `@graft/core`'s browser-safe `setup/ready-made.ts`
+(`setupReadyMade`) keeps the ones the catalogue holds as read-only, at most `SETUP_READY_MADE_MAX`,
+and `GET /api/setup/stock?starterId=` answers them (`SetupReadyMade`, from `listStockToolsForVendor`
+over `ApiDeps.stock`, `defaultStockDeps` when absent). `POST /api/setup/stock` (`SetupStockBody`:
+`{ tool, discardJob? }`, `apps/server/src/setup-stock.ts`) judges the choice against that same
+offer for the record's starter or its connection's (`readyMadeChoice`, else `404
+stock_tool_not_offered`), saves it through `planSetup`'s `stockTool` beside its `goal`, only onto
+the record it judged (`expected`, else `setup_step`; Greptile on #218) (the record's
+`stock_tool` column, migration 0018; a task without it clears it, as another starter and a Build
+do), connects the starter as the task route does, and on the task step takes it at once:
+`@graft/core`'s `takeSetupStockTool`, one transaction under `lockSetup`, refuses as Build refuses
+(`setup_step`, `connection_revoked`, `connection_not_in_scope`, `job_running`) plus
+`stock_tool_unplanned`, `stock_tool_other_integration`, the copy's own reasons, `tool_not_read_only`
+and `tool_has_no_version`, copies through `@graft/mcp`'s `ensureToolForAgent` bound to the record's
+connection, promotes with `promoteTool`, and moves the record to `result` with `toolId` and no job.
+`buildPlannedSetup` takes a planned ready-made tool instead of building when the connection lands.
+The result step reads it as a built tool (`setupToolContext`'s `goal` is the record's for a
+ready-made tool, `completeSetupResult` and the result's back target need a tool, not a job), and it
+needs no model. The result step runs it over the record's connection (`ToolRunBody.connectionId`,
+held to the scope and a stock copy's hosts), so a tool the person already held bound to another
+account runs over the one Setup connected. The row counts `setup_step_completed` as `goal` with `readyMade: true`. The
+console's tool screen and task step draw `ready-made-picker.tsx` above the tasks, which become *Or
+have Graft build one* less any task a ready-made tool does; one choice across both
+(`lib/setup-ready-made.ts`'s `ToolChoice`), *Use this tool* beside *Build this tool*.
 
 **The integration step searches a directory, a seam with two backings** (ADR 0001 as amended
 2026-10-10). `@graft/core`'s `IntegrationDirectory` (`home`, `search`, `get`; `connection/directory.ts`)

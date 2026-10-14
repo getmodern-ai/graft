@@ -4,12 +4,46 @@ import { resultToolOf, runsOnArrival } from "./setup-result";
 import { canRun, initialValues, runInputView } from "./setup-run-input";
 
 describe("runsOnArrival", () => {
-  it("runs a tool that takes no input", () => {
-    expect(runsOnArrival(runInputView({ type: "object", properties: {} }, null))).toBe(true);
+  const readOnly = { readOnly: true };
+
+  it("runs a read-only tool that takes no input", () => {
+    expect(runsOnArrival(runInputView({ type: "object", properties: {} }, null), readOnly)).toBe(
+      true,
+    );
   });
 
-  it("waits for Run on a tool with inputs, even with the starter's city prefilled", () => {
-    // Greptile on #172: the task says "a city I name", and Melbourne is only where the field starts.
+  it("runs the ready-made Gmail search, both fields optional and at their defaults", () => {
+    // Production walk of 2026-10-14: it waited behind "Not run yet" with nothing to supply.
+    const search = runInputView(
+      {
+        type: "object",
+        properties: {
+          query: { type: "string", default: "in:inbox" },
+          maxResults: { type: "integer", default: 10 },
+        },
+        additionalProperties: false,
+      },
+      null,
+    );
+    expect(search).toMatchObject({
+      kind: "form",
+      fields: [
+        { name: "query", initial: "in:inbox" },
+        { name: "maxResults", initial: "10" },
+      ],
+    });
+    expect(runsOnArrival(search, readOnly)).toBe(true);
+  });
+
+  it("runs a tool with only optional fields, even where they start empty", () => {
+    const optional = runInputView(
+      { type: "object", properties: { label: { type: "string" } } },
+      null,
+    );
+    expect(runsOnArrival(optional, readOnly)).toBe(true);
+  });
+
+  it("runs Open-Meteo with the starter's city prefilled", () => {
     const weather = runInputView(
       { type: "object", properties: { city: { type: "string" } }, required: ["city"] },
       { field: "city", label: "City", defaultValue: "Melbourne" },
@@ -19,7 +53,46 @@ describe("runsOnArrival", () => {
       fields: [{ name: "city", initial: "Melbourne" }],
     });
     expect(canRun(weather, initialValues(weather), "")).toBe(true);
-    expect(runsOnArrival(weather)).toBe(false);
+    expect(runsOnArrival(weather, readOnly)).toBe(true);
+  });
+
+  it("runs a required field that starts at the schema's first example", () => {
+    const example = runInputView(
+      {
+        type: "object",
+        properties: { q: { type: "string", examples: ["is:unread"] } },
+        required: ["q"],
+      },
+      null,
+    );
+    expect(runsOnArrival(example, readOnly)).toBe(true);
+  });
+
+  it("waits for Run while a required field has no value", () => {
+    const repo = runInputView(
+      {
+        type: "object",
+        properties: { owner: { type: "string" }, limit: { type: "integer", default: 5 } },
+        required: ["owner"],
+      },
+      null,
+    );
+    expect(canRun(repo, initialValues(repo), "")).toBe(false);
+    expect(runsOnArrival(repo, readOnly)).toBe(false);
+  });
+
+  it("waits for Run when a starting value is not in its field's type", () => {
+    const count = runInputView(
+      { type: "object", properties: { count: { type: "integer", default: "many" } } },
+      null,
+    );
+    expect(runsOnArrival(count, readOnly)).toBe(false);
+  });
+
+  it("never runs a tool that is not read-only, with or without inputs", () => {
+    expect(
+      runsOnArrival(runInputView({ type: "object", properties: {} }, null), { readOnly: false }),
+    ).toBe(false);
   });
 
   it("waits for Run on a tool whose input is JSON", () => {
@@ -32,7 +105,7 @@ describe("runsOnArrival", () => {
       null,
     );
     expect(nested.kind).toBe("json");
-    expect(runsOnArrival(nested)).toBe(false);
+    expect(runsOnArrival(nested, readOnly)).toBe(false);
   });
 });
 
