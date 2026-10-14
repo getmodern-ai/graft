@@ -683,13 +683,18 @@ function CheckStep({
         queryClient.invalidateQueries({ queryKey: connectionKeys.all });
         if (stored.authorizeUrl) {
           busy.current = false;
-          void consent.run(stored.authorizeUrl, stored.connection);
+          // Left before the answer came: no popup opens behind a dialog that is gone.
+          if (alive.current) void consent.run(stored.authorizeUrl, stored.connection);
           return;
         }
         finished(stored.connection);
         return;
       }
       if (routed.kind === "link") {
+        if (!alive.current) {
+          busy.current = false;
+          return;
+        }
         // A link provider covers these hosts (ADR 0019): the person signs in there instead of
         // pasting a key, and the connection is made under the link's id once they return.
         const popup = openConsentPopup(routed.url);
