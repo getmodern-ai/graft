@@ -1,4 +1,4 @@
-import type { ConnectionOutput, RevokeConnectionResult } from "@graft/core";
+import type { ConnectionAccess, ConnectionOutput, RevokeConnectionResult } from "@graft/core";
 import { takesCredential } from "@graft/core/connection/connection.rules";
 import { GATEWAY_PROVIDER } from "@graft/core/connection/gateway-provider";
 import { KEYRING_PROVIDER, providerDisplayName } from "@graft/core/connection/provider";
@@ -27,10 +27,13 @@ import type { PendingAction } from "./pending-action-queries";
 export type Connection = Jsonified<ConnectionOutput>;
 export type ConnectionCall = Jsonified<ConnectionCallOutput>;
 export type RevokeResult = Jsonified<RevokeConnectionResult>;
+/** Which agents may use a connection and what each may run without asking (GRA-296). */
+export type ConnectionAccessView = Jsonified<ConnectionAccess>;
 
 export const connectionKeys = {
   all: ["connections"] as const,
   calls: (connectionId: string) => ["connections", connectionId, "calls"] as const,
+  access: (connectionId: string) => ["connections", connectionId, "access"] as const,
 };
 
 export const toolKeys = {
@@ -52,6 +55,19 @@ export const connectionCallsQuery = (connectionId: string, limit = 25) =>
     queryFn: () =>
       api<{ calls: ConnectionCall[] }>(
         `/connections/${encodeURIComponent(connectionId)}/usage?limit=${limit}`,
+      ),
+  });
+
+/**
+ * The integration page's Agents view (GRA-296): every active agent's scope, last use and answers
+ * for the connection's vendor, in one read. `lib/agent-access.ts` words each row.
+ */
+export const connectionAccessQuery = (connectionId: string) =>
+  queryOptions({
+    queryKey: connectionKeys.access(connectionId),
+    queryFn: () =>
+      api<{ access: ConnectionAccessView }>(
+        `/connections/${encodeURIComponent(connectionId)}/access`,
       ),
   });
 

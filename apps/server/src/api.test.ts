@@ -1,6 +1,7 @@
 import {
   type AgentDeps,
   type ApprovalDeps,
+  type ConnectionAccessDeps,
   type ConnectionDeps,
   createGatewayProvider,
   DEFAULT_PROVIDERS,
@@ -464,6 +465,58 @@ function approvalDeps(): ApprovalDeps {
   };
 }
 
+/**
+ * The access view's reads (GRA-296): two active agents, one on `all` holding a standing approval,
+ * a build approval and a tool's answer, one on `listed` without the connection.
+ */
+function connectionAccessDeps(): ConnectionAccessDeps {
+  return {
+    findConnection: vi.fn(async () => connectionRow),
+    listVendorConnectionIds: vi.fn(async () => ["conn_1", "conn_2"]),
+    listAgentAccessForConnection: vi.fn(async () => [
+      {
+        id: "agent_open",
+        name: "Claude",
+        scopeMode: "all" as const,
+        connectedViaClientName: "Claude",
+        createdAt: NOW,
+        inScope: true,
+      },
+      {
+        id: "agent_1",
+        name: "laptop Hermes",
+        scopeMode: "listed" as const,
+        connectedViaClientName: null,
+        createdAt: NOW,
+        inScope: false,
+      },
+    ]),
+    lastVendorUseByAgent: vi.fn(async () => [{ agentId: "agent_open", lastUsedAt: NOW }]),
+    listVendorToolApprovals: vi.fn(async () => [
+      {
+        agentId: "agent_open",
+        decision: "allow" as const,
+        askEveryCall: true,
+        toolVersionId: "ver_1",
+        decidedAt: NOW,
+        tool: {
+          id: "tool_send",
+          vendor: "demo",
+          name: "send-order",
+          description: "Sends an order",
+          readOnly: false,
+          destructive: false,
+          currentVersionId: "ver_1",
+        },
+      },
+    ]),
+    listVendorApprovalsForVendor: vi.fn(async () => [
+      { agentId: "agent_open", includesDestructive: false, grantedAt: NOW },
+    ]),
+    listBuildApprovalsForConnection: vi.fn(async () => [{ agentId: "agent_open", grantedAt: NOW }]),
+  };
+}
+
 function pendingActionDeps(): PendingActionDeps {
   return {
     insertPendingAction: vi.fn(
@@ -498,6 +551,7 @@ function harness(
     approval: approvalDeps(),
     pendingAction: pendingActionDeps(),
     modelKey: fakeModelKeyDeps({ now: () => NOW }),
+    connectionAccess: connectionAccessDeps(),
     integration: integrationDeps(),
   };
   // The process's `tools/list_changed` notifier as the API sees it (GRA-69): what a revoke tells.
@@ -1551,6 +1605,79 @@ describe("connections", () => {
     const missing = await app.request("/api/connections/conn_x/usage");
     expect(missing.status).toBe(404);
     expect(deps.ledger.listUsageForVendor).toHaveBeenCalledTimes(1);
+  });
+
+  /** GRA-296: the integration page's Agents view, one read under the person. */
+  it("answers a connection's access per active agent, and 404s a connection that is not the person's", async () => {
+    const { app, deps } = harness({ user: { id: "person_1" } });
+    const res = await app.request("/api/connections/conn_1/access");
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({
+      access: {
+        connectionId: "conn_1",
+        vendor: "demo",
+        agents: [
+          {
+            agent: {
+              id: "agent_open",
+              name: "Claude",
+              scopeMode: "all",
+              connectedViaClientName: "Claude",
+            },
+            inScope: true,
+            lastUsedAt: NOW.toISOString(),
+            toolApprovals: [
+              {
+                tool: {
+                  id: "tool_send",
+                  vendor: "demo",
+                  name: "send-order",
+                  description: "Sends an order",
+                  readOnly: false,
+                  destructive: false,
+                  currentVersionId: "ver_1",
+                },
+                decision: "allow",
+                askEveryCall: true,
+                toolVersionId: "ver_1",
+                forCurrentVersion: true,
+                decidedAt: NOW.toISOString(),
+              },
+            ],
+            vendorApproval: { includesDestructive: false, grantedAt: NOW.toISOString() },
+            buildApproval: { grantedAt: NOW.toISOString() },
+          },
+          {
+            agent: {
+              id: "agent_1",
+              name: "laptop Hermes",
+              scopeMode: "listed",
+              connectedViaClientName: null,
+            },
+            inScope: false,
+            lastUsedAt: null,
+            toolApprovals: [],
+            vendorApproval: null,
+            buildApproval: null,
+          },
+        ],
+      },
+    });
+    const access = deps.connectionAccess;
+    expect(access.findConnection).toHaveBeenCalledWith(fakeDb, "person_1", "conn_1");
+    // Every connection of the person's to the vendor: a call through another was a use too.
+    expect(access.lastVendorUseByAgent).toHaveBeenCalledWith(fakeDb, "person_1", {
+      vendor: "demo",
+      toolNames: ["execute__conn_1", "execute__conn_2"],
+    });
+
+    vi.mocked(access.findConnection).mockResolvedValueOnce(null);
+    const missing = await app.request("/api/connections/conn_other/access");
+    expect(missing.status).toBe(404);
+    expect(access.listAgentAccessForConnection).toHaveBeenCalledTimes(1);
+
+    const signedOut = harness(null);
+    expect((await signedOut.app.request("/api/connections/conn_1/access")).status).toBe(401);
   });
 
   it("revokes, answering what was swept, and tells every live session whose list changed", async () => {
