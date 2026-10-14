@@ -1,4 +1,4 @@
-import { type ConnectionProvider, keyringProvider } from "@graft/core";
+import { type ConnectionProvider, createGatewayProvider, keyringProvider } from "@graft/core";
 import {
   createFakeLinkProvider,
   type FakeLinkProvider,
@@ -56,14 +56,24 @@ const GMAIL = {
 };
 
 function harness(options: { providers?: (broker: FakeLinkProvider) => ConnectionProvider[] } = {}) {
-  const store = createFakeStore();
+  // A clock the test moves, for a link that took too long.
+  const clock = { at: Date.now() };
+  const store = createFakeStore({ now: () => new Date(clock.at) });
   const fake = createFakeDeps(store);
   const broker = createFakeLinkProvider({
     name: "some-broker",
     covers: (vendor) => vendor === "gmail",
   });
   const providers = options.providers?.(broker) ?? [broker, keyringProvider];
-  const connection = { ...fake.connection, providers };
+  // The keys the find-or-make locks on, in order: the store has no transactions to hold one across.
+  const locks: string[] = [];
+  const connection = {
+    ...fake.connection,
+    providers,
+    lockConnectionKey: async (_db: unknown, personId: string, key: string) => {
+      locks.push(`${personId} ${key}`);
+    },
+  };
   const captured: Capture[] = [];
   const notified: string[] = [];
   const app = createServer({
@@ -128,7 +138,7 @@ function harness(options: { providers?: (broker: FakeLinkProvider) => Connection
     token: "grft_d".padEnd(40, "0"),
     scopeMode: "all",
   });
-  return { app, store, broker, captured, notified };
+  return { app, store, broker, captured, notified, locks, clock };
 }
 
 // biome-ignore lint/suspicious/noExplicitAny: a test reads the JSON answer by field.
@@ -424,5 +434,107 @@ describe("two people kept apart", () => {
     expect(outcome.status).toBe("failed");
     expect(rowsOf(h, PERSON)).toHaveLength(0);
     expect(rowsOf(h, OTHER)).toHaveLength(0);
+  });
+});
+
+describe("what Greptile's review of #238 asked for", () => {
+  it("a refresh after the link connected never claims a second account the provider holds", async () => {
+    const h = harness();
+    const said = await read(await h.app.request("/api/connect", post({ proposal: GMAIL })));
+    const success = h.broker.minted.at(-1)?.success ?? "";
+    h.broker.connectAccount({ personId: PERSON, target: "gmail", id: "acct_1" });
+    h.broker.connectAccount({ personId: PERSON, target: "gmail", id: "acct_2" });
+    const first = consoleOutcome(await landing(h, success));
+    expect(first).toMatchObject({ status: "connected", connectionId: said.connectId });
+    const again = consoleOutcome(await landing(h, success));
+    expect(again).toMatchObject({ status: "connected", connectionId: said.connectId });
+    const rows = rowsOf(h, PERSON);
+    expect(rows.map((row) => row.providerRef)).toEqual(["acct_1"]);
+    // The landing took the record's lock before it wrote.
+    expect(h.locks).toContain(`${PERSON} link:${said.connectId}`);
+  });
+
+  it("a second link started meanwhile still claims its own account", async () => {
+    const h = harness();
+    const one = await read(await h.app.request("/api/connect", post({ proposal: GMAIL })));
+    const oneSuccess = h.broker.minted.at(-1)?.success ?? "";
+    const two = await read(await h.app.request("/api/connect", post({ proposal: GMAIL })));
+    const twoSuccess = h.broker.minted.at(-1)?.success ?? "";
+    h.broker.connectAccount({ personId: PERSON, target: "gmail", id: "acct_1" });
+    expect(consoleOutcome(await landing(h, oneSuccess)).connectionId).toBe(one.connectId);
+    h.broker.connectAccount({ personId: PERSON, target: "gmail", id: "acct_2" });
+    expect(consoleOutcome(await landing(h, twoSuccess)).connectionId).toBe(two.connectId);
+    expect(
+      rowsOf(h, PERSON)
+        .map((row) => row.providerRef)
+        .sort(),
+    ).toEqual(["acct_1", "acct_2"]);
+  });
+
+  it("a link that took too long fails with the record's connectId and connects nothing", async () => {
+    const h = harness();
+    const said = await read(await h.app.request("/api/connect", post({ proposal: GMAIL })));
+    h.broker.connectAccount({ personId: PERSON, target: "gmail", id: "acct_1" });
+    h.clock.at += 16 * 60_000;
+    const late = consoleOutcome(await landing(h, h.broker.minted.at(-1)?.success ?? ""));
+    expect(late).toMatchObject({ status: "failed", connectId: said.connectId });
+    expect(late.message).toContain("took too long");
+    expect(rowsOf(h, PERSON)).toHaveLength(0);
+  });
+
+  it("a keyless connect finds or makes its row under the person's lock on the provider and vendor", async () => {
+    const h = harness();
+    await h.app.request("/api/connect", post({ proposal: OPEN_METEO }));
+    expect(h.locks).toEqual([`${PERSON} keyring:open-meteo`]);
+  });
+
+  describe("a no-step provider's rows are matched by vendor and host coverage", () => {
+    const gatewayHarness = () =>
+      harness({
+        providers: (broker) => [
+          createGatewayProvider({
+            hosts: ["api.example.com"],
+            upstreamUrl: "https://gateway.example.com",
+            headerName: "x-identity",
+            headerValue: "secret",
+          }),
+          broker,
+          keyringProvider,
+        ],
+      });
+    const V1 = {
+      vendor: "example",
+      displayName: "Example",
+      primaryHost: "https://api.example.com/v1",
+      scheme: "bearer",
+    };
+    const V2 = { ...V1, primaryHost: "https://api.example.com/v2" };
+
+    it("a proposal at another primary host of the same hosts reuses the live row", async () => {
+      const h = gatewayHarness();
+      const first = await read(await h.app.request("/api/connect", post({ proposal: V1 })));
+      expect(first).toMatchObject({ kind: "connected", created: true });
+      expect(first.connection.provider).toBe("gateway");
+      const second = await read(await h.app.request("/api/connect", post({ proposal: V2 })));
+      expect(second).toMatchObject({ kind: "connected", created: false });
+      expect(second.connection.id).toBe(first.connection.id);
+      expect(rowsOf(h, PERSON)).toHaveLength(1);
+      expect(h.locks).toEqual([`${PERSON} gateway:example`, `${PERSON} gateway:example`]);
+    });
+
+    it("a revoked row at another primary host is refused with the Reconnect, not doubled", async () => {
+      const h = gatewayHarness();
+      const first = await read(await h.app.request("/api/connect", post({ proposal: V1 })));
+      const row = h.store.connections.get(first.connection.id);
+      if (!row) throw new Error("no row");
+      h.store.connections.set(row.id, { ...row, revokedAt: new Date() });
+      const res = await h.app.request("/api/connect", post({ proposal: V2 }));
+      expect(res.status).toBe(409);
+      expect((await read(res)).details).toMatchObject({
+        reason: "connection_revoked",
+        connectionId: row.id,
+      });
+      expect(rowsOf(h, PERSON)).toHaveLength(1);
+    });
   });
 });

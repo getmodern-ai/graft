@@ -103,6 +103,7 @@ function fakeDeps(overrides: Partial<ConnectionDeps> = {}): ConnectionDeps {
     findConnectionForUpdate: vi.fn(async () => row),
     findConnectionByIdUnscoped: vi.fn(async () => row),
     listConnections: vi.fn(async () => [row]),
+    lockConnectionKey: vi.fn(async () => {}),
     setConnectionCredential: vi.fn(async (_db, _p, _id, args) => ({
       ...row,
       credentialCiphertext: args.ciphertext,

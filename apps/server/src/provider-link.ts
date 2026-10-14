@@ -173,7 +173,15 @@ export function createProviderLinkRoutes(options: ProviderLinkRouteOptions): Hon
     // amended 2026-10-14) carries the console connect's state, which names no ask: only a state
     // of that domain verifies as one or reads as expired, so every other state goes on below.
     const connect = verifyConsoleLinkState(query[LINK_STATE_PARAM], options.handoff.secret, now);
-    if (!connect.ok && connect.reason === "expired") return failed(connect.message);
+    if (!connect.ok && connect.reason === "expired") {
+      return land({
+        status: "failed",
+        pendingActionId: null,
+        connectionId: null,
+        message: connect.message,
+        connectId: connect.payload.connectId,
+      });
+    }
     if (connect.ok) {
       const record = connect.payload;
       const outcome = await completeConsoleLink(ctx, record, query[LINK_OUTCOME_PARAM], options);

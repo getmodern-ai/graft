@@ -10,6 +10,15 @@ import { connection, type NewConnection } from "../schema/connection";
 
 export type ConnectionRow = typeof connection.$inferSelect;
 
+/**
+ * Serialise a find-or-make of the person's connection on a transaction-scoped advisory lock keyed
+ * by the person and the caller's key, for rows the table has no uniqueness over: a keyless or a
+ * no-step provider's row carries no `provider_ref` (GRA-304's console connect).
+ */
+export async function lockConnectionKey(db: DbOrTx, personId: string, key: string): Promise<void> {
+  await db.execute(sql`select pg_advisory_xact_lock(hashtext(${`connection:${personId}:${key}`}))`);
+}
+
 export async function insertConnection(db: DbOrTx, input: NewConnection): Promise<ConnectionRow> {
   const [row] = await db.insert(connection).values(input).returning();
   if (!row) throw new Error("Insert of connection returned no row");

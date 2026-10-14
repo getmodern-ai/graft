@@ -11,6 +11,7 @@ import {
   findConnectionForUpdate,
   insertConnection,
   listConnections,
+  lockConnectionKey,
   reconnectConnection,
   recordProviderRelease,
   revokeConnection,
@@ -41,6 +42,8 @@ export type ConnectionDeps = {
   /** Unscoped, for the proxy's binding only — see the repo comment. */
   findConnectionByIdUnscoped: typeof findConnectionByIdUnscoped;
   listConnections: typeof listConnections;
+  /** The console connect's find-or-make, serialised per person and key (GRA-304). */
+  lockConnectionKey: typeof lockConnectionKey;
   setConnectionCredential: typeof setConnectionCredential;
   /** The consent's non-secret state alone — a verifier written, a refusal marked (ADR 0005). */
   setConnectionOAuthState: typeof setConnectionOAuthState;
@@ -94,6 +97,7 @@ export function createConnectionDeps(
     findConnectionForUpdate,
     findConnectionByIdUnscoped,
     listConnections,
+    lockConnectionKey,
     setConnectionCredential,
     setConnectionOAuthState,
     setConnectionProviderRef,

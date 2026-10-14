@@ -535,6 +535,12 @@ export function createFakeDeps(store: FakeStore): FakeDeps {
   const connection: ConnectionDeps = {
     insertConnection: async (_db, input) => {
       refuseDuplicateRef(input.provider ?? "keyring", input.providerRef, input.id);
+      if (input.id && store.connections.has(input.id)) {
+        throw Object.assign(
+          new Error('duplicate key value violates unique constraint "connection_pkey"'),
+          { code: "23505" },
+        );
+      }
       const at = store.now();
       const row = {
         ...input,
@@ -571,6 +577,8 @@ export function createFakeDeps(store: FakeStore): FakeDeps {
     findConnectionByIdUnscoped: async (_db, id) => store.connections.get(id) ?? null,
     listConnections: async (_db, personId) =>
       [...store.connections.values()].filter((row) => row.personId === personId),
+    // The store has no transactions to hold a lock across; a suite that asserts the key spies here.
+    lockConnectionKey: async () => {},
     setConnectionCredential: async (_db, personId, id, args) => {
       const row = store.connections.get(id);
       if (!row || row.personId !== personId) return null;

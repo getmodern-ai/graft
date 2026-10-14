@@ -188,17 +188,25 @@ export async function connectFromConsole(
 
 /**
  * A row made (or found) at once, its approvals in the same transaction and the agents reaching it
- * told after the commit, as `connected.ts` says the maker must.
+ * told after the commit, as `connected.ts` says the maker must. The find-or-make runs under the
+ * person's lock on the provider and vendor (Greptile on #238): neither row kind has a uniqueness
+ * the database could hold, so two connects at once would otherwise both find nothing and insert.
  */
 async function connected(
   ctx: ServiceContext,
   principal: Principal,
   access: ConnectAccess,
   deps: ConsoleConnectDeps,
+  key: { provider: string; vendor: string },
   make: (scoped: ServiceContext) => Promise<{ connection: ConnectionOutput; created: boolean }>,
 ): Promise<ConsoleConnectResult> {
   const result = await ctx.db.transaction(async (tx) => {
     const scoped: ServiceContext = { db: tx };
+    await deps.connection.lockConnectionKey(
+      tx,
+      principal.personId,
+      `${key.provider}:${key.vendor}`,
+    );
     const made = await make(scoped);
     const approvedAgentIds =
       access === "full" ? await recordFullAccess(scoped, principal, made.connection, deps) : [];
@@ -227,7 +235,8 @@ async function connectKeyless(
   access: ConnectAccess,
   deps: ConsoleConnectDeps,
 ): Promise<ConsoleConnectResult> {
-  return connected(ctx, principal, access, deps, async (scoped) => {
+  const key = { provider: provider.name, vendor: proposal.vendor };
+  return connected(ctx, principal, access, deps, key, async (scoped) => {
     const keyless = (await listConnections(scoped, principal, deps.connection)).filter(
       (row) =>
         row.vendor === proposal.vendor &&
@@ -270,8 +279,10 @@ async function connectKeyless(
 /**
  * A provider with no person step (the gateway, GRA-58): the rules `request_connection`'s
  * `connectWithoutPersonStep` applies to an agent, less the scope, which is not this route's to
- * judge. A live row reaching every host answers, a narrower one of the provider's is widened, and a
- * revoked one is refused naming the Reconnect that brings it back.
+ * judge. The person's rows of the vendor are the candidates, whatever primary host they spell, and
+ * host coverage decides (Greptile on #238): a live row reaching every host answers, a narrower one
+ * of the provider's is widened, and with none live a revoked one of the provider's is refused
+ * naming the Reconnect that brings it back.
  */
 async function connectWithNoStep(
   ctx: ServiceContext,
@@ -281,21 +292,14 @@ async function connectWithNoStep(
   access: ConnectAccess,
   deps: ConsoleConnectDeps,
 ): Promise<ConsoleConnectResult> {
-  const rows = (await listConnections(ctx, principal, deps.connection)).filter(
-    (row) => row.vendor === proposal.vendor && row.primaryHost === proposal.primaryHost,
-  );
-  const revoked = rows.find((row) => row.provider === provider.name && row.revokedAt !== null);
-  const live = rows.filter(
-    (row) => row.revokedAt === null && isConnectionUsable(row, deps.connection.providers),
-  );
-  if (!live.length && revoked) {
-    throw new ServiceError(
-      "CONFLICT",
-      `${proposal.displayName} was connected through ${providerDisplayName(provider.name)} and revoked. Reconnect it on its connection instead.`,
-      { details: { reason: "connection_revoked", connectionId: revoked.id } },
+  const key = { provider: provider.name, vendor: proposal.vendor };
+  return connected(ctx, principal, access, deps, key, async (scoped) => {
+    const rows = (await listConnections(scoped, principal, deps.connection)).filter(
+      (row) => row.vendor === proposal.vendor,
     );
-  }
-  return connected(ctx, principal, access, deps, async (scoped) => {
+    const live = rows.filter(
+      (row) => row.revokedAt === null && isConnectionUsable(row, deps.connection.providers),
+    );
     const whole = live.find((row) => coversProposal(row, proposal));
     if (whole) return { connection: whole, created: false };
     const narrower = live.find((row) => row.provider === provider.name);
@@ -309,6 +313,14 @@ async function connectWithNoStep(
         deps.connection,
       );
       return { connection: widened, created: false };
+    }
+    const revoked = rows.find((row) => row.provider === provider.name && row.revokedAt !== null);
+    if (revoked) {
+      throw new ServiceError(
+        "CONFLICT",
+        `${proposal.displayName} was connected through ${providerDisplayName(provider.name)} and revoked. Reconnect it on its connection instead.`,
+        { details: { reason: "connection_revoked", connectionId: revoked.id } },
+      );
     }
     const connection = await registerProviderConnection(
       scoped,
@@ -428,7 +440,7 @@ export async function recordFullAccess(
  * The console connect's return (`provider-link.ts`'s callback, for a state `signConsoleLinkState`
  * signed): the provider is asked what the person connected, never its redirect's say-so, as for
  * an ask; then the row and, under `full`, the approvals in one transaction. A landing repeated
- * (a refresh, a second tab) finds the row the first made since the record was issued and says so.
+ * (a refresh, a second tab) finds the row the first made and says so, before asking the provider.
  */
 export async function completeConsoleLink(
   ctx: ServiceContext,
@@ -463,23 +475,29 @@ export async function completeConsoleLink(
       `${name} reported that the sign-in to ${record.displayName} did not complete, and nothing was connected. Press Connect to try again.`,
     );
   }
-  // A row of this provider and integration made since the record was issued: this link's, landed
-  // on before. Read when the provider has nothing new, and after a lost race on the account.
+  // What this record already made, judged before the provider is asked again (Greptile on #238):
+  // asked again, with the first account among the taken ones, a provider holding a second account
+  // for the person would answer it and a refresh would connect that too. The row this link inserted
+  // carries the record's id; a released row it reconnected in place keeps its own, and is the one
+  // of this provider and integration made before the record was issued and touched since.
   const issuedAt = record.expiresAt - LINK_STATE_TTL_MS;
-  const madeByThisLink = async () =>
-    (await listConnections(ctx, principal, deps.connection)).find(
+  const madeByThisLink = async (scoped: ServiceContext) =>
+    (await listConnections(scoped, principal, deps.connection)).find(
       (row) =>
+        row.revokedAt === null &&
         row.provider === provider.name &&
         row.vendor === record.vendor &&
-        row.revokedAt === null &&
-        row.updatedAt.getTime() >= issuedAt,
+        (row.id === record.connectId ||
+          (row.createdAt.getTime() < issuedAt && row.updatedAt.getTime() >= issuedAt)),
     ) ?? null;
-  const already = (connection: ConnectionOutput) =>
+  const already = (connectionId: string) =>
     outcome(
       "connected",
       `${record.displayName} is connected through ${name}. The console updates on its own.`,
-      connection.id,
+      connectionId,
     );
+  const before = await madeByThisLink(ctx);
+  if (before) return already(before.id);
 
   const takenRefs = (await deps.connection.listConnections(ctx.db, principal.personId)).flatMap(
     (row) => (row.provider === provider.name && row.providerRef ? [row.providerRef] : []),
@@ -499,15 +517,21 @@ export async function completeConsoleLink(
     );
   }
   if (!completed.ok) {
-    const made = await madeByThisLink();
-    return made ? already(made) : outcome("failed", completed.message);
+    const landed = await madeByThisLink(ctx);
+    return landed ? already(landed.id) : outcome("failed", completed.message);
   }
   const ref = completed.ref;
 
-  let connectionId: string;
+  let made: { connectionId: string; now: boolean };
   try {
-    connectionId = await ctx.db.transaction(async (tx) => {
+    made = await ctx.db.transaction(async (tx) => {
       const scoped: ServiceContext = { db: tx };
+      // Two landings of one record take turns here, and the later finds the earlier's row rather
+      // than claiming the account the provider answered it; the record's id on the new row is the
+      // database's guard beside the lock.
+      await deps.connection.lockConnectionKey(tx, principal.personId, `link:${record.connectId}`);
+      const earlier = await madeByThisLink(scoped);
+      if (earlier) return { connectionId: earlier.id, now: false };
       const connection = await connectThroughProvider(
         scoped,
         principal,
@@ -518,19 +542,20 @@ export async function completeConsoleLink(
           primaryHost: record.primaryHost,
           hosts: record.hosts,
           ref,
+          id: record.connectId,
         },
         deps.connection,
       );
       // No agent asked, so no agent's scope is granted: the row is in every `all` agent's already.
       if (record.access === "full") await recordFullAccess(scoped, principal, connection, deps);
-      return connection.id;
+      return { connectionId: connection.id, now: true };
     });
   } catch (error) {
     // Two landings claimed the same account and the database let one in.
     if (error instanceof ServiceError && error.code === "CONFLICT") {
       for (let attempt = 0; attempt < 10; attempt += 1) {
-        const made = await madeByThisLink();
-        if (made) return already(made);
+        const settled = await madeByThisLink(ctx);
+        if (settled) return already(settled.id);
         await new Promise((resolve) => setTimeout(resolve, 50));
       }
     }
@@ -541,6 +566,8 @@ export async function completeConsoleLink(
       `${record.displayName} was connected at ${name} but not in Graft: ${detail}. Press Connect to try again.`,
     );
   }
+  const connectionId = made.connectionId;
+  if (!made.now) return already(connectionId);
   await notifyAgentsReachingConnection(
     ctx,
     principal,

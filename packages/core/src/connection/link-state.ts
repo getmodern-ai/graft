@@ -83,9 +83,15 @@ export function signConsoleLinkState(payload: ConsoleLinkStatePayload, secret: s
   return sign("connect", payload, secret);
 }
 
+/**
+ * An expired state is one this server signed, so it carries its payload for the caller to say
+ * which attempt it was (GRA-304: the console matches the outcome by `connectId`); it authorises
+ * nothing.
+ */
 export type StateVerdict<P> =
   | { ok: true; payload: P }
-  | { ok: false; reason: "malformed" | "tampered" | "expired"; message: string };
+  | { ok: false; reason: "malformed" | "tampered"; message: string }
+  | { ok: false; reason: "expired"; message: string; payload: P };
 
 export type LinkStateVerdict = StateVerdict<LinkStatePayload>;
 export type ConsoleLinkStateVerdict = StateVerdict<ConsoleLinkStatePayload>;
@@ -162,6 +168,7 @@ function verify<P extends { expiresAt: number }>(
         domain === "link"
           ? "This link took too long — open the ask in the console and connect again"
           : "This link took too long. Connect the integration again from the console",
+      payload,
     };
   }
   return { ok: true, payload };

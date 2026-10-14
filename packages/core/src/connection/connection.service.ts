@@ -509,6 +509,12 @@ export type ConnectThroughProviderInput = {
   hosts?: readonly string[];
   /** The provider's reference for what the person connected — a broker's account id — as `complete` answered it. */
   ref: string;
+  /**
+   * The id a new row takes, when the caller names one: the console connect's record id (GRA-304),
+   * so a landing repeated finds the row by it and two landings cannot insert two. A released row
+   * reconnected in place keeps its own.
+   */
+  id?: string;
 };
 
 /**
@@ -613,7 +619,7 @@ export async function connectThroughProvider(
   let row: ConnectionRow;
   try {
     row = await deps.insertConnection(ctx.db, {
-      id: deps.newId(),
+      id: input.id ?? deps.newId(),
       personId: principal.personId,
       provider: provider.name,
       providerRef: input.ref,
