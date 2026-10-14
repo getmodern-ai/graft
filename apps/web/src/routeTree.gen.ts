@@ -20,6 +20,7 @@ import { Route as AuthSetupRouteImport } from './routes/_auth/setup'
 import { Route as LinkCallbackRouteImport } from './routes/link.callback'
 import { Route as OauthCallbackRouteImport } from './routes/oauth.callback'
 import { Route as AuthShellIndexRouteImport } from './routes/_auth/_shell/index'
+import { Route as AuthShellActivityRouteImport } from './routes/_auth/_shell/activity'
 import { Route as AuthShellSettingsRouteImport } from './routes/_auth/_shell/settings'
 import { Route as AuthPendingIdRouteImport } from './routes/_auth/pending.$id'
 import { Route as AuthShellAgentsIndexRouteImport } from './routes/_auth/_shell/agents.index'
@@ -82,6 +83,11 @@ const AuthShellIndexRoute = AuthShellIndexRouteImport.update({
   path: '/',
   getParentRoute: () => AuthShellRouteRoute,
 } as any)
+const AuthShellActivityRoute = AuthShellActivityRouteImport.update({
+  id: '/activity',
+  path: '/activity',
+  getParentRoute: () => AuthShellRouteRoute,
+} as any)
 const AuthShellSettingsRoute = AuthShellSettingsRouteImport.update({
   id: '/settings',
   path: '/settings',
@@ -136,6 +142,7 @@ export interface FileRoutesByFullPath {
   '/setup': typeof AuthSetupRoute
   '/link/callback': typeof LinkCallbackRoute
   '/oauth/callback': typeof OauthCallbackRoute
+  '/activity': typeof AuthShellActivityRoute
   '/settings': typeof AuthShellSettingsRoute
   '/pending/$id': typeof AuthPendingIdRoute
   '/agents/$agentId': typeof AuthShellAgentsAgentIdRoute
@@ -155,6 +162,7 @@ export interface FileRoutesByTo {
   '/setup': typeof AuthSetupRoute
   '/link/callback': typeof LinkCallbackRoute
   '/oauth/callback': typeof OauthCallbackRoute
+  '/activity': typeof AuthShellActivityRoute
   '/settings': typeof AuthShellSettingsRoute
   '/pending/$id': typeof AuthPendingIdRoute
   '/agents/$agentId': typeof AuthShellAgentsAgentIdRoute
@@ -176,6 +184,7 @@ export interface FileRoutesById {
   '/_auth/setup': typeof AuthSetupRoute
   '/link/callback': typeof LinkCallbackRoute
   '/oauth/callback': typeof OauthCallbackRoute
+  '/_auth/_shell/activity': typeof AuthShellActivityRoute
   '/_auth/_shell/settings': typeof AuthShellSettingsRoute
   '/_auth/pending/$id': typeof AuthPendingIdRoute
   '/_auth/_shell/': typeof AuthShellIndexRoute
@@ -198,6 +207,7 @@ export interface FileRouteTypes {
     | '/setup'
     | '/link/callback'
     | '/oauth/callback'
+    | '/activity'
     | '/settings'
     | '/pending/$id'
     | '/agents/$agentId'
@@ -217,6 +227,7 @@ export interface FileRouteTypes {
     | '/setup'
     | '/link/callback'
     | '/oauth/callback'
+    | '/activity'
     | '/settings'
     | '/pending/$id'
     | '/agents/$agentId'
@@ -237,6 +248,7 @@ export interface FileRouteTypes {
     | '/_auth/setup'
     | '/link/callback'
     | '/oauth/callback'
+    | '/_auth/_shell/activity'
     | '/_auth/_shell/settings'
     | '/_auth/pending/$id'
     | '/_auth/_shell/'
@@ -337,6 +349,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthShellIndexRouteImport
       parentRoute: typeof AuthShellRouteRoute
     }
+    '/_auth/_shell/activity': {
+      id: '/_auth/_shell/activity'
+      path: '/activity'
+      fullPath: '/activity'
+      preLoaderRoute: typeof AuthShellActivityRouteImport
+      parentRoute: typeof AuthShellRouteRoute
+    }
     '/_auth/_shell/settings': {
       id: '/_auth/_shell/settings'
       path: '/settings'
@@ -397,6 +416,7 @@ declare module '@tanstack/react-router' {
 }
 
 interface AuthShellRouteRouteChildren {
+  AuthShellActivityRoute: typeof AuthShellActivityRoute
   AuthShellSettingsRoute: typeof AuthShellSettingsRoute
   AuthShellIndexRoute: typeof AuthShellIndexRoute
   AuthShellAgentsAgentIdRoute: typeof AuthShellAgentsAgentIdRoute
@@ -408,6 +428,7 @@ interface AuthShellRouteRouteChildren {
 }
 
 const AuthShellRouteRouteChildren: AuthShellRouteRouteChildren = {
+  AuthShellActivityRoute: AuthShellActivityRoute,
   AuthShellSettingsRoute: AuthShellSettingsRoute,
   AuthShellIndexRoute: AuthShellIndexRoute,
   AuthShellAgentsAgentIdRoute: AuthShellAgentsAgentIdRoute,
