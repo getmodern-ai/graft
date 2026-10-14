@@ -3,8 +3,6 @@ import { useRef, useState } from "react";
 
 import { AgentConnectionDialog } from "@/components/agent/agent-connection-dialog";
 import { EditAgentDialog } from "@/components/agent/edit-agent-dialog";
-import { RevokeAgentDialog } from "@/components/agent/revoke-agent-dialog";
-import { RotateTokenDialog } from "@/components/agent/rotate-token-dialog";
 import { DescriptionIcon, MoreHorizIcon } from "@/components/icons";
 import { HarnessMark } from "@/components/marks";
 import {
@@ -20,21 +18,20 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
-  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { agentMark } from "@/lib/agent-cards";
 import { agentHeaderFacts } from "@/lib/agent-page";
 import type { Agent } from "@/lib/agent-queries";
-import { tokenRotatable } from "@/lib/agent-token";
 import { setupQuery } from "@/lib/setup-queries";
 import { agentStatusChip } from "@/lib/status-chips";
 
 /**
  * The agent page's header (GRA-325; Figma 2047:7614): the harness mark in a 56px tile, the name,
  * the status chip and one line of facts, then *Setup instructions* (`AgentConnectionDialog`) and
- * the ⋯ menu: Edit (name, cap, idle window), *Rotate token* for a static-token agent (GRA-306) and
- * Revoke. A revoked agent's header is read-only: the facts gain when, and nothing is offered.
+ * the ⋯ menu's Edit (name, cap, idle window). Rotate token and Revoke are Advanced's
+ * (`agent-advanced.tsx`, GRA-326), as the frame draws them, so the menu does not offer them twice.
+ * A revoked agent's header is read-only: the facts gain when, and nothing is offered.
  */
 export function AgentHeader({ agent }: { agent: Agent }) {
   const setup = useQuery(setupQuery);
@@ -43,8 +40,6 @@ export function AgentHeader({ agent }: { agent: Agent }) {
   // Which door opened the instructions, so focus returns to it when they close.
   const [connecting, setConnecting] = useState<"button" | "menu" | null>(null);
   const [editing, setEditing] = useState(false);
-  const [rotating, setRotating] = useState(false);
-  const [revoking, setRevoking] = useState(false);
   const facts = agentHeaderFacts(agent);
   const active = !agent.revokedAt;
 
@@ -101,13 +96,6 @@ export function AgentHeader({ agent }: { agent: Agent }) {
                 Setup instructions
               </DropdownMenuItem>
               <DropdownMenuItem onClick={() => setEditing(true)}>Edit</DropdownMenuItem>
-              {tokenRotatable(agent) ? (
-                <DropdownMenuItem onClick={() => setRotating(true)}>Rotate token</DropdownMenuItem>
-              ) : null}
-              <DropdownMenuSeparator />
-              <DropdownMenuItem variant="destructive" onClick={() => setRevoking(true)}>
-                Revoke
-              </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
         </PageHeaderActions>
@@ -126,12 +114,6 @@ export function AgentHeader({ agent }: { agent: Agent }) {
           onClose={() => setEditing(false)}
           returnFocus={menuTrigger}
         />
-      ) : null}
-      {active ? (
-        <>
-          <RotateTokenDialog agent={agent} open={rotating} onOpenChange={setRotating} />
-          <RevokeAgentDialog agent={agent} open={revoking} onOpenChange={setRevoking} />
-        </>
       ) : null}
     </PageHeader>
   );

@@ -22,8 +22,11 @@ import { type Agent, agentKeys, updateAgentLimits } from "@/lib/agent-queries";
  * the agent has a run in flight, and a demoted tool stays in the toolbox one `find_tool` away.
  * Saved values take effect at the next sweep. The ranges are the service's
  * (`packages/core/src/agent/agent.service.ts`), which answers a sentence when a value is outside them.
+ *
+ * With `onDone` it is the agent page's Advanced edit (GRA-326): Cancel in place of Reset, and a
+ * save closes it too.
  */
-export function LimitsForm({ agent }: { agent: Agent }) {
+export function LimitsForm({ agent, onDone }: { agent: Agent; onDone?: () => void }) {
   const queryClient = useQueryClient();
   const [name, setName] = useState(agent.name);
   const [cap, setCap] = useState(String(agent.workingSetCap));
@@ -45,6 +48,7 @@ export function LimitsForm({ agent }: { agent: Agent }) {
       toast.success("Saved", {
         description: "The next sweep uses these limits.",
       });
+      onDone?.();
     },
   });
 
@@ -105,17 +109,23 @@ export function LimitsForm({ agent }: { agent: Agent }) {
       </CardContent>
       {agent.revokedAt === null ? (
         <CardFooter className="justify-end gap-2">
-          <Button
-            variant="outline"
-            disabled={!dirty || save.isPending}
-            onClick={() => {
-              setName(agent.name);
-              setCap(String(agent.workingSetCap));
-              setIdleDays(String(agent.idleWindowDays));
-            }}
-          >
-            Reset
-          </Button>
+          {onDone ? (
+            <Button variant="outline" disabled={save.isPending} onClick={onDone}>
+              Cancel
+            </Button>
+          ) : (
+            <Button
+              variant="outline"
+              disabled={!dirty || save.isPending}
+              onClick={() => {
+                setName(agent.name);
+                setCap(String(agent.workingSetCap));
+                setIdleDays(String(agent.idleWindowDays));
+              }}
+            >
+              Reset
+            </Button>
+          )}
           <Button disabled={!dirty || save.isPending} onClick={() => save.mutate()}>
             {save.isPending ? "Saving…" : "Save"}
           </Button>

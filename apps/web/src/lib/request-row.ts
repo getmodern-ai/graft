@@ -14,8 +14,11 @@ import { toolAskIntegrationName } from "./tool-ask-copy";
  * reads a payload on faith. `requestRowAnswer` is the body a primary that needs no input posts.
  */
 
-/** What the primary button does: answer on the spot, confirm a keyless connection, or open the ask. */
-export type RequestRowPrimary = "answer" | "confirm" | "open";
+/**
+ * What the primary button does: answer on the spot, confirm a keyless connection, open the Allow
+ * menu (a tool's ask, GRA-311), or open the ask in the request dialog.
+ */
+export type RequestRowPrimary = "answer" | "confirm" | "menu" | "open";
 
 /** Which shape of a kind the row drew; a connection ask has five (form, link, keyless, widen, fallback). */
 export type RequestRowVariant =
@@ -107,7 +110,7 @@ export function requestRowCopy(ask: Ask): RequestRowCopy {
         // The account, when the person holds more than one of the integration under its own name.
         detail: payload.connectionName !== integration ? `As ${payload.connectionName}` : null,
         decline: "Deny",
-        primary: { label: "Allow", does: "open" },
+        primary: { label: "Allow", does: "menu" },
       };
     }
     case "build": {
