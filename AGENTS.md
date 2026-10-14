@@ -1349,9 +1349,11 @@ only where the field names match, else the schema's `default` or first `examples
 required field with no value says *This tool needs …* and Run waits (`canRun`), the required fields
 drawn first since a stored schema's keys come back in jsonb's order; JSON only for a
 schema too complex to draw (a nested object, a list of objects, a union, a composed root), where a
-required key still at the skeleton's empty object or list counts as missing. It runs the tool once
-on arrival only when the tool takes no input (`lib/setup-result.ts`'s `runsOnArrival`; a tool with
-inputs, Open-Meteo's prefilled city included, waits for Run) and shows the answer in `CodeBlock`; a
+required key still at the skeleton's empty object or list counts as missing. It runs a read-only
+tool once on arrival when the form as drawn needs nothing from the person: no input, or every
+required field at a starting value and every value in its type (`lib/setup-result.ts`'s
+`runsOnArrival`, so the ready-made Gmail search and Open-Meteo's prefilled city run at once; a
+required field nothing fills, or a JSON input, waits for Run) and shows the answer in `CodeBlock`; a
 refusal or a failure is one sentence with the raw text, cut to 500 characters, behind *Details*
 (`lib/short-failure.ts`'s `shortFailure` and `runFailure`: an HTML body reads *The integration
 answered with a web page instead of data (status N)*), and the building step's and the finish
