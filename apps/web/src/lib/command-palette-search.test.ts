@@ -3,7 +3,6 @@ import { describe, expect, it } from "vitest";
 import type { ActivityRow } from "./activity-screen";
 import type { AgentListItem } from "./agent-queries";
 import {
-  activitySentence,
   agentItems,
   integrationDetail,
   type PaletteSources,
@@ -357,20 +356,6 @@ describe("integrationDetail", () => {
   it("names who is cut off when it needs the person", () => {
     expect(integrationDetail(hubspot)).toBe("Signed out, so Claude can't use it");
     expect(integrationDetail({ ...gmail, agents: [], toolCount: 1 })).toBe("Connected · 1 tool");
-  });
-});
-
-describe("activitySentence", () => {
-  const names = { byVendor: new Map([["gmail", "Gmail"]]), byConnection: new Map() };
-
-  it("words a run by how it ended", () => {
-    expect(activitySentence(run(), names)).toBe("Codex ran Find invoices in Gmail");
-    expect(activitySentence(run({ outcome: "refused" }), names)).toBe(
-      "Codex was blocked from Find invoices in Gmail",
-    );
-    expect(activitySentence(run({ outcome: "error" }), names)).toBe(
-      "Codex's Find invoices in Gmail failed",
-    );
   });
 });
 

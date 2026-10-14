@@ -2,7 +2,6 @@ import { integrationNameFor } from "@graft/core/approval/vendor-approval.rules";
 
 import {
   type ActivityRow,
-  activityAnswerCopy,
   activityIntegrationName,
   type IntegrationNames,
 } from "./activity-screen";
@@ -17,6 +16,7 @@ import {
 } from "./command-palette";
 import type { ToolboxTool } from "./connection-queries";
 import { count, formatRelative } from "./format";
+import { homeActivityCopy, homeIntegrationNames } from "./home";
 import { activityToolLabel } from "./integration-activity";
 import type { Integration } from "./integration-queries";
 import { agentsPhrase, attentionSentence } from "./integrations-list";
@@ -65,14 +65,6 @@ const OWN_GROUPS = new Set(["Integrations", "Tools", "Requests", "Activity", "Ag
 
 const integrationMark = (slug: string | null, name: string, logoUrl: string | null = null) =>
   ({ kind: "integration", slug, name, logoUrl }) as const;
-
-/** An integration's name by its slug, as the integrations read and the starters name it. */
-function namesOf(integrations: readonly Integration[] | undefined): IntegrationNames {
-  return {
-    byVendor: new Map((integrations ?? []).map((row) => [row.vendor, row.displayName])),
-    byConnection: new Map(),
-  };
-}
 
 function nameOf(vendor: string, names: IntegrationNames): string {
   return integrationNameFor(vendor, names.byVendor.get(vendor) ?? vendor);
@@ -170,27 +162,6 @@ export function requestItems(
   return [...signIns, ...asks];
 }
 
-/**
- * A row of activity as one sentence, as Home's panel words it: "Codex ran Find invoices in Gmail",
- * "Claude was blocked from Update deal in HubSpot", "Codex's Find leads in Apollo failed"; an
- * answer reads as the Activity screen's sentence for it.
- */
-export function activitySentence(row: ActivityRow, names: IntegrationNames): string {
-  const integration = activityIntegrationName(row, names);
-  if (row.kind === "approval") return activityAnswerCopy(row, integration).sentence;
-  const tool = activityToolLabel(row.tool.wireName);
-  const where = integration ? ` in ${integration}` : "";
-  const agent = row.agent.name;
-  switch (row.outcome) {
-    case "ok":
-      return `${agent} ran ${tool}${where}`;
-    case "refused":
-      return `${agent} was blocked from ${tool}${where}`;
-    default:
-      return `${agent}'s ${tool}${where} failed`;
-  }
-}
-
 /** Each row opens the Activity screen filtered to its integration and agent. */
 export function activityItems(
   rows: readonly ActivityRow[],
@@ -202,7 +173,8 @@ export function activityItems(
     return {
       id: `activity:${row.key}`,
       group: "Activity",
-      label: activitySentence(row, names),
+      // Home's sentence for the row (GRA-327), so the two never word one run differently.
+      label: homeActivityCopy(row, names).title,
       keywords: [row.agent.name, ...(row.vendor ? [row.vendor] : [])],
       detail: formatRelative(row.at, now) || undefined,
       mark: integrationMark(row.vendor, integration ?? row.agent.name),
@@ -295,7 +267,7 @@ export function paletteView(
   now: Date = new Date(),
 ): PaletteView {
   const integrations = sources.integrations ?? [];
-  const names = namesOf(sources.integrations);
+  const names = homeIntegrationNames(integrations);
   const text = query.trim();
 
   if (text === "") {
