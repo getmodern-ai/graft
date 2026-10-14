@@ -38,6 +38,7 @@ const TILE_MARKS: readonly HarnessMarkId[] = ["claude", "chatgpt", "hermes", "op
 export function AgentCards({
   agents,
   connections,
+  connectionsFailed = false,
   pendingActions,
   setup,
   isPending,
@@ -49,7 +50,9 @@ export function AgentCards({
   offerSetup = false,
 }: {
   agents: readonly AgentListItem[];
-  connections: readonly Connection[];
+  /** Undefined until read: each card then draws its marks as loading, or as failed. */
+  connections: readonly Connection[] | undefined;
+  connectionsFailed?: boolean;
   pendingActions: readonly PendingAction[];
   setup: SetupStateData | undefined;
   isPending: boolean;
@@ -112,6 +115,7 @@ export function AgentCards({
       key={agent.id}
       agent={agent}
       connections={connections}
+      connectionsFailed={connectionsFailed}
       requests={requests.get(agent.id) ?? 0}
       setup={setup}
     />

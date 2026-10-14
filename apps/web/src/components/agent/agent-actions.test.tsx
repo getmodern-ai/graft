@@ -11,6 +11,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { Agent } from "@/lib/agent-queries";
+import type { Connection } from "@/lib/connection-queries";
 import { hermesConfigSnippet } from "@/lib/mcp-snippet";
 import { AgentActions } from "./agent-actions";
 import { AgentCards } from "./agent-cards";
@@ -63,14 +64,19 @@ async function click(label: string) {
   await act(async () => control(label).click());
 }
 
-async function mount(value = agent, table = false) {
+async function mount(
+  value = agent,
+  table = false,
+  read: { connections?: Connection[]; connectionsFailed?: boolean } = { connections: [] },
+) {
   const route = createRootRoute({
     component: () => (
       <QueryClientProvider client={client}>
         {table ? (
           <AgentCards
             agents={[{ ...value, workingSetCount: 5, connectionIds: [], lastActiveAt: null }]}
-            connections={[]}
+            connections={read.connections}
+            connectionsFailed={read.connectionsFailed}
             pendingActions={[]}
             setup={undefined}
             onAdd={() => {}}
@@ -184,6 +190,21 @@ describe("agent actions", () => {
     await click("Done");
     await waitFor(() => expect(document.querySelector("[role=dialog]")).toBeNull());
     await waitFor(() => expect(document.activeElement).toBe(trigger));
+  });
+
+  it("says No integrations yet only once the connections are read", async () => {
+    await mount(agent, true, {});
+    expect(document.body.textContent).not.toContain("No integrations yet");
+    expect(document.querySelector('[aria-label="Loading integrations"]')).not.toBeNull();
+    await act(async () => root.unmount());
+    root = createRoot(document.body.appendChild(document.createElement("div")));
+    await mount(agent, true, { connectionsFailed: true });
+    expect(document.body.textContent).toContain("Could not load integrations");
+    expect(document.body.textContent).not.toContain("No integrations yet");
+    await act(async () => root.unmount());
+    root = createRoot(document.body.appendChild(document.createElement("div")));
+    await mount(agent, true);
+    expect(document.body.textContent).toContain("No integrations yet");
   });
 
   it("draws no Connect its agent on a card whose agent holds a token", async () => {

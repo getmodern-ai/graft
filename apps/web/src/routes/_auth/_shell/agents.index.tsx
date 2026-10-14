@@ -73,7 +73,8 @@ function AgentsRoute() {
 
       <AgentCards
         agents={rows}
-        connections={connections.data?.connections ?? []}
+        connections={connections.data?.connections}
+        connectionsFailed={connections.isError}
         pendingActions={pending.data?.pendingActions ?? []}
         setup={setup.data}
         isPending={agents.isPending}

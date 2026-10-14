@@ -9,6 +9,7 @@ import { Time } from "@/components/time";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { Skeleton } from "@/components/ui/skeleton";
 import {
   agentCanUse,
   agentClientLine,
@@ -32,15 +33,22 @@ import { agentStatusChip } from "@/lib/status-chips";
 export function AgentCard({
   agent,
   connections,
+  connectionsFailed = false,
   requests,
   setup,
 }: {
   agent: AgentListItem;
-  connections: readonly Connection[];
+  /**
+   * The person's connections, or undefined until they are read; never `[]` in their place, which
+   * would say *No integrations yet* of an agent whose scope is merely unread.
+   */
+  connections: readonly Connection[] | undefined;
+  /** The connections read failed with nothing read before it. */
+  connectionsFailed?: boolean;
   requests: number;
   setup: SetupStateData | undefined;
 }) {
-  const canUse = agentCanUse(agent, connections);
+  const canUse = connections ? agentCanUse(agent, connections) : null;
   const target = connectAgentTarget(agent, setup);
   const revoked = Boolean(agent.revokedAt);
 
@@ -68,7 +76,13 @@ export function AgentCard({
 
       <div className="flex items-center gap-2 px-(--card-spacing) text-muted-foreground text-xs">
         <span>Can use</span>
-        {canUse.shown.length === 0 ? (
+        {canUse === null ? (
+          connectionsFailed ? (
+            <span>Could not load integrations</span>
+          ) : (
+            <Skeleton className="h-[18px] w-20" aria-label="Loading integrations" />
+          )
+        ) : canUse.shown.length === 0 ? (
           <span>No integrations yet</span>
         ) : (
           <>
