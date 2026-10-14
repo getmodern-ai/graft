@@ -1,4 +1,3 @@
-import { Link } from "@tanstack/react-router";
 import { useId, useState } from "react";
 
 import { AgentCard, type ConnectAgent } from "@/components/agent/agent-card";
@@ -48,7 +47,6 @@ export function AgentCards({
   onRetry,
   onAdd,
   onConnectAgent,
-  offerSetup = false,
 }: {
   agents: readonly AgentListItem[];
   /** Undefined until read: each card then draws its marks as loading, or as failed. */
@@ -64,8 +62,6 @@ export function AgentCards({
   onAdd: () => void;
   /** Opens the screen's *Connect an agent*, held above the cards (GRA-336). */
   onConnectAgent: ConnectAgent;
-  /** A person who skipped Setup (ADR 0024) is offered it again from the empty screen. */
-  offerSetup?: boolean;
 }) {
   if (isPending) {
     return (
@@ -91,17 +87,10 @@ export function AgentCards({
       <Empty>
         <EmptyHeader>
           <EmptyTitle>No agents yet</EmptyTitle>
-          <EmptyDescription>
-            Add an agent to connect it to Graft
-            {offerSetup ? ", or let Setup walk you through a first connection and tool." : "."}
-          </EmptyDescription>
+          {/* A person who skipped Setup is offered it again on Home's checklist (GRA-328). */}
+          <EmptyDescription>Add an agent to connect it to Graft.</EmptyDescription>
         </EmptyHeader>
         <EmptyContent className="flex-row justify-center">
-          {offerSetup ? (
-            <Button variant="outline" nativeButton={false} render={<Link to="/setup" />}>
-              Set up Graft
-            </Button>
-          ) : null}
           <Button onClick={onAdd}>
             <AddIcon />
             Add an agent

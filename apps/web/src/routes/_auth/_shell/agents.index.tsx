@@ -48,7 +48,7 @@ function AgentsRoute() {
   const agents = useQuery(agentsQuery);
   const connections = useQuery(connectionsQuery);
   const pending = useQuery(pendingActionsQuery);
-  // The shell's intercept read it already; a person who skipped is offered Setup again.
+  // The shell's intercept read it already; the cards read which agent Setup runs as.
   const setup = useQuery(setupQuery);
   // The two dialogs that show a token once live here, above the cards, never inside one: creating
   // an agent swaps the empty screen for the cards, and issuing a token ends an agent's wait, which
@@ -97,7 +97,6 @@ function AgentsRoute() {
         onRetry={() => void agents.refetch()}
         onAdd={() => setCreating(true)}
         onConnectAgent={openConnect}
-        offerSetup={Boolean(setup.data?.setup?.skippedAt && !setup.data.setup.completedAt)}
       />
 
       <CreateAgentDialog
