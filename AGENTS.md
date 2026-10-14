@@ -1594,7 +1594,11 @@ which removes the session entry and clears the cache before anyone navigates. Th
 written once, with `useScreenTitle` (`shell/screen-title.tsx`), and shown by two bars — the 48px
 `PageNav` strip at `md` and up, which also carries `PageNavCollapsedSidebar`, and `MobileTopBar`
 below it; the strip is mounted once in the shell rather than per screen as in Cando, for the
-reason that file gives. Every screen is a `PageContainer` (`large` for the agents table and the
+reason that file gives. **⌘K (Ctrl+K) opens the command palette** (GRA-289), mounted once in
+the shell beside a Search row under the wordmark (`shell/command-palette.tsx`, over the ported
+`command` primitive and `cmdk`): its rows, their filter and their groups are
+`src/lib/command-palette.ts` (`PaletteItem`, `PALETTE_GROUPS`, `filterPalette`), so a new kind of
+result is rows and a group name there, never a filter in the component. Every screen is a `PageContainer` (`large` for the agents table and the
 agent detail, `medium` for the card stacks and settings) opening with `PageHeader`; a detail screen
 titles the bars with `PageNavBreadcrumb`. The doors share `AuthHeader` and `AuthCard` (`max-w-md`,
 the `xs` container inside); `route-not-found.tsx`, `route-error.tsx` and `loader.tsx` are Cando's.

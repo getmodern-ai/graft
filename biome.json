@@ -74,7 +74,8 @@
         "rules": {
           "a11y": {
             "noLabelWithoutControl": "off",
-            "useSemanticElements": "off"
+            "useSemanticElements": "off",
+            "useKeyWithClickEvents": "off"
           },
           "correctness": {
             "useExhaustiveDependencies": "off"
