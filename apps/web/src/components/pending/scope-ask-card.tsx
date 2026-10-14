@@ -56,6 +56,7 @@ export function ScopeAskCard({
       settleAnsweredAsk(queryClient, action.id, result);
       queryClient.invalidateQueries({ queryKey: agentKeys.all });
       queryClient.invalidateQueries({ queryKey: approvalKeys.ofAgent(action.agentId) });
+      queryClient.invalidateQueries({ queryKey: approvalKeys.buildsOfAgent(action.agentId) });
       if (submitted.allow) {
         toast.success(`${payload.displayName} is in ${agentName}'s scope`, {
           description: scopeAllowedToastDescription({

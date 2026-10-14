@@ -69,7 +69,7 @@ async function mount(value = agent, table = false) {
       <QueryClientProvider client={client}>
         {table ? (
           <AgentsTable
-            agents={[{ ...value, workingSetCount: 5 }]}
+            agents={[{ ...value, workingSetCount: 5, connectionIds: [], lastActiveAt: null }]}
             isPending={false}
             isError={false}
             error={null}
@@ -139,7 +139,7 @@ describe("agent actions", () => {
     await mount();
     const trigger = control("Actions for Laptop");
     await click("Actions for Laptop");
-    await click("Connect a harness");
+    await click("Connect an agent");
     const dialog = document.querySelector("[role=dialog]");
     expect(dialog?.textContent).toContain("YOUR_AGENT_TOKEN");
     expect(dialog?.textContent).not.toContain("—");
@@ -163,13 +163,13 @@ describe("agent actions", () => {
     await waitFor(() => expect(document.activeElement).toBe(trigger));
   });
 
-  it.each([0, 1])("opens the same setup from Set up harness in table layout %s", async (index) => {
+  it.each([0, 1])("opens the same setup from Connect agent in table layout %s", async (index) => {
     await mount(agent, true);
     expect(document.body.textContent).not.toContain("Not recorded");
     const trigger = document.querySelectorAll<HTMLButtonElement>(
-      'button[aria-label="Set up harness for Laptop"]',
+      'button[aria-label="Connect Laptop"]',
     )[index];
-    if (!trigger) throw new Error("Missing harness setup trigger");
+    if (!trigger) throw new Error("Missing connect trigger");
     await act(async () => {
       trigger.focus();
       trigger.click();
@@ -190,7 +190,7 @@ describe("agent actions", () => {
       connectedVia: { clientId: "claude", clientName: "Claude" },
     });
     await click("Actions for Laptop");
-    await click("Connect a harness");
+    await click("Connect an agent");
     const dialog = document.querySelector("[role=dialog]");
     expect(dialog?.textContent).toContain("MCP server URL");
     expect(dialog?.textContent).toContain("choose Laptop");
@@ -206,9 +206,9 @@ describe("agent actions", () => {
 
   it("offers no connection setup for a revoked agent", async () => {
     await mount({ ...agent, revokedAt: "2026-09-20T00:00:00Z" }, true);
-    expect(document.querySelector('button[aria-label^="Set up harness"]')).toBeNull();
+    expect(document.querySelector('button[aria-label="Connect Laptop"]')).toBeNull();
     await click("Actions for Laptop");
-    expect(document.querySelector("[role=menu]")?.textContent).not.toContain("Connect a harness");
+    expect(document.querySelector("[role=menu]")?.textContent).not.toContain("Connect an agent");
   });
 
   it("opens with saved values, cancels without saving, restores focus and discards the draft", async () => {

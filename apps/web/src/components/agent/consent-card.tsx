@@ -200,7 +200,7 @@ export function ConsentCard({
                 ) : minting ? (
                   "A new agent, made for this connection. You can rename it and change its scope any time."
                 ) : as === consentDefaultAgent(active) ? (
-                  "The agent Setup made, awaiting its harness. Its scope, working set and first tool apply as they are."
+                  "The agent Setup made, not connected yet. Its scope, working set and first tool apply as they are."
                 ) : (
                   "An agent you already have. Its scope, working set and approvals apply as they are."
                 )}

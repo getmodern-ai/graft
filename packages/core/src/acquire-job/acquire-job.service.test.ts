@@ -70,6 +70,7 @@ function fakeDeps(overrides: Partial<AcquireJobDeps> = {}): AcquireJobDeps {
     insertAcquireJob: vi.fn(async (_db, input) => ({ ...job, ...input }) as AcquireJobRow),
     findAcquireJob: vi.fn(async () => job),
     listAcquireJobs: vi.fn(async () => [job]),
+    listAcquireJobsForConnection: vi.fn(async () => []),
     updateAcquireJob: vi.fn(async (_db, _s, _id, patch) => ({ ...job, ...patch })),
     appendAcquireJobProgress: vi.fn(async (_db, _s, _id, lines) => ({
       ...job,

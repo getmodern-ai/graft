@@ -4,6 +4,7 @@ import {
   type ConnectionDeps,
   createGatewayProvider,
   DEFAULT_PROVIDERS,
+  type IntegrationDeps,
   keyringProvider,
   type LedgerDeps,
   type PendingActionDeps,
@@ -190,7 +191,9 @@ function agentDeps(): AgentDeps {
     findAgentForUpdate: vi.fn(async () => agentRow),
     findAgentByTokenHash: vi.fn(async () => agentRow),
     findAgentByMcpAccessTokenHash: vi.fn(async () => null),
-    listAgents: vi.fn(async () => [{ ...agentRow, workingSetCount: 0 }]),
+    listAgents: vi.fn(async () => [
+      { ...agentRow, workingSetCount: 0, connectionIds: [], lastActiveAt: null, hasRunTool: false },
+    ]),
     updateAgent: vi.fn(async (_db, _p, _a, patch) => ({ ...agentRow, ...patch })),
     revokeAgent: vi.fn(async () => ({ ...agentRow, revokedAt: NOW })),
     revokeMcpTokensForAgent: vi.fn(async () => 0),
@@ -218,6 +221,7 @@ function connectionDeps(): ConnectionDeps {
     ),
     findConnection: vi.fn(async () => connectionRow),
     findConnectionForUpdate: vi.fn(async () => connectionRow),
+    findConnectionForNoKeyUpdate: vi.fn(async () => connectionRow),
     findConnectionByIdUnscoped: vi.fn(async () => connectionRow),
     listConnections: vi.fn(async () => [connectionRow]),
     setConnectionCredential: vi.fn(async (_db, _p, _id, args) => ({
@@ -357,6 +361,30 @@ function ledgerDeps(): LedgerDeps {
   };
 }
 
+/** Two connections of one vendor and one of another, reached by one agent (GRA-291). */
+function integrationDeps(): IntegrationDeps {
+  return {
+    listConnections: vi.fn(async () => [
+      connectionRow,
+      { ...connectionRow, id: "conn_2", displayName: "Demo (work)" },
+      { ...connectionRow, id: "conn_3", vendor: "other", displayName: "Other" },
+    ]),
+    listActiveAgentReach: vi.fn(async () => [
+      {
+        agentId: "agent_1",
+        agentName: "hermes",
+        connectedViaClientName: null,
+        connectionId: "conn_2",
+      },
+    ]),
+    countLiveToolsByVendor: vi.fn(async () => [{ vendor: "demo", count: 2 }]),
+    lastUsedAtByVendor: vi.fn(async () => [
+      { vendor: null, toolName: "execute__conn_1", lastUsedAt: NOW },
+    ]),
+    providers: DEFAULT_PROVIDERS,
+  };
+}
+
 function workingSetDeps(): WorkingSetDeps {
   return {
     listWorkingSet: vi.fn(async () => [workingSetEntry]),
@@ -408,6 +436,10 @@ function approvalDeps(): ApprovalDeps {
     deleteApproval: vi.fn(async () => approvalRow),
     findBuildApproval: vi.fn(async () => null),
     insertBuildApproval: vi.fn(async () => buildApprovalRow),
+    listBuildApprovals: vi.fn(async () => [
+      { ...buildApprovalRow, vendor: "demo", displayName: "Demo" },
+    ]),
+    deleteBuildApproval: vi.fn(async () => buildApprovalRow),
     findVendorApproval: vi.fn(async () => null),
     listVendorApprovals: vi.fn(async () => [vendorApprovalRow]),
     upsertVendorApproval: vi.fn(async (_db, _scope, input) => ({ ...vendorApprovalRow, ...input })),
@@ -465,6 +497,7 @@ function harness(
     approval: approvalDeps(),
     pendingAction: pendingActionDeps(),
     modelKey: fakeModelKeyDeps({ now: () => NOW }),
+    integration: integrationDeps(),
   };
   // The process's `tools/list_changed` notifier as the API sees it (GRA-69): what a revoke tells.
   const notifier = { changed: vi.fn() };
@@ -753,6 +786,7 @@ describe("the session door", () => {
       ["/api/agents", undefined],
       ["/api/agents", json({ name: "x" })],
       ["/api/connections", undefined],
+      ["/api/integrations", undefined],
     ] as const) {
       const res = await app.request(path, init);
       expect(res.status, path).toBe(401);
@@ -815,16 +849,40 @@ describe("the session door", () => {
 });
 
 describe("agents", () => {
-  it("lists active and revoked agents with their working-set counts under the person", async () => {
+  it("lists active and revoked agents with their working-set counts, scope and last activity under the person", async () => {
     const { app, deps } = harness({ user: { id: "person_1" } });
     vi.mocked(deps.agent.listAgents).mockResolvedValue([
-      { ...agentRow, workingSetCount: 3 },
-      { ...agentRow, id: "revoked", revokedAt: NOW, workingSetCount: 1 },
+      {
+        ...agentRow,
+        workingSetCount: 3,
+        connectionIds: ["conn_1"],
+        lastActiveAt: null,
+        hasRunTool: false,
+      },
+      {
+        ...agentRow,
+        id: "revoked",
+        revokedAt: NOW,
+        workingSetCount: 1,
+        connectionIds: [],
+        lastActiveAt: NOW,
+        hasRunTool: true,
+      },
     ]);
     const normal = (await (await app.request("/api/agents")).json()) as {
-      agents: { id: string; workingSetCount: number }[];
+      agents: {
+        id: string;
+        workingSetCount: number;
+        connectionIds: string[];
+        lastActiveAt: string | null;
+      }[];
+      hasRunTool: boolean;
     };
     expect(normal.agents.map((agent) => agent.id)).toEqual([agentRow.id, "revoked"]);
+    expect(normal.agents.map((agent) => agent.connectionIds)).toEqual([["conn_1"], []]);
+    expect(normal.agents.map((agent) => agent.lastActiveAt)).toEqual([null, NOW.toISOString()]);
+    expect(normal.hasRunTool).toBe(true);
+    expect(normal.agents[1]).not.toHaveProperty("hasRunTool");
     expect(normal.agents.map((agent) => agent.workingSetCount)).toEqual([3, 1]);
     expect(deps.agent.listAgents).toHaveBeenCalledWith(fakeDb, "person_1");
   });
@@ -1311,6 +1369,45 @@ describe("the working-set history", () => {
     const { app } = harness(null);
     const res = await app.request("/api/agents/agent_1/working-set/changes");
     expect(res.status).toBe(401);
+  });
+});
+
+describe("integrations (GRA-291)", () => {
+  it("answers one row per vendor, two connections of one vendor on one row, under the person", async () => {
+    const { app, deps } = harness({ user: { id: "person_1" } });
+    const res = await app.request("/api/integrations");
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      integrations: {
+        vendor: string;
+        connections: { id: string; state: string }[];
+        agents: { id: string }[];
+        toolCount: number;
+        lastUsedAt: string | null;
+        needsAttention: { reason: string; connectionId: string } | null;
+      }[];
+    };
+    expect(body.integrations.map((row) => row.vendor)).toEqual(["demo", "other"]);
+    const [demo] = body.integrations;
+    expect(demo?.connections).toHaveLength(2);
+    expect(demo?.agents.map((agent) => agent.id)).toEqual(["agent_1"]);
+    expect(demo?.toolCount).toBe(2);
+    expect(demo?.lastUsedAt).toBe(NOW.toISOString());
+    // The fixture row has no credential entered, so the row needs the person.
+    expect(demo?.needsAttention).toEqual({ reason: "awaiting_credential", connectionId: "conn_1" });
+    expect(JSON.stringify(body)).not.toContain("ciphertext");
+    for (const read of [
+      deps.integration.listConnections,
+      deps.integration.listActiveAgentReach,
+      deps.integration.countLiveToolsByVendor,
+      deps.integration.lastUsedAtByVendor,
+    ]) {
+      expect(read).toHaveBeenCalledTimes(1);
+      expect(vi.mocked(read).mock.calls[0]?.[1]).toBe("person_1");
+    }
+    expect(vi.mocked(deps.integration.lastUsedAtByVendor).mock.calls[0]?.[2]).toEqual({
+      toolNames: ["execute__conn_1", "execute__conn_2", "execute__conn_3"],
+    });
   });
 });
 
@@ -2622,6 +2719,50 @@ describe("approvals", () => {
     expect(none.status).toBe(404);
   });
 
+  /** ADR 0008 as amended 2026-09-18 (GRA-295): the agent's page lists and withdraws them. */
+  it("lists an agent's build approvals and withdraws one, 404 when none stood", async () => {
+    const { app, deps } = harness({ user: { id: "person_1" } });
+    const list = await app.request("/api/agents/agent_1/build-approvals");
+    expect(list.status).toBe(200);
+    expect(await list.json()).toEqual({
+      buildApprovals: [
+        {
+          connectionId: "conn_1",
+          vendor: "demo",
+          displayName: "Demo",
+          grantedAt: NOW.toISOString(),
+        },
+      ],
+    });
+    expect(deps.approval.listBuildApprovals).toHaveBeenCalledWith(fakeDb, {
+      personId: "person_1",
+      agentId: "agent_1",
+    });
+
+    const gone = await app.request("/api/agents/agent_1/build-approvals/conn_1", from("DELETE"));
+    expect(gone.status).toBe(200);
+    expect(await gone.json()).toEqual({
+      buildApproval: { agentId: "agent_1", connectionId: "conn_1" },
+    });
+    expect(deps.approval.deleteBuildApproval).toHaveBeenCalledWith(
+      fakeDb,
+      { personId: "person_1", agentId: "agent_1" },
+      "conn_1",
+    );
+
+    vi.mocked(deps.approval.deleteBuildApproval).mockResolvedValueOnce(null);
+    const none = await app.request("/api/agents/agent_1/build-approvals/conn_1", from("DELETE"));
+    expect(none.status).toBe(404);
+  });
+
+  it("answers 404 for build approvals of an agent that is not the person's, before any read", async () => {
+    const { app, deps } = harness({ user: { id: "person_1" } });
+    vi.mocked(deps.agent.findAgent).mockResolvedValueOnce(null);
+    const res = await app.request("/api/agents/agent_x/build-approvals");
+    expect(res.status).toBe(404);
+    expect(deps.approval.listBuildApprovals).not.toHaveBeenCalled();
+  });
+
   /** ADR 0008 as amended 2026-10-14 (GRA-302): the console sets an answer outright, per agent. */
   it("sets a tool's answer for one agent at the tool's current version, and answers the asks it closes", async () => {
     const { app, deps } = harness({ user: { id: "person_1" } });
@@ -2761,6 +2902,8 @@ describe("approvals", () => {
   it("answers 401 without a session on every new route", async () => {
     const { app } = harness(null);
     for (const [path, init] of [
+      ["/api/agents/agent_1/build-approvals", undefined],
+      ["/api/agents/agent_1/build-approvals/conn_1", from("DELETE")],
       ["/api/vendor-approvals?agentId=agent_1", undefined],
       ["/api/vendor-approvals/demo?agentId=agent_1", from("DELETE")],
       ["/api/pending-actions", undefined],
@@ -2919,7 +3062,7 @@ describe("the public setup prompt", () => {
       expect(res.status).toBe(400);
       const body = (await res.json()) as { error: string; message: string; details: unknown };
       expect(body.error).toBe("BAD_REQUEST");
-      expect(body.message).toMatch(/^There is no setup prompt for the harness/);
+      expect(body.message).toMatch(/^There is no setup prompt for the agent/);
       expect(body.details).toEqual({ harnesses: Object.keys(SITE_SETUP_PROMPTS) });
       expect(res.headers.get("access-control-allow-origin")).toBe("*");
     }
@@ -2949,5 +3092,75 @@ describe("the public setup prompt", () => {
   it("is not mounted on a server with no public URL", async () => {
     const { app } = harness(null);
     expect((await app.request("/api/setup-prompt?harness=claude")).status).toBe(404);
+  });
+});
+
+/**
+ * `POST /me/password` (GRA-298): a first password for a social-only account, never one set over an
+ * existing password. The fake stands in for `@graft/auth`'s `setFirstPassword` with Better Auth's
+ * rule, a person who holds a password answered `password_exists`; the Postgres suite drives the
+ * real one.
+ */
+describe("setting a first password", () => {
+  const passwordHarness = (personId: string, holdsPassword: Set<string>) => {
+    const setFirstPassword = vi.fn(async (_headers: Headers, _newPassword: string) => {
+      if (holdsPassword.has(personId)) return "password_exists" as const;
+      holdsPassword.add(personId);
+      return "set" as const;
+    });
+    const session = { user: { id: personId } };
+    const { app } = harness(session, {
+      auth: {
+        handler: async () => new Response("auth", { status: 200 }),
+        getSession: async () => session,
+        setFirstPassword,
+      },
+    });
+    return { app, setFirstPassword };
+  };
+
+  it("sets one for an account that signed up with a provider and has none", async () => {
+    const holds = new Set<string>();
+    const { app, setFirstPassword } = passwordHarness("person_social", holds);
+    const res = await app.request("/api/me/password", json({ newPassword: "long-enough-pw" }));
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ set: true });
+    expect(setFirstPassword).toHaveBeenCalledWith(expect.any(Headers), "long-enough-pw");
+    expect(holds.has("person_social")).toBe(true);
+  });
+
+  it("refuses 409 for an account that already holds a password, and changes nothing", async () => {
+    const holds = new Set(["person_pw"]);
+    const { app } = passwordHarness("person_pw", holds);
+    const res = await app.request("/api/me/password", json({ newPassword: "long-enough-pw" }));
+    expect(res.status).toBe(409);
+    expect(await res.json()).toMatchObject({
+      error: "CONFLICT",
+      message: expect.stringContaining("already have a password"),
+    });
+  });
+
+  it("refuses a password outside Better Auth's lengths before asking it", async () => {
+    const { app, setFirstPassword } = passwordHarness("person_social", new Set());
+    const short = await app.request("/api/me/password", json({ newPassword: "short" }));
+    expect(short.status).toBe(400);
+    const long = await app.request("/api/me/password", json({ newPassword: "x".repeat(129) }));
+    expect(long.status).toBe(400);
+    expect(setFirstPassword).not.toHaveBeenCalled();
+  });
+
+  it("needs a session and the console's origin", async () => {
+    const signedOut = harness(null).app;
+    expect(
+      (await signedOut.request("/api/me/password", json({ newPassword: "long-enough-pw" }))).status,
+    ).toBe(401);
+    const { app, setFirstPassword } = passwordHarness("person_social", new Set());
+    const foreign = await app.request("/api/me/password", {
+      method: "POST",
+      headers: { "content-type": "application/json", origin: "https://evil.example" },
+      body: JSON.stringify({ newPassword: "long-enough-pw" }),
+    });
+    expect(foreign.status).toBe(403);
+    expect(setFirstPassword).not.toHaveBeenCalled();
   });
 });

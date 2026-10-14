@@ -164,7 +164,13 @@ function harness(session: { user: { id: string } } | null = { user: { id: "perso
     findAgentByTokenHash: vi.fn(async () => null),
     findAgentByMcpAccessTokenHash: deps.findAgentByMcpAccessTokenHash,
     listAgents: vi.fn(async () =>
-      [...agents.values()].map((row) => ({ ...row, workingSetCount: 0 })),
+      [...agents.values()].map((row) => ({
+        ...row,
+        workingSetCount: 0,
+        connectionIds: [],
+        lastActiveAt: null,
+        hasRunTool: false,
+      })),
     ),
     updateAgent: vi.fn(async () => null),
     revokeAgent: vi.fn(async () => null),

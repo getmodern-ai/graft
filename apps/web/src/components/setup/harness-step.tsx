@@ -75,16 +75,16 @@ function HarnessReview({ state }: { state: SetupStateData }) {
       {recorded ? (
         <>
           <SetupStepHeader
-            title="Which harness do you use?"
+            title="Which agent do you use?"
             description={
               changeable
-                ? `Setup made ${agent?.name ?? "an agent"} for this harness. Change it here until the harness connects; only the finish's instructions follow it.`
-                : `${agent?.name ?? "The agent"} is connected to its harness already, so Setup keeps it.`
+                ? `Setup made ${agent?.name ?? "an agent"} for this choice. Change it here until it connects; only the finish's instructions follow it.`
+                : `${agent?.name ?? "The agent"} is connected already, so Setup keeps it.`
             }
           />
           <SetupChoice
             name="setup-harness"
-            legend="Harness"
+            legend="Agent"
             options={SETUP_HARNESSES.map((entry) => ({
               value: entry.id,
               label: entry.label,
@@ -100,7 +100,7 @@ function HarnessReview({ state }: { state: SetupStateData }) {
         <>
           <SetupStepHeader
             title={`Setup runs as ${agent?.name ?? "your agent"}`}
-            description="Its harness was connected before Setup, so there is nothing to choose here."
+            description="It was connected before Setup, so there is nothing to choose here."
           />
           {agent ? (
             <Item variant="outline">
@@ -171,12 +171,12 @@ function ChooseHarness({ state }: { state: SetupStateData }) {
       }}
     >
       <SetupStepHeader
-        title="Which harness do you use?"
+        title="Which agent do you use?"
         description="Pick the one you use. You connect it at the end, with one prompt."
       />
       <SetupChoice
         name="setup-harness"
-        legend="Harness"
+        legend="Agent"
         options={SETUP_HARNESSES.map((entry) => ({
           value: entry.id,
           label: entry.label,
@@ -203,7 +203,7 @@ function ChooseHarness({ state }: { state: SetupStateData }) {
             <FieldDescription>
               {defaultName
                 ? `Left empty, the agent is called ${defaultName}.`
-                : "Left empty, the agent is named after the harness."}
+                : "Left empty, the agent is named after the one you pick."}
             </FieldDescription>
           </Field>
           <div className="grid grid-cols-2 gap-4">
@@ -300,7 +300,7 @@ function ChooseAgent({ state }: { state: SetupStateData }) {
     >
       <SetupStepHeader
         title="Which agent should Setup use?"
-        description="Setup connects an integration and has Graft acquire a first tool for one of your agents. Its harness finds the tool there."
+        description="Setup connects an integration and has Graft acquire a first tool for one of your agents. That agent finds the tool there."
       />
       <SetupChoice
         name="setup-agent"
@@ -312,7 +312,7 @@ function ChooseAgent({ state }: { state: SetupStateData }) {
             ? `Connected from ${agent.connectedVia.clientName}`
             : agent.tokenPrefix
               ? `Token ${agent.tokenPrefix}…`
-              : "No harness connected yet",
+              : "Not connected yet",
           aside: <StatusChip chip={agentStatusChip(agent)} />,
         }))}
         value={agentId}

@@ -30,6 +30,14 @@ export {
   TRACE_READ_LIMIT,
   TRACE_TEXT_MAX_LENGTH,
 } from "./acquire-job/acquire-job.service";
+export {
+  CONNECTION_ACQUIRE_JOBS_LIMIT,
+  CONNECTION_ACQUIRE_JOBS_WINDOW_MS,
+  type ConsoleAcquireDeps,
+  listConnectionAcquireJobs,
+  type StartConsoleAcquireInput,
+  startConsoleAcquire,
+} from "./acquire-job/console-acquire.service";
 export { withoutNul } from "./acquire-job/json-safe";
 export {
   GENERIC_SECRET_FIELD_NAMES,
@@ -46,6 +54,7 @@ export {
   AGENT_NAME_MAX_LENGTH,
   type AgentConnectedViaOutput,
   type AgentLimitsPatch,
+  type AgentListAnswer,
   type AgentListOutput,
   type AgentOutput,
   type AgentScopeMode,
@@ -94,6 +103,7 @@ export {
   grantBuildApproval,
   isForVersion,
   listApprovals,
+  listBuildApprovals,
   listVendorApprovals,
   revokeApproval,
   SETTING_ANSWER_VIA,
@@ -101,6 +111,7 @@ export {
   setApprovalFromConsole,
   setAskEveryCall,
   setVendorApprovalDestructive,
+  withdrawBuildApproval,
   withdrawVendorApproval,
 } from "./approval/approval.service";
 export {
@@ -183,8 +194,10 @@ export {
 } from "./connection/connection.rules";
 export {
   type ConnectionOutput,
+  type ConnectionState,
   type ConnectThroughProviderInput,
   completeOAuthConsent,
+  connectionStateOf,
   connectThroughProvider,
   getConnection,
   isConnectionUsable,
@@ -325,6 +338,15 @@ export {
   ServiceError,
   type ServiceErrorCode,
 } from "./errors";
+export { createIntegrationDeps, type IntegrationDeps } from "./integration/integration.deps";
+export {
+  type IntegrationAgentOutput,
+  type IntegrationAttentionReason,
+  type IntegrationConnectionOutput,
+  type IntegrationOutput,
+  listIntegrations,
+  worstAttention,
+} from "./integration/integration.service";
 export { isKebabCase } from "./kebab-case";
 export { defaultLedgerDeps, type LedgerDeps } from "./ledger/ledger.deps";
 export {

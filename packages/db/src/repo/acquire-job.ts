@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, inArray, isNull, lt, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gte, inArray, isNull, lt, or, sql } from "drizzle-orm";
 
 import type { DbOrTx } from "../index";
 import {
@@ -80,6 +80,41 @@ export async function listAcquireJobs(
     .where(inArray(acquireJob.agentId, scopedAgentIds(db, scope)))
     .orderBy(desc(acquireJob.createdAt), desc(acquireJob.id))
     .limit(limit);
+}
+
+/** A job as an integration's page lists it: the row and the agent it is acquiring for. */
+export type ConnectionAcquireJobRow = {
+  job: AcquireJobRow;
+  agent: { id: string; name: string; revokedAt: Date | null };
+};
+
+/**
+ * One connection's recent jobs across the person's agents, newest first (GRA-303): what the
+ * integration page reads after a reload to find a job the console started. **Person-scoped**,
+ * through the agent join, since the page is the person's and not one agent's; revoked agents'
+ * jobs are listed, as their history is. Bounded by `since` and `limit`.
+ */
+export async function listAcquireJobsForConnection(
+  db: DbOrTx,
+  personId: string,
+  args: { connectionId: string; since: Date; limit: number },
+): Promise<ConnectionAcquireJobRow[]> {
+  return db
+    .select({
+      job: acquireJob,
+      agent: { id: agent.id, name: agent.name, revokedAt: agent.revokedAt },
+    })
+    .from(acquireJob)
+    .innerJoin(agent, eq(agent.id, acquireJob.agentId))
+    .where(
+      and(
+        eq(agent.personId, personId),
+        eq(acquireJob.connectionId, args.connectionId),
+        gte(acquireJob.createdAt, args.since),
+      ),
+    )
+    .orderBy(desc(acquireJob.createdAt), desc(acquireJob.id))
+    .limit(args.limit);
 }
 
 export async function updateAcquireJob(
