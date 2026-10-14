@@ -49,6 +49,15 @@ type QueryCacheHandlers = NonNullable<ConstructorParameters<typeof QueryCache>[0
  * still the right thing to show — and harmless when no boundary was standing, since every loader
  * finds its reads fresh.
  */
+/**
+ * A query that draws its own failure opts out of the toast with `meta.quietError`, a predicate
+ * over the error: the handoff page's link read, whose refusals a Retry cannot change (GRA-334).
+ */
+export function isQuietError(meta: Record<string, unknown> | undefined, error: unknown): boolean {
+  const quietError = meta?.quietError;
+  return typeof quietError === "function" && quietError(error) === true;
+}
+
 export function createQueryErrorRetry(
   client: QueryClient,
   options: { onRecover?: () => void } = {},
@@ -56,6 +65,11 @@ export function createQueryErrorRetry(
   const failing = new Set<string>();
 
   const onError: QueryCacheHandlers["onError"] = (error, query) => {
+    if (isQuietError(query.meta, error)) {
+      // A Retry from an earlier, louder failure that ends in a quiet one takes its toast with it.
+      if (failing.delete(query.queryHash)) toast.dismiss(query.queryHash);
+      return;
+    }
     failing.add(query.queryHash);
     toast.error(error instanceof ApiError ? error.message : "Could not reach the server", {
       id: query.queryHash,

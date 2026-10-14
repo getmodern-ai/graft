@@ -494,11 +494,15 @@ as amended 2026-09-18). `packages/ask-card` (`@graft/ask-card`) is one HTML page
 over `@modelcontextprotocol/ext-apps`'s `app-with-deps`, no React — that `vite build` with
 `vite-plugin-singlefile` inlines whole into `dist/ask.html`; hosts block external scripts and styles,
 so nothing may be linked. **The card reports its own frame height** (GRA-275): `autoResize` is
-off, nothing is reported before the first tool result, and every render and every layout change
-of the mount writes the height both as `ui/notifications/size-changed` and on `<html>`, which is
-what Claude.ai reads (anthropics/claude-ai-mcp#69); a result with no card reports 0, so the host
-draws no empty frame under a `find_tool` or `run_tool` that asked nothing (`src/frame-size.ts`,
-`src/card-view.ts`). Its stylesheet carries a copy of the console's `cando:tokens` block and
+off, and every render and every layout change of the mount writes the height both as
+`ui/notifications/size-changed` and on `<html>`, which is what Claude.ai reads
+(anthropics/claude-ai-mcp#69); a result with no card reports 0, so the host draws no empty frame
+under a `find_tool` or `run_tool` that asked nothing (`src/frame-size.ts`, `src/card-view.ts`).
+Before any result the mount holds one *Waiting for Graft…* line, shipped in `ask.html` and
+reported on the page's first run and again after `connect()`, so a call that waits on an approval
+shows that line rather than Claude's blank 150 px default; the tool-input notification keeps it
+(GRA-335). A line rather than 0, because a zero-height frame is the one the card would have to
+grow out of nothing, and an ask hidden there is one the model was told not to relay. Its stylesheet carries a copy of the console's `cando:tokens` block and
 `src/bundle.test.ts` fails on a colour literal outside the `:root`/`.dark` rules (ADR 0017 over one
 file). The MCP server (`packages/mcp/src/ask-card.ts`, `session.ts`) declares `resources`, lists the
 one resource `ui://graft/ask` (`text/html;profile=mcp-app`, an empty `_meta.ui.csp` said outright:
