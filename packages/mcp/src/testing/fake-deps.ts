@@ -1213,6 +1213,27 @@ export function createFakeDeps(store: FakeStore): FakeDeps {
       store.buildApprovals.set(key(row.agentId, row.connectionId), row);
       return row;
     },
+    listBuildApprovals: async (_db, scope) => {
+      if (!ownsAgent(scope)) return [];
+      return [...store.buildApprovals.values()]
+        .filter((row) => row.agentId === scope.agentId)
+        .flatMap((row) => {
+          const conn = store.connections.get(row.connectionId);
+          if (!conn || conn.personId !== scope.personId) return [];
+          return [{ ...row, vendor: conn.vendor, displayName: conn.displayName }];
+        })
+        .sort(
+          (a, b) =>
+            a.displayName.localeCompare(b.displayName) ||
+            a.connectionId.localeCompare(b.connectionId),
+        );
+    },
+    deleteBuildApproval: async (_db, scope, connectionId) => {
+      if (!ownsAgent(scope)) return null;
+      const row = store.buildApprovals.get(key(scope.agentId, connectionId)) ?? null;
+      store.buildApprovals.delete(key(scope.agentId, connectionId));
+      return row;
+    },
     findVendorApproval: async (_db, scope, vendor) =>
       ownsAgent(scope) ? (store.vendorApprovals.get(key(scope.agentId, vendor)) ?? null) : null,
     listVendorApprovals: async (_db, scope) =>

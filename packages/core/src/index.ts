@@ -95,6 +95,7 @@ export {
   grantBuildApproval,
   isForVersion,
   listApprovals,
+  listBuildApprovals,
   listVendorApprovals,
   revokeApproval,
   SETTING_ANSWER_VIA,
@@ -102,6 +103,7 @@ export {
   setApprovalFromConsole,
   setAskEveryCall,
   setVendorApprovalDestructive,
+  withdrawBuildApproval,
   withdrawVendorApproval,
 } from "./approval/approval.service";
 export {

@@ -433,6 +433,10 @@ function approvalDeps(): ApprovalDeps {
     deleteApproval: vi.fn(async () => approvalRow),
     findBuildApproval: vi.fn(async () => null),
     insertBuildApproval: vi.fn(async () => buildApprovalRow),
+    listBuildApprovals: vi.fn(async () => [
+      { ...buildApprovalRow, vendor: "demo", displayName: "Demo" },
+    ]),
+    deleteBuildApproval: vi.fn(async () => buildApprovalRow),
     findVendorApproval: vi.fn(async () => null),
     listVendorApprovals: vi.fn(async () => [vendorApprovalRow]),
     upsertVendorApproval: vi.fn(async (_db, _scope, input) => ({ ...vendorApprovalRow, ...input })),
@@ -2594,6 +2598,50 @@ describe("approvals", () => {
     expect(none.status).toBe(404);
   });
 
+  /** ADR 0008 as amended 2026-09-18 (GRA-295): the agent's page lists and withdraws them. */
+  it("lists an agent's build approvals and withdraws one, 404 when none stood", async () => {
+    const { app, deps } = harness({ user: { id: "person_1" } });
+    const list = await app.request("/api/agents/agent_1/build-approvals");
+    expect(list.status).toBe(200);
+    expect(await list.json()).toEqual({
+      buildApprovals: [
+        {
+          connectionId: "conn_1",
+          vendor: "demo",
+          displayName: "Demo",
+          grantedAt: NOW.toISOString(),
+        },
+      ],
+    });
+    expect(deps.approval.listBuildApprovals).toHaveBeenCalledWith(fakeDb, {
+      personId: "person_1",
+      agentId: "agent_1",
+    });
+
+    const gone = await app.request("/api/agents/agent_1/build-approvals/conn_1", from("DELETE"));
+    expect(gone.status).toBe(200);
+    expect(await gone.json()).toEqual({
+      buildApproval: { agentId: "agent_1", connectionId: "conn_1" },
+    });
+    expect(deps.approval.deleteBuildApproval).toHaveBeenCalledWith(
+      fakeDb,
+      { personId: "person_1", agentId: "agent_1" },
+      "conn_1",
+    );
+
+    vi.mocked(deps.approval.deleteBuildApproval).mockResolvedValueOnce(null);
+    const none = await app.request("/api/agents/agent_1/build-approvals/conn_1", from("DELETE"));
+    expect(none.status).toBe(404);
+  });
+
+  it("answers 404 for build approvals of an agent that is not the person's, before any read", async () => {
+    const { app, deps } = harness({ user: { id: "person_1" } });
+    vi.mocked(deps.agent.findAgent).mockResolvedValueOnce(null);
+    const res = await app.request("/api/agents/agent_x/build-approvals");
+    expect(res.status).toBe(404);
+    expect(deps.approval.listBuildApprovals).not.toHaveBeenCalled();
+  });
+
   /** ADR 0008 as amended 2026-10-14 (GRA-302): the console sets an answer outright, per agent. */
   it("sets a tool's answer for one agent at the tool's current version, and answers the asks it closes", async () => {
     const { app, deps } = harness({ user: { id: "person_1" } });
@@ -2733,6 +2781,8 @@ describe("approvals", () => {
   it("answers 401 without a session on every new route", async () => {
     const { app } = harness(null);
     for (const [path, init] of [
+      ["/api/agents/agent_1/build-approvals", undefined],
+      ["/api/agents/agent_1/build-approvals/conn_1", from("DELETE")],
       ["/api/vendor-approvals?agentId=agent_1", undefined],
       ["/api/vendor-approvals/demo?agentId=agent_1", from("DELETE")],
       ["/api/pending-actions", undefined],
