@@ -68,6 +68,16 @@ export function ArrowForwardIcon(props: IconProps) {
   );
 }
 
+/** Material Symbols `block`, filled. */
+export function BlockIcon(props: IconProps) {
+  return (
+    <MaterialSymbol
+      d="M324-111.5Q251-143 197-197t-85.5-127Q80-397 80-480t31.5-156Q143-709 197-763t127-85.5Q397-880 480-880t156 31.5Q709-817 763-763t85.5 127Q880-563 880-480t-31.5 156Q817-251 763-197t-127 85.5Q563-80 480-80t-156-31.5ZM699-220q11-9 21.5-18.86Q731-248.73 740-260L260-740q-11.27 9-21.14 19.5Q229-710 220-699l479 479Z"
+      {...props}
+    />
+  );
+}
+
 /** Material Symbols `bolt`, filled. */
 export function BoltIcon(props: IconProps) {
   return <MaterialSymbol d="m320-80 40-280H160l360-520h80l-40 320h240L400-80h-80Z" {...props} />;

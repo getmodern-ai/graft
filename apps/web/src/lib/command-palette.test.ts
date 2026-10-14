@@ -1,10 +1,13 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  ACTION_ITEMS,
   filterPalette,
   isCommandPaletteShortcut,
   NAVIGATION_ITEMS,
+  PALETTE_GROUP_LIMITS,
   type PaletteItem,
+  paletteMatchRank,
 } from "./command-palette";
 import { SCREEN_NAV_ITEMS } from "./main-sidebar-nav-items";
 
@@ -13,8 +16,8 @@ const labels = (query: string) =>
 
 describe("NAVIGATION_ITEMS", () => {
   it("lists the sidebar's screens, in its order", () => {
-    expect(NAVIGATION_ITEMS.map((item) => item.to)).toEqual(
-      SCREEN_NAV_ITEMS.map((item) => item.to),
+    expect(NAVIGATION_ITEMS.map((item) => item.open)).toEqual(
+      SCREEN_NAV_ITEMS.map((item) => ({ to: item.to })),
     );
   });
 
@@ -54,11 +57,57 @@ describe("filterPalette", () => {
 
   it("draws groups in the palette's order and rows in the order they came", () => {
     const rows: PaletteItem[] = [
-      { id: "b", group: "Go to", label: "Beta", keywords: [], to: "/settings" },
-      { id: "a", group: "Go to", label: "Alpha", keywords: [], to: "/agents" },
+      { id: "b", group: "Go to", label: "Beta", keywords: [], open: { to: "/settings" } },
+      { id: "a", group: "Go to", label: "Alpha", keywords: [], open: { to: "/agents" } },
     ];
     expect(filterPalette(rows, "").map((group) => group.items.map((item) => item.id))).toEqual([
       ["b", "a"],
+    ]);
+  });
+
+  const row = (id: string, label: string, keywords: string[] = []): PaletteItem => ({
+    id,
+    group: "Tools",
+    label,
+    keywords,
+    open: { to: "/integrations/$vendor", params: { vendor: "gmail" } },
+  });
+
+  it("ranks a label starting with the query, then label words, then keywords", () => {
+    const rows = [
+      row("keyword", "Find invoices", ["gmail"]),
+      row("words", "Draft a Gmail reply"),
+      row("prefix", "Gmail search"),
+    ];
+    expect(filterPalette(rows, "gmail")[0]?.items.map((item) => item.id)).toEqual([
+      "prefix",
+      "words",
+      "keyword",
+    ]);
+  });
+
+  it("caps a group once something is typed, never before", () => {
+    const rows = Array.from({ length: 9 }, (_, index) => row(`t${index}`, `Tool ${index}`));
+    expect(PALETTE_GROUP_LIMITS.Tools).toBe(4);
+    expect(filterPalette(rows, "tool")[0]?.items).toHaveLength(4);
+    expect(filterPalette(rows, "")[0]?.items).toHaveLength(9);
+  });
+});
+
+describe("paletteMatchRank", () => {
+  it("is null for a row the query does not answer", () => {
+    expect(paletteMatchRank({ label: "Settings", keywords: ["model"] }, "tings")).toBeNull();
+    expect(paletteMatchRank({ label: "Settings", keywords: ["model"] }, "mod")).toBe(2);
+    expect(paletteMatchRank({ label: "Settings", keywords: [] }, "")).toBe(0);
+  });
+});
+
+describe("ACTION_ITEMS", () => {
+  it("connects an integration, an agent and an API by its docs", () => {
+    expect(ACTION_ITEMS.map((item) => [item.label, item.open])).toEqual([
+      ["Connect an integration", { to: "/integrations", search: { tab: "discover" } }],
+      ["Connect another agent", { to: "/agents" }],
+      ["Add a custom API", { to: "/integrations", search: { tab: "discover", custom: "" } }],
     ]);
   });
 });
