@@ -1333,6 +1333,26 @@ or a throw, so a timeout does not hide the chips for the hour. It is its own rou
 once; `components/setup/goal-suggestions.tsx` asks it after, keyed by the connection outside
 `["setup"]`, and draws outline `Button` chips that fill the field, or nothing.
 
+**An integration's page builds a tool for an agent picked before Create** (GRA-303; ADR 0024 as
+amended 2026-10-14; `apps/server/src/connection-acquire.ts`). `POST /api/connections/:id/acquire`
+(`ConnectionAcquireBody`: `{ agentId, goal }`) is `@graft/core`'s `startConsoleAcquire`, one
+transaction with no Setup record: the connection read locked (`findConnectionForNoKeyUpdate`, so a
+revoke's deletion of build approvals cannot interleave and a scope save's foreign-key check is not blocked), then the agent (`findAgentForUpdate`, the
+order a scope answer takes them; revoked is `agent_revoked`), the connection the person's, not
+revoked, usable and in the agent's scope
+(`connection_revoked`, `connection_unusable`, `connection_not_in_scope`), `grantBuildApproval`
+and `createAcquireJob` with Setup's first line and `setupBuildHints`; then the runner is kicked.
+It answers `ConnectionAcquireJob` (`acquire_status`'s shape plus `connectionId`, `agent`, `goal`,
+`createdAt`), 201, and is refused `acquire_unconfigured` with Setup's sentence. Like Build it skips
+`similar_tools_exist`: the person asked for a new tool on a page that lists the integration's tools.
+`GET /api/connections/:id/acquire-jobs` (`ConnectionAcquireJobs`) is the last day's jobs, at most
+twenty, newest first, across the person's agents (`repo/acquire-job.ts`'s
+`listAcquireJobsForConnection`, person-scoped through the agent join); each is polled after through
+the agent's job route. `GET /api/connections/:id/goal-suggestions` (`ConnectionGoalSuggestions`)
+is Setup's proposal keyed by the connection alone (`proposeGoalsForConnection`, the same memo) with
+`build` beside it. Another person's agent or connection is a 404 on all three; Create counts as
+`acquire_started` with `job_id` and `agent_id`.
+
 **A connection can be proposed from an API's docs, for the console's Flow C** (GRA-299). The person
 names an integration and pastes a link to its API docs; `POST /api/connection-proposals`
 (`ConnectionProposalBody`: `{ name, docsUrl }`) starts a short job and answers `{ id }`, `GET

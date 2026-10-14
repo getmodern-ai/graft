@@ -9,6 +9,7 @@ import {
   insertAcquireTrace,
   listAcquireAttempts,
   listAcquireJobs,
+  listAcquireJobsForConnection,
   listAcquireTraces,
   listRunnableAcquireJobs,
   recordAcquireJobAttempt,
@@ -22,6 +23,8 @@ export type AcquireJobDeps = {
   insertAcquireJob: typeof insertAcquireJob;
   findAcquireJob: typeof findAcquireJob;
   listAcquireJobs: typeof listAcquireJobs;
+  /** The integration page's read (GRA-303): one connection's jobs across the person's agents. */
+  listAcquireJobsForConnection: typeof listAcquireJobsForConnection;
   updateAcquireJob: typeof updateAcquireJob;
   appendAcquireJobProgress: typeof appendAcquireJobProgress;
   recordAcquireJobAttempt: typeof recordAcquireJobAttempt;
@@ -45,6 +48,7 @@ export const defaultAcquireJobDeps: AcquireJobDeps = {
   insertAcquireJob,
   findAcquireJob,
   listAcquireJobs,
+  listAcquireJobsForConnection,
   updateAcquireJob,
   appendAcquireJobProgress,
   recordAcquireJobAttempt,

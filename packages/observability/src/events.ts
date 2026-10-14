@@ -82,6 +82,11 @@ export type AnalyticsEvent =
   // was never a blob, and junk under an agent the database no longer holds (GRA-195) is cleared
   // without one too, since there is no person to name.
   | "blob_swept"
+  // An `acquire` job the console started outside Setup (GRA-303; ADR 0024 as amended 2026-10-14),
+  // at `POST /connections/:id/acquire`: `job_id` and `agent_id`, never the goal. An agent's own
+  // start is its `tool_called`, and Setup's is `setup_step_completed` with `step: goal`; every job's
+  // end is `acquire_completed` or `acquire_failed` below, whoever started it.
+  | "acquire_started"
   | "acquire_completed"
   | "acquire_failed";
 

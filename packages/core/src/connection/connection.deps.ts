@@ -8,6 +8,7 @@ import {
   addConnectionHosts,
   findConnection,
   findConnectionByIdUnscoped,
+  findConnectionForNoKeyUpdate,
   findConnectionForUpdate,
   insertConnection,
   listConnections,
@@ -38,6 +39,8 @@ export type ConnectionDeps = {
   findConnection: typeof findConnection;
   /** The row locked for the transaction: the revoke's pre-read, so two revokes cannot both see it live (GRA-69). */
   findConnectionForUpdate: typeof findConnectionForUpdate;
+  /** The row locked against a revoke but not against a foreign-key check: the console's Create (GRA-303). */
+  findConnectionForNoKeyUpdate: typeof findConnectionForNoKeyUpdate;
   /** Unscoped, for the proxy's binding only — see the repo comment. */
   findConnectionByIdUnscoped: typeof findConnectionByIdUnscoped;
   listConnections: typeof listConnections;
@@ -92,6 +95,7 @@ export function createConnectionDeps(
     insertConnection,
     findConnection,
     findConnectionForUpdate,
+    findConnectionForNoKeyUpdate,
     findConnectionByIdUnscoped,
     listConnections,
     setConnectionCredential,

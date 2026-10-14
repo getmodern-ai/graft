@@ -30,6 +30,14 @@ export {
   TRACE_READ_LIMIT,
   TRACE_TEXT_MAX_LENGTH,
 } from "./acquire-job/acquire-job.service";
+export {
+  CONNECTION_ACQUIRE_JOBS_LIMIT,
+  CONNECTION_ACQUIRE_JOBS_WINDOW_MS,
+  type ConsoleAcquireDeps,
+  listConnectionAcquireJobs,
+  type StartConsoleAcquireInput,
+  startConsoleAcquire,
+} from "./acquire-job/console-acquire.service";
 export { withoutNul } from "./acquire-job/json-safe";
 export {
   GENERIC_SECRET_FIELD_NAMES,

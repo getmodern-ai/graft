@@ -590,6 +590,10 @@ export function createFakeDeps(store: FakeStore): FakeDeps {
       const row = store.connections.get(id);
       return row && row.personId === personId ? row : null;
     },
+    findConnectionForNoKeyUpdate: async (_db, personId, id) => {
+      const row = store.connections.get(id);
+      return row && row.personId === personId ? row : null;
+    },
     findConnectionByIdUnscoped: async (_db, id) => store.connections.get(id) ?? null,
     listConnections: async (_db, personId) =>
       [...store.connections.values()].filter((row) => row.personId === personId),
@@ -1462,6 +1466,21 @@ export function createFakeDeps(store: FakeStore): FakeDeps {
             )
             .slice(0, limit)
         : [],
+    listAcquireJobsForConnection: async (_db, personId, { connectionId, since, limit }) =>
+      [...store.acquireJobs.values()]
+        .filter((row) => row.connectionId === connectionId && row.createdAt >= since)
+        .flatMap((job) => {
+          const owner = store.agents.get(job.agentId);
+          return owner?.personId === personId
+            ? [{ job, agent: { id: owner.id, name: owner.name, revokedAt: owner.revokedAt } }]
+            : [];
+        })
+        .sort(
+          (a, b) =>
+            b.job.createdAt.getTime() - a.job.createdAt.getTime() ||
+            b.job.id.localeCompare(a.job.id),
+        )
+        .slice(0, limit),
     updateAcquireJob: async (_db, scope, id, patch) => {
       const row = store.acquireJobs.get(id);
       if (!ownsJob(scope, row) || !row) return null;
