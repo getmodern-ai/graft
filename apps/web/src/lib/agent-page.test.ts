@@ -251,7 +251,21 @@ describe("activityRowView", () => {
       icon: "allowed",
       title: "Allowed every HubSpot tool",
       integration: "HubSpot",
-      sentence: "including ones that delete",
+      sentence: "including ones that can delete",
+    });
+  });
+
+  it("does not claim every tool when the approval leaves out ones that delete", () => {
+    expect(
+      activityRowView(
+        approval({ source: "vendor", tool: null, decision: null, includesDestructive: false }),
+        "HubSpot",
+      ),
+    ).toEqual({
+      icon: "allowed",
+      title: "Allowed every HubSpot tool except ones that delete",
+      integration: "HubSpot",
+      sentence: null,
     });
   });
 

@@ -188,12 +188,21 @@ export function activityRowView(row: ActivityRow, integration: string | null): A
       : { icon: "allowed", title: `Allowed ${tool}`, integration, sentence: "you allowed it" };
   }
   if (row.source === "vendor") {
-    return {
-      icon: "allowed",
-      title: `Allowed every ${subject} tool`,
-      integration,
-      sentence: row.includesDestructive ? "including ones that delete" : null,
-    };
+    // Without destructive tools the approval passes everything else; a tool that deletes still
+    // asks (ADR 0008 as amended 2026-10-09), so the title must not claim every tool.
+    return row.includesDestructive === true
+      ? {
+          icon: "allowed",
+          title: `Allowed every ${subject} tool`,
+          integration,
+          sentence: "including ones that can delete",
+        }
+      : {
+          icon: "allowed",
+          title: `Allowed every ${subject} tool except ones that delete`,
+          integration,
+          sentence: null,
+        };
   }
   const declined = row.answer?.allow === false;
   return {
