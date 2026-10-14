@@ -291,6 +291,88 @@ export type ModelAdapter = {
    * unusable answer is an empty `goals` with the `outcome` saying which.
    */
   proposeGoals?(request: GoalProposalRequest): Promise<GoalProposal>;
+  /**
+   * A connection proposal from an API's documentation (GRA-299, the console's Flow C): the vendor's
+   * address, hosts and sign-in scheme, read off the pages the server fetched, from the triage
+   * model. Optional for the reason `proposeGoals` is, and like it answers rather than throws: a
+   * decline, a timeout or an answer out of shape is a null `proposal` with the `outcome` saying
+   * which. The answer is the model's; the caller judges it by the connection rules.
+   */
+  proposeConnection?(request: ConnectionProposalRequest): Promise<ConnectionProposalAnswer>;
+};
+
+/** One page of the vendor's documentation as the server read it for a connection proposal. Untrusted text. */
+export type ConnectionProposalPage = {
+  url: string;
+  title: string | null;
+  content: string;
+  /** Whether the page went on past what was read. */
+  truncated: boolean;
+};
+
+/**
+ * A scheme the model may answer, as the caller describes it: the scheme's name, one line on what it
+ * signs with, and the parameters a proposal carries for it. Handed in rather than imported, so this
+ * package keeps importing nothing of the proxy's.
+ */
+export type ConnectionProposalScheme = {
+  scheme: string;
+  summary: string;
+  required: readonly string[];
+  optional: readonly string[];
+};
+
+/** What a connection proposal is about: the integration as the person named it and its documentation. Never a credential. */
+export type ConnectionProposalRequest = {
+  /** Whose proposal this is; the router picks the person's own key by it (ADR 0014). */
+  personId: string;
+  /** What the call serves, for the trace where a job's id would go (`connect:<personId>`). */
+  traceId: string;
+  /** The integration's name as the person typed it. */
+  name: string;
+  /** The documentation URL the person pasted. */
+  docsUrl: string;
+  /** What the server read of it, in order; at least one page. */
+  pages: readonly ConnectionProposalPage[];
+  schemes: readonly ConnectionProposalScheme[];
+};
+
+/**
+ * The model's proposal, before the connection rules judge it: the same fields `request_connection`
+ * takes, less the display name, which is the person's.
+ */
+export type RawConnectionProposal = {
+  /** A kebab-case slug for the vendor, `unleashed`; the caller falls back to the name's when it is not one. */
+  vendor: string;
+  /** The base URL tool paths resolve against, `https://api.vendor.example/v1`. */
+  primaryHost: string;
+  /** Any further hostnames the API answers on; the primary's is added by the rules. */
+  hosts: string[];
+  scheme: string;
+  schemeConfig: Record<string, string>;
+};
+
+/**
+ * How a connection proposal ended. `proposed` carries one; the rest carry none: the model said the
+ * pages do not say (`declined`, with its `reason`), answered out of shape (`unusable`), ran past its
+ * bound (`timeout`), the call failed (`failed`), or no model answers this person (`unavailable`).
+ */
+export type ConnectionProposalOutcome =
+  | "proposed"
+  | "declined"
+  | "unusable"
+  | "timeout"
+  | "failed"
+  | "unavailable";
+
+export type ConnectionProposalAnswer = {
+  proposal: RawConnectionProposal | null;
+  outcome: ConnectionProposalOutcome;
+  usage: ModelUsage;
+  /** The model's one line on why the pages do not say, when `outcome` is `declined`. */
+  reason?: string;
+  /** The failure's message, for the log, when `outcome` is `failed`. */
+  error?: string;
 };
 
 /**

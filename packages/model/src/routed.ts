@@ -1,4 +1,6 @@
 import type {
+  ConnectionProposalAnswer,
+  ConnectionProposalRequest,
   GoalProposal,
   GoalProposalRequest,
   ModelAdapter,
@@ -64,6 +66,20 @@ export function createRoutedModel(options: RoutedModelOptions): ModelAdapter {
         };
       }
       return adapter.proposeGoals(request);
+    },
+    // A connection proposal from an API's docs (GRA-299) goes the same way: the person's own
+    // key's provider reads their vendor's documentation, else the fixed model, else none.
+    async proposeConnection(request: ConnectionProposalRequest): Promise<ConnectionProposalAnswer> {
+      const own = await options.resolve(request.personId);
+      const adapter = own ?? options.fixed;
+      if (!adapter?.proposeConnection) {
+        return {
+          proposal: null,
+          outcome: "unavailable",
+          usage: { inputTokens: 0, outputTokens: 0 },
+        };
+      }
+      return adapter.proposeConnection(request);
     },
     open(context: ModelJobContext): ModelConversation {
       let delegate: Promise<ModelConversation> | null = null;
