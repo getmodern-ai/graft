@@ -331,6 +331,55 @@ export async function listAgentIdsForConnection(
   return rows.map((row) => row.id);
 }
 
+/** One pair of an active agent and a live connection its scope reaches, with what the console names the agent by. */
+export type AgentReachRow = {
+  agentId: string;
+  agentName: string;
+  connectedViaClientName: string | null;
+  connectionId: string;
+};
+
+/**
+ * Every pair of the person's **active** agents and **live** connections where the agent's scope
+ * reaches the connection, in one statement: `listAgentIdsForConnection`'s rule — an agent on `all`,
+ * or one whose list names the row (ADR 0007 as amended 2026-09-19) — over every connection at once,
+ * for the integrations list's "used by" (GRA-291). Both sides under the person in the statement; a
+ * revoked agent or a revoked connection answers no pair.
+ */
+export async function listActiveAgentReach(db: DbOrTx, personId: string): Promise<AgentReachRow[]> {
+  return db
+    .select({
+      agentId: agent.id,
+      agentName: agent.name,
+      connectedViaClientName: agent.connectedViaClientName,
+      connectionId: connection.id,
+    })
+    .from(agent)
+    .innerJoin(
+      connection,
+      and(
+        eq(connection.personId, personId),
+        isNull(connection.revokedAt),
+        or(
+          eq(agent.scopeMode, "all"),
+          exists(
+            db
+              .select({ agentId: agentConnection.agentId })
+              .from(agentConnection)
+              .where(
+                and(
+                  eq(agentConnection.agentId, agent.id),
+                  eq(agentConnection.connectionId, connection.id),
+                ),
+              ),
+          ),
+        ),
+      ),
+    )
+    .where(and(eq(agent.personId, personId), isNull(agent.revokedAt)))
+    .orderBy(asc(agent.createdAt), asc(agent.id), asc(connection.id));
+}
+
 /**
  * Add one connection to the scope, idempotently: `INSERT … ON CONFLICT DO NOTHING` on the table's
  * `(agent_id, connection_id)` primary key, so two grants of the same connection leave one row and a
