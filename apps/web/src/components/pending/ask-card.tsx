@@ -4,6 +4,7 @@ import { toast } from "sonner";
 
 import { OpenInNewIcon } from "@/components/icons";
 import { IntegrationMark } from "@/components/marks";
+import { type FocusedAsk, FocusedAskCard } from "@/components/pending/focused-ask-card";
 import { SetupAppCard } from "@/components/setup/setup-app-card";
 import { Time } from "@/components/time";
 import { Badge } from "@/components/ui/badge";
@@ -81,6 +82,7 @@ export function AskCard({
   approveLabel = "Approve",
   alsoApprove,
   compact,
+  focused,
 }: {
   action: PendingAction;
   /** "<agent> asks to …" — the kind's own words after the agent's name. */
@@ -102,11 +104,28 @@ export function AskCard({
    * Decline (the footer's Back is the way out), then the card's own inputs and `footer` under it.
    */
   compact?: { vendor: string; name: string; subline: React.ReactNode; footer?: React.ReactNode };
+  /** The handoff page's layout (GRA-314); `FocusedAskCard` says what each field is. */
+  focused?: FocusedAsk;
 }) {
   const open = isOpen(action);
   const agentName = action.agent?.name ?? "A revoked agent";
 
   const queryClient = useQueryClient();
+  if (focused) {
+    return (
+      <FocusedAskCard
+        action={action}
+        focused={focused}
+        settled={settled}
+        onAnswer={onAnswer}
+        pending={pending}
+        approveLabel={approveLabel}
+        logoUrl={cachedDirectoryLogo(queryClient, focused.vendor)}
+      >
+        {children}
+      </FocusedAskCard>
+    );
+  }
   if (compact) {
     return (
       <SetupAppCard
@@ -209,6 +228,7 @@ export function Hosts({ hosts }: { hosts: readonly string[] }) {
   );
 }
 
+export type { AskLayout, FocusedAsk } from "@/components/pending/focused-ask-card";
 /**
  * Who wrote a connection ask's proposal, for the cards that say so (GRA-206). `agent`, the
  * default, is an ask an agent's own `request_connection` opened from what its model read: the
