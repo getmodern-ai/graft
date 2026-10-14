@@ -3,6 +3,7 @@ import type {
   ConnectionAcquireBody,
   ConnectionAcquireJob,
   ConnectionGoalSuggestions,
+  IntegrationSuggestions,
 } from "@graft/server/api";
 import { queryOptions } from "@tanstack/react-query";
 
@@ -18,6 +19,7 @@ import { connectionKeys } from "./connection-queries";
 
 export type Integration = Jsonified<IntegrationOutput>;
 export type IntegrationConnection = Jsonified<IntegrationConnectionOutput>;
+export type SuggestedIntegration = Jsonified<IntegrationSuggestions>["suggestions"][number];
 
 /**
  * Under `connectionKeys.all`, because a row is a projection of the person's connections: every
@@ -26,6 +28,7 @@ export type IntegrationConnection = Jsonified<IntegrationConnectionOutput>;
  */
 export const integrationKeys = {
   all: [...connectionKeys.all, "integrations"] as const,
+  suggested: [...connectionKeys.all, "integrations", "suggested"] as const,
 };
 
 export const integrationsQuery = queryOptions({
@@ -77,3 +80,13 @@ export function startNewTool(connectionId: string, body: ConnectionAcquireBody) 
     body,
   });
 }
+
+/**
+ * "Your agents asked about these" (GRA-305): one entry per connection ask for an integration the
+ * person has not connected. Under `integrationKeys.all`, so a connection made from any door drops
+ * its vendor from the banner with the rest of the connection reads.
+ */
+export const suggestedIntegrationsQuery = queryOptions({
+  queryKey: integrationKeys.suggested,
+  queryFn: () => api<Jsonified<IntegrationSuggestions>>("/integrations/suggested"),
+});

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { MODEL_ROW_COPY, modelStatusOf } from "./model-status";
+import { MODEL_ROW_COPY, modelStatusOf, ownKeyModels } from "./model-status";
 import { MODEL_STATUS_CHIP } from "./status-chips";
 
 describe("modelStatusOf", () => {
@@ -41,5 +41,23 @@ describe("modelStatusOf", () => {
     for (const copy of Object.values(MODEL_ROW_COPY)) {
       expect(copy.description).not.toContain("—");
     }
+  });
+});
+
+describe("ownKeyModels", () => {
+  it("names the provider's defaults where the key leaves the models blank", () => {
+    expect(ownKeyModels({ authoringModel: null, triageModel: null, baseUrl: null })).toBe(
+      "Writes with the provider's default, reads docs with the provider's default.",
+    );
+  });
+
+  it("names the models and the gateway the key is for", () => {
+    expect(
+      ownKeyModels({
+        authoringModel: "gpt-x",
+        triageModel: "gpt-mini",
+        baseUrl: "https://gw.test/v1",
+      }),
+    ).toBe("Writes with gpt-x, reads docs with gpt-mini. Through https://gw.test/v1.");
   });
 });

@@ -5,16 +5,20 @@ import { toast } from "sonner";
 
 import { RetryNotice } from "@/components/retry-notice";
 import { SettingsCard, SettingsRowGroup } from "@/components/settings/settings-card";
-import {
-  SettingsButtonRow,
-  SettingsEmptyRow,
-  SettingsRow,
-} from "@/components/settings/settings-row";
+import { SettingsEmptyRow, SettingsRow } from "@/components/settings/settings-row";
 import { SettingsSection } from "@/components/settings/settings-section";
 import { StatusChip } from "@/components/status-chip";
 import { Time } from "@/components/time";
 import { Button } from "@/components/ui/button";
-import { FieldError } from "@/components/ui/field";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Field, FieldDescription, FieldError, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import {
   Select,
@@ -35,257 +39,157 @@ import {
   removeModelKey,
   setModelKey,
 } from "@/lib/model-key-queries";
-import { MODEL_ROW_COPY, modelStatusOf } from "@/lib/model-status";
+import { MODEL_ROW_COPY, modelStatusOf, OWN_KEY_ROW, ownKeyModels } from "@/lib/model-status";
 import { MODEL_KEY_STATUS_CHIP, MODEL_STATUS_CHIP } from "@/lib/status-chips";
 
 /**
- * Bring your own model key (ADR 0014): the one setting a person has today, as a section of
- * Cando's settings row family (GRA-47) — a heading, the Model row's card (GRA-297), then the
- * key's card with a row per fact or field.
+ * Settings › Building tools (GRA-331; Figma 2100:10414): one card holding the Model row (GRA-297)
+ * and *Use your own key* (ADR 0014), in the settings row family.
  *
- * The card shows what is set — the provider, the model ids, when the key was entered — and never
- * the key; entering one is a form whose value goes to the server once and is then gone from the
- * page. Removing it sends the person's jobs back to the deployment's fixed model. Set, replace and
- * remove, and the server's field errors, are the behaviour `model-key-card.tsx` had before the
- * rows; only the frame changed.
+ * The key row shows what is set (the provider, the models, when it was entered) and never the key;
+ * entering one is a dialog whose value goes to the server once and is then gone from the page.
+ * Removing it sends the person's jobs back to the deployment's fixed model. Set, replace and
+ * remove, and the server's field errors, are the behaviour the card had before (GRA-47); only the
+ * frame moved, from a card of rows to one row and a dialog.
  *
- * The read is the section's own, so a pending key is skeleton rows and a failed read is a
- * `RetryNotice` in the section's place — pending is its own state, as it is for every table.
+ * Each row owns its read, so a failed read of one leaves the other drawn, and pending is a
+ * skeleton row in its place.
  */
 export function ModelKeySettings() {
-  const read = useQuery(modelKeyQuery);
-  const [editing, setEditing] = useState(false);
-
-  let content: React.ReactNode;
-  if (read.isPending) {
-    content = (
+  return (
+    <SettingsSection
+      heading="Building tools"
+      description="When an agent needs a tool it doesn't have, a model reads the integration's docs and writes one."
+    >
       <SettingsCard>
         <SettingsRowGroup>
-          {[0, 1].map((row) => (
-            <SettingsEmptyRow key={row}>
-              <Skeleton className="h-5 w-40" />
-              <Skeleton className="h-5 w-16" />
-            </SettingsEmptyRow>
-          ))}
+          <ModelRow />
+          <OwnKeyRow />
         </SettingsRowGroup>
       </SettingsCard>
-    );
-  } else if (read.isError) {
-    content = (
-      <p className="text-muted-foreground text-sm">
-        <RetryNotice
-          error={read.error}
-          message="Could not load your model key."
-          onRetry={() => void read.refetch()}
-          retrying={read.isFetching}
-        />
-      </p>
-    );
-  } else if (read.data.modelKey && !editing) {
-    content = <ModelKeyView current={read.data.modelKey} onReplace={() => setEditing(true)} />;
-  } else {
-    const current = read.data.modelKey;
-    content = (
-      <ModelKeyForm
-        initialProvider={current?.provider ?? "anthropic"}
-        initialAuthoring={current?.authoringModel ?? ""}
-        initialTriage={current?.triageModel ?? ""}
-        initialBaseUrl={current?.baseUrl ?? ""}
-        replacing={current !== null}
-        onDone={() => setEditing(false)}
-      />
-    );
-  }
-
-  return (
-    <SettingsSection heading="Building tools">
-      <ModelStatusCard />
-      {content}
     </SettingsSection>
   );
 }
 
-/**
- * The Model row (GRA-297; Figma Settings, *Building tools*): what answers the person's jobs, from
- * `GET /me/model`, as `lib/model-status.ts` decides it. Its own card and its own read above the
- * key's, so a failed read of one leaves the other drawn.
- */
-function ModelStatusCard() {
-  const read = useQuery(modelQuery);
-  let row: React.ReactNode;
-  if (read.isPending) {
-    row = (
-      <SettingsEmptyRow>
-        <Skeleton className="h-5 w-40" />
-        <Skeleton className="h-5 w-24" />
-      </SettingsEmptyRow>
-    );
-  } else if (read.isError) {
-    row = (
-      <SettingsEmptyRow>
-        <p className="text-muted-foreground text-sm">
-          <RetryNotice
-            error={read.error}
-            message="Could not load what writes your tools."
-            onRetry={() => void read.refetch()}
-            retrying={read.isFetching}
-          />
-        </p>
-      </SettingsEmptyRow>
-    );
-  } else {
-    const status = modelStatusOf(read.data.model);
-    const copy = MODEL_ROW_COPY[status];
-    row = (
-      <SettingsRow
-        title="Model"
-        description={copy.description}
-        action={
-          <div className="flex shrink-0 items-center gap-2">
-            {copy.value ? <Value>{copy.value}</Value> : null}
-            <StatusChip chip={MODEL_STATUS_CHIP[status]} />
-          </div>
-        }
-      />
-    );
-  }
+function RowSkeleton() {
   return (
-    <SettingsCard>
-      <SettingsRowGroup>{row}</SettingsRowGroup>
-    </SettingsCard>
+    <SettingsEmptyRow>
+      <Skeleton className="h-5 w-40" />
+      <Skeleton className="h-7 w-24" />
+    </SettingsEmptyRow>
   );
 }
 
-/** The two-sentence account of what the key does, above whichever rows follow it. */
-const KEY_DESCRIPTION =
-  "Your acquire jobs run on your provider with this key, and the documentation they read goes to it rather than to Graft's model. Never shown again once entered.";
-
-function ModelKeyView({ current, onReplace }: { current: ModelKey; onReplace: () => void }) {
-  const provider = MODEL_KEY_PROVIDERS.find((p) => p.value === current.provider);
-  return (
-    <SettingsCard>
-      <SettingsRowGroup>
-        <SettingsRow
-          title="Your own model key"
-          description={KEY_DESCRIPTION}
-          action={<StatusChip chip={MODEL_KEY_STATUS_CHIP.set} />}
-        />
-        <SettingsRow title="Provider" action={<Value>{provider?.label}</Value>} />
-        <SettingsRow
-          title="Authoring model"
-          description="The model that writes the tool."
-          action={
-            <Value mono={current.authoringModel !== null}>
-              {current.authoringModel ?? "Provider default"}
-            </Value>
-          }
-        />
-        <SettingsRow
-          title="Triage model"
-          description="The cheap model that reads documentation first."
-          action={
-            <Value mono={current.triageModel !== null}>
-              {current.triageModel ?? "Provider default"}
-            </Value>
-          }
-        />
-        {current.baseUrl ? (
-          <SettingsRow
-            title="Base URL"
-            description="The OpenAI-compatible gateway the key is for."
-            action={<Value mono>{current.baseUrl}</Value>}
-          />
-        ) : null}
-        <SettingsRow
-          title="Key set"
-          action={
-            <Value>
-              <Time iso={current.setAt} />
-            </Value>
-          }
-        />
-        <SettingsButtonRow
-          stacked
-          title="Replace or remove the key"
-          description="A new key is sent once, like the first; removing it sends your acquire jobs back to Graft's fixed model."
-          action={
-            <div className="flex flex-wrap gap-2">
-              <Button variant="outline" onClick={onReplace}>
-                Replace key
-              </Button>
-              <RemoveKeyButton />
-            </div>
-          }
-        />
-      </SettingsRowGroup>
-    </SettingsCard>
-  );
-}
-
-/** A fact on the row's right, in the row's own size; mono for a model id or a URL. */
-function Value({ mono, children }: { mono?: boolean; children: React.ReactNode }) {
-  return <span className={mono ? "font-mono text-sm" : "text-sm"}>{children}</span>;
-}
-
-/** The id the row's title carries, which every control in that row names itself by. */
-const labelId = (id: string) => `${id}-label`;
-
-/**
- * A field as a settings row: the label and its sentence on the left, the control — 240px from
- * `md`, full width below — and the server's error for it on the right. `SettingsRow` with
- * `stacked` rather than `SettingsFieldRow`, because these rows carry a description and an error
- * line, and a fixed 64px row has room for neither. The control names itself by the title's id
- * (`labelId`); a `<div>` beside a control is proximity, not a label.
- */
-function KeyFieldRow({
-  id,
-  title,
-  description,
-  error,
-  children,
+function ReadFailure({
+  read,
+  message,
 }: {
-  id: string;
-  title: string;
-  description?: React.ReactNode;
-  error: string | null;
-  children: React.ReactNode;
+  read: { error: unknown; refetch: () => unknown; isFetching: boolean };
+  message: string;
 }) {
   return (
+    <SettingsEmptyRow>
+      <p className="text-muted-foreground text-sm">
+        <RetryNotice
+          error={read.error}
+          message={message}
+          onRetry={() => void read.refetch()}
+          retrying={read.isFetching}
+        />
+      </p>
+    </SettingsEmptyRow>
+  );
+}
+
+/** What answers the person's jobs, from `GET /me/model`, as `lib/model-status.ts` decides it. */
+function ModelRow() {
+  const read = useQuery(modelQuery);
+  if (read.isPending) return <RowSkeleton />;
+  if (read.isError)
+    return <ReadFailure read={read} message="Could not load what writes your tools." />;
+  const status = modelStatusOf(read.data.model);
+  const copy = MODEL_ROW_COPY[status];
+  return (
     <SettingsRow
-      stacked
-      title={<span id={labelId(id)}>{title}</span>}
-      description={description}
+      title="Model"
+      description={copy.description}
       action={
-        <div className="flex w-full flex-col gap-1.5 md:w-60">
-          {children}
-          {error ? <FieldError>{error}</FieldError> : null}
+        <div className="flex shrink-0 items-center gap-2">
+          {copy.value ? <span className="text-sm">{copy.value}</span> : null}
+          <StatusChip chip={MODEL_STATUS_CHIP[status]} />
         </div>
       }
     />
   );
 }
 
-function ModelKeyForm({
-  initialProvider,
-  initialAuthoring,
-  initialTriage,
-  initialBaseUrl,
-  replacing,
-  onDone,
-}: {
-  initialProvider: ModelKeyProvider;
-  initialAuthoring: string;
-  initialTriage: string;
-  initialBaseUrl: string;
-  replacing: boolean;
-  onDone: () => void;
-}) {
+function OwnKeyRow() {
+  const read = useQuery(modelKeyQuery);
+  // The dialog is mounted per opening, beside the row rather than inside its branches, so a
+  // refetch after the save never unmounts it mid-close (the password row's reason, Greptile on #230).
+  const [editing, setEditing] = useState<ModelKey | "new" | null>(null);
+
+  let row: React.ReactNode;
+  if (read.isPending) row = <RowSkeleton />;
+  else if (read.isError) row = <ReadFailure read={read} message="Could not load your model key." />;
+  else {
+    const current = read.data.modelKey;
+    row = current ? (
+      <SettingsRow
+        stacked
+        title={OWN_KEY_ROW.title}
+        description={
+          <>
+            {MODEL_KEY_PROVIDERS.find((p) => p.value === current.provider)?.label} key, set{" "}
+            <Time iso={current.setAt} />. {ownKeyModels(current)}
+          </>
+        }
+        action={
+          <div className="flex flex-wrap items-center gap-2">
+            <StatusChip chip={MODEL_KEY_STATUS_CHIP.set} />
+            <Button variant="outline" size="sm" onClick={() => setEditing(current)}>
+              Replace
+            </Button>
+            <RemoveKeyButton />
+          </div>
+        }
+      />
+    ) : (
+      <SettingsRow
+        stacked
+        title={OWN_KEY_ROW.title}
+        description={OWN_KEY_ROW.description}
+        action={
+          <Button variant="outline" size="sm" onClick={() => setEditing("new")}>
+            Add a key
+          </Button>
+        }
+      />
+    );
+  }
+
+  return (
+    <>
+      {row}
+      {editing ? (
+        <ModelKeyDialog
+          current={editing === "new" ? null : editing}
+          onClose={() => setEditing(null)}
+        />
+      ) : null}
+    </>
+  );
+}
+
+function ModelKeyDialog({ current, onClose }: { current: ModelKey | null; onClose: () => void }) {
   const queryClient = useQueryClient();
-  const [provider, setProvider] = useState<ModelKeyProvider>(initialProvider);
+  const replacing = current !== null;
+  const [open, setOpen] = useState(true);
+  const [provider, setProvider] = useState<ModelKeyProvider>(current?.provider ?? "anthropic");
   const [apiKey, setApiKey] = useState("");
-  const [authoringModel, setAuthoringModel] = useState(initialAuthoring);
-  const [triageModel, setTriageModel] = useState(initialTriage);
-  const [baseUrl, setBaseUrl] = useState(initialBaseUrl);
+  const [authoringModel, setAuthoringModel] = useState(current?.authoringModel ?? "");
+  const [triageModel, setTriageModel] = useState(current?.triageModel ?? "");
+  const [baseUrl, setBaseUrl] = useState(current?.baseUrl ?? "");
   const [error, setError] = useState<{ field?: string; message: string } | null>(null);
 
   const save = useMutation({
@@ -297,7 +201,7 @@ function ModelKeyForm({
         description: "Your next acquire job runs on your provider.",
       });
       setApiKey("");
-      onDone();
+      setOpen(false);
     },
     onError: (failure) => {
       const details =
@@ -326,152 +230,147 @@ function ModelKeyForm({
 
   const hint = MODEL_KEY_PROVIDERS.find((p) => p.value === provider)?.keyHint;
   const errorFor = (field: string) => (error?.field === field ? error.message : null);
-  const control = "w-full md:w-60";
+  const text = (
+    id: string,
+    label: string,
+    value: string,
+    onChange: (value: string) => void,
+    options: { description?: string; placeholder?: string; field: string },
+  ) => (
+    <Field>
+      <FieldLabel htmlFor={id}>{label}</FieldLabel>
+      <Input
+        id={id}
+        placeholder={options.placeholder}
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        disabled={save.isPending}
+        aria-invalid={errorFor(options.field) ? true : undefined}
+      />
+      {options.description ? <FieldDescription>{options.description}</FieldDescription> : null}
+      {errorFor(options.field) ? <FieldError>{errorFor(options.field)}</FieldError> : null}
+    </Field>
+  );
 
   return (
-    <SettingsCard>
-      {/* The form wraps the group rather than sitting inside it: the group's inset dividers are
-          drawn between its direct children, and a `<form>` among the rows would take one divider
-          for itself and leave the rows inside it undivided. */}
-      <form
-        onSubmit={(event) => {
-          event.preventDefault();
-          submit();
-        }}
-      >
-        <SettingsRowGroup>
-          <SettingsRow
-            title="Your own model key"
-            description={KEY_DESCRIPTION}
-            action={<StatusChip chip={MODEL_KEY_STATUS_CHIP[replacing ? "set" : "unset"]} />}
-          />
-          <KeyFieldRow id="model-key-provider" title="Provider" error={errorFor("provider")}>
-            <Select
-              value={provider}
-              items={MODEL_KEY_PROVIDERS}
-              disabled={save.isPending}
-              onValueChange={(next) => {
-                const option = MODEL_KEY_PROVIDERS.find((candidate) => candidate.value === next);
-                if (option) setProvider(option.value);
-              }}
-            >
-              <SelectTrigger
-                id="model-key-provider"
-                className={control}
-                aria-labelledby={labelId("model-key-provider")}
-                aria-invalid={errorFor("provider") ? true : undefined}
-              >
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {MODEL_KEY_PROVIDERS.map((option) => (
-                  <SelectItem key={option.value} value={option.value}>
-                    {option.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </KeyFieldRow>
-          <KeyFieldRow
-            id="model-key-api-key"
-            title="API key"
-            description={`${hint} Sent once, encrypted at rest, never shown again.`}
-            error={errorFor("apiKey")}
-          >
-            <Input
-              id="model-key-api-key"
-              className={control}
-              type="password"
-              autoComplete="off"
-              spellCheck={false}
-              value={apiKey}
-              onChange={(event) => setApiKey(event.target.value)}
-              disabled={save.isPending}
-              aria-labelledby={labelId("model-key-api-key")}
-              aria-invalid={errorFor("apiKey") ? true : undefined}
-            />
-          </KeyFieldRow>
-          <KeyFieldRow
-            id="model-key-authoring"
-            title="Authoring model"
-            description="The model that writes the tool. Blank keeps the provider's default."
-            error={errorFor("authoringModel")}
-          >
-            <Input
-              id="model-key-authoring"
-              className={control}
-              placeholder="Provider default"
-              value={authoringModel}
-              onChange={(event) => setAuthoringModel(event.target.value)}
-              disabled={save.isPending}
-              aria-labelledby={labelId("model-key-authoring")}
-              aria-invalid={errorFor("authoringModel") ? true : undefined}
-            />
-          </KeyFieldRow>
-          <KeyFieldRow
-            id="model-key-triage"
-            title="Triage model"
-            description="The cheap model that reads documentation first. Blank keeps the provider's default."
-            error={errorFor("triageModel")}
-          >
-            <Input
-              id="model-key-triage"
-              className={control}
-              placeholder="Provider default"
-              value={triageModel}
-              onChange={(event) => setTriageModel(event.target.value)}
-              disabled={save.isPending}
-              aria-labelledby={labelId("model-key-triage")}
-              aria-invalid={errorFor("triageModel") ? true : undefined}
-            />
-          </KeyFieldRow>
-          {provider === "openai" ? (
-            <KeyFieldRow
-              id="model-key-base-url"
-              title="Base URL"
-              description="Only for an OpenAI-compatible gateway; blank for OpenAI itself."
-              error={errorFor("baseUrl")}
-            >
-              <Input
-                id="model-key-base-url"
-                className={control}
-                placeholder="https://…"
-                value={baseUrl}
-                onChange={(event) => setBaseUrl(event.target.value)}
+    <Dialog
+      open={open}
+      onOpenChange={(next) => {
+        if (!save.isPending) setOpen(next);
+      }}
+      onOpenChangeComplete={(next) => {
+        if (!next) onClose();
+      }}
+    >
+      <DialogContent className="sm:max-w-md" showCloseButton={!save.isPending}>
+        <form
+          className="contents"
+          onSubmit={(event) => {
+            event.preventDefault();
+            submit();
+          }}
+        >
+          <DialogHeader>
+            <DialogTitle>{replacing ? "Replace your key" : "Add your own key"}</DialogTitle>
+            <DialogDescription>
+              Your acquire jobs run on your provider with this key, and the documentation they read
+              goes to it rather than to Graft's model. Never shown again once entered.
+            </DialogDescription>
+          </DialogHeader>
+          <FieldGroup>
+            <Field>
+              <FieldLabel htmlFor="model-key-provider">Provider</FieldLabel>
+              <Select
+                value={provider}
+                items={MODEL_KEY_PROVIDERS}
                 disabled={save.isPending}
-                aria-labelledby={labelId("model-key-base-url")}
-                aria-invalid={errorFor("baseUrl") ? true : undefined}
+                onValueChange={(next) => {
+                  const option = MODEL_KEY_PROVIDERS.find((candidate) => candidate.value === next);
+                  if (option) setProvider(option.value);
+                }}
+              >
+                <SelectTrigger
+                  id="model-key-provider"
+                  className="w-full"
+                  aria-invalid={errorFor("provider") ? true : undefined}
+                >
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {MODEL_KEY_PROVIDERS.map((option) => (
+                    <SelectItem key={option.value} value={option.value}>
+                      {option.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {errorFor("provider") ? <FieldError>{errorFor("provider")}</FieldError> : null}
+            </Field>
+            <Field>
+              <FieldLabel htmlFor="model-key-api-key">API key</FieldLabel>
+              <Input
+                id="model-key-api-key"
+                type="password"
+                autoComplete="off"
+                spellCheck={false}
+                value={apiKey}
+                onChange={(event) => setApiKey(event.target.value)}
+                disabled={save.isPending}
+                aria-invalid={errorFor("apiKey") ? true : undefined}
               />
-            </KeyFieldRow>
-          ) : null}
-          <SettingsEmptyRow className="flex-wrap justify-end gap-2">
-            {error && !error.field ? (
-              <FieldError className="mr-auto">{error.message}</FieldError>
-            ) : null}
-            {replacing ? (
-              <Button type="button" variant="ghost" onClick={onDone} disabled={save.isPending}>
-                Cancel
-              </Button>
-            ) : null}
+              <FieldDescription>
+                {hint} Sent once, encrypted at rest, never shown again.
+              </FieldDescription>
+              {errorFor("apiKey") ? <FieldError>{errorFor("apiKey")}</FieldError> : null}
+            </Field>
+            {text("model-key-authoring", "Authoring model", authoringModel, setAuthoringModel, {
+              field: "authoringModel",
+              placeholder: "Provider default",
+              description: "The model that writes the tool. Blank keeps the provider's default.",
+            })}
+            {text("model-key-triage", "Triage model", triageModel, setTriageModel, {
+              field: "triageModel",
+              placeholder: "Provider default",
+              description:
+                "The cheap model that reads documentation first. Blank keeps the provider's default.",
+            })}
+            {provider === "openai"
+              ? text("model-key-base-url", "Base URL", baseUrl, setBaseUrl, {
+                  field: "baseUrl",
+                  placeholder: "https://…",
+                  description: "Only for an OpenAI-compatible gateway; blank for OpenAI itself.",
+                })
+              : null}
+            {error && !error.field ? <FieldError>{error.message}</FieldError> : null}
+          </FieldGroup>
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              disabled={save.isPending}
+              onClick={() => setOpen(false)}
+            >
+              Cancel
+            </Button>
             <Button type="submit" disabled={save.isPending}>
               {save.isPending
                 ? replacing
                   ? "Replacing…"
-                  : "Setting…"
+                  : "Saving…"
                 : replacing
                   ? "Replace key"
-                  : "Set key"}
+                  : "Save key"}
             </Button>
-          </SettingsEmptyRow>
-        </SettingsRowGroup>
-      </form>
-    </SettingsCard>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
   );
 }
 
 /**
  * No `onError` of its own: the mutation cache already toasts a failed mutation's sentence
- * (`lib/query-client.ts`), and the card used to toast it a second time on top.
+ * (`lib/query-client.ts`).
  */
 function RemoveKeyButton() {
   const queryClient = useQueryClient();
@@ -486,8 +385,8 @@ function RemoveKeyButton() {
     },
   });
   return (
-    <Button variant="ghost" onClick={() => remove.mutate()} disabled={remove.isPending}>
-      {remove.isPending ? "Removing…" : "Remove key"}
+    <Button variant="ghost" size="sm" onClick={() => remove.mutate()} disabled={remove.isPending}>
+      {remove.isPending ? "Removing…" : "Remove"}
     </Button>
   );
 }
