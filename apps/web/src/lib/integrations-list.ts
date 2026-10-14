@@ -223,8 +223,13 @@ export function signInOf(
 ): { connection: IntegrationConnection; action: ReconnectAction } | null {
   const connection = attentionConnectionOf(row);
   if (!connection) return null;
-  const [action] = reconnectActionsOf(connection, connection.state);
+  const action = connectionSignInOf(connection);
   return action ? { connection, action } : null;
+}
+
+/** One connection's Sign in, by `reconnectActionsOf`'s first way; null where there is none. */
+export function connectionSignInOf(connection: IntegrationConnection): ReconnectAction | null {
+  return reconnectActionsOf(connection, connection.state)[0] ?? null;
 }
 
 /**

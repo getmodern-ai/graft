@@ -19,7 +19,7 @@ export type ActivityRun = Jsonified<ActivityRunOutput>;
 export const ACTIVITY_OUTCOME_FILTERS = ["ran", "failed", "blocked"] as const;
 export type ActivityOutcomeFilter = (typeof ACTIVITY_OUTCOME_FILTERS)[number];
 
-const LEDGER_OUTCOME: Record<ActivityOutcomeFilter, UsageOutcome> = {
+export const LEDGER_OUTCOME: Record<ActivityOutcomeFilter, UsageOutcome> = {
   ran: "ok",
   failed: "error",
   blocked: "refused",

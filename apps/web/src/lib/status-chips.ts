@@ -1,5 +1,6 @@
 import { isAwaitingHarness } from "@graft/core/setup/setup.rules";
 
+import type { ActivityAnswerOutcome } from "./activity-screen";
 import type { Agent, WorkingSetChange } from "./agent-queries";
 import type { Approval } from "./approval-queries";
 import type { Connection, ConnectionCall, ConnectionStatus } from "./connection-queries";
@@ -69,6 +70,12 @@ export const AWAITING_RECONNECTION_CHIP: StatusChip = {
 };
 
 /**
+ * On an agent page's integration row whose connection needs the person (GRA-326): the destructive
+ * tone, since its tools will not run until they act, and the act itself as the words (GRA-282).
+ */
+export const RECONNECT_CHIP: StatusChip = { variant: "destructive", label: "Reconnect" };
+
+/**
  * The chips a connection's card wears for its status — one, or two for a revoked connection, whose
  * second chip is the way back (`AWAITING_RECONNECTION_CHIP`).
  */
@@ -124,6 +131,18 @@ export const ACTIVITY_OUTCOME_CHIP = {
   error: { variant: "destructive", label: "Failed" },
   refused: { variant: "outline", label: "Blocked" },
 } as const satisfies Record<ConnectionCall["outcome"], StatusChip>;
+
+/**
+ * An answer in the activity (GRA-330), in a run's tones: what the person let through is the
+ * neutral rest, as Ran is, and what they turned down is outline, as Blocked is. Not Allowed's
+ * success tone (`APPROVAL_DECISION_CHIP`): the row records a moment, not the answer standing now.
+ */
+export const ACTIVITY_ANSWER_CHIP = {
+  allowed: { variant: "secondary", label: "Allowed" },
+  connected: { variant: "secondary", label: "Connected" },
+  denied: { variant: "outline", label: "Denied" },
+  declined: { variant: "outline", label: "Declined" },
+} as const satisfies Record<ActivityAnswerOutcome, StatusChip>;
 
 /** A dry run reached the vendor for reads only (CONTEXT.md, *Dry run*); the chip rides beside the tool name. */
 export const DRY_RUN_CHIP: StatusChip = { variant: "outline", label: "Dry run" };

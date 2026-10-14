@@ -88,7 +88,14 @@ export function ConnectIntegrationDialog({
   if (target && target !== shown) setShown(target);
   const entry = target ?? shown;
 
-  useEffect(() => () => stop.current?.abort(), []);
+  const resetTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(
+    () => () => {
+      stop.current?.abort();
+      if (resetTimer.current) clearTimeout(resetTimer.current);
+    },
+    [],
+  );
 
   const connected = (vendor: string, name: string, chosen: ConnectAccess) => {
     void queryClient.invalidateQueries({ queryKey: connectionKeys.all });
@@ -175,12 +182,27 @@ export function ConnectIntegrationDialog({
     attempt.current += 1;
     stop.current?.abort();
     onOpenChange(false);
-    setTimeout(() => {
-      setLink({ phase: "idle" });
-      setAccess("full");
-      connect.reset();
-    }, 200);
+    // After the closing animation; a reopening before then resets at once instead (below).
+    resetTimer.current = setTimeout(reset, 200);
   };
+
+  const reset = () => {
+    resetTimer.current = null;
+    setLink({ phase: "idle" });
+    setAccess("full");
+    connect.reset();
+  };
+
+  // A tile opened within the closing moment starts clean, and the old timer cannot reach it.
+  const resetMutation = connect.reset;
+  useEffect(() => {
+    if (!target || resetTimer.current === null) return;
+    clearTimeout(resetTimer.current);
+    resetTimer.current = null;
+    setLink({ phase: "idle" });
+    setAccess("full");
+    resetMutation();
+  }, [target, resetMutation]);
 
   if (!entry) return null;
   // A blocked popup's link carries the access it was minted with, so the choice stays as it was.
