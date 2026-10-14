@@ -73,7 +73,9 @@ export function integrationAgentRows(
           displayName: connection.displayName,
           grantedAt: entry.buildApproval.grantedAt,
         });
-        if (!row.access.buildApproval) {
+        // The summary words what the agent can do, so a build approval for a connection outside
+        // its scope is listed among the answers but never said to let it build.
+        if (entry.inScope && !row.access.buildApproval) {
           row.access = { ...row.access, buildApproval: entry.buildApproval };
         }
       }
@@ -108,7 +110,7 @@ export type ToolAnswerWrite =
 /**
  * The writes that take a tool's answer to `target`. Setting an answer outright keeps the
  * ask-every-call setting as it stood (`setApprovalFromConsole`), so *Always allow* turns it off
- * after allowing and *Ask every time* allows first, then turns it on. Nothing when the answer is
+ * after allowing and *Ask every time* turns it on, then allows. Nothing when the answer is
  * already there.
  */
 export function toolAnswerWrites(
@@ -119,10 +121,15 @@ export function toolAnswerWrites(
   if (current === target) return [];
   if (target === "deny") return [{ kind: "decision", decision: "deny" }];
   const allowed = approval.decision === "allow" && approval.forCurrentVersion;
-  const writes: ToolAnswerWrite[] = allowed ? [] : [{ kind: "decision", decision: "allow" }];
+  const allow: ToolAnswerWrite[] = allowed ? [] : [{ kind: "decision", decision: "allow" }];
   const on = target === "ask";
-  if (approval.askEveryCall !== on) writes.push({ kind: "ask_every_call", on });
-  return writes;
+  const setting: ToolAnswerWrite[] =
+    approval.askEveryCall === on ? [] : [{ kind: "ask_every_call", on }];
+  // Ordered so that no moment between the two requests, nor a failure of the second, leaves the
+  // tool running without asking when the person chose that it ask: asking is turned on before the
+  // allow lands, and turned off only after it. Every answer listed here is a row, so the setting
+  // can be written on a deny as well (`setAskEveryCall`).
+  return on ? [...setting, ...allow] : [...allow, ...setting];
 }
 
 /** One row of *Your answers for <integration>*. */
@@ -169,7 +176,10 @@ export function integrationAnswers(
         agent,
         what: toolTitle(approval.tool.name),
         detail: approval.tool.readOnly ? "Reads never ask" : null,
-        chip: TOOL_ANSWER_CHIP[toolAnswerChoice(approval)],
+        // A read passes whatever answer a write version of it left behind (ADR 0008).
+        chip: approval.tool.readOnly
+          ? ANSWER_CHIP.always
+          : TOOL_ANSWER_CHIP[toolAnswerChoice(approval)],
         at: approval.decidedAt,
         change: approval.tool.readOnly ? { kind: "none" } : { kind: "tool", approval },
       });

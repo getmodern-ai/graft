@@ -88,6 +88,19 @@ describe("integrationAgentRows", () => {
     expect(codex?.buildApprovals).toEqual([]);
   });
 
+  it("never says an agent can build through a connection outside its scope", () => {
+    const [row] = integrationAgentRows(
+      [GMAIL, WORK],
+      [
+        access("conn_1", [agent("claude")]),
+        access("conn_2", [agent("claude", { inScope: false, buildApproval: { grantedAt: OLD } })]),
+      ],
+    );
+    expect(row?.access.buildApproval).toBeNull();
+    // Still the person's answer, so still listed and withdrawable.
+    expect(row?.buildApprovals.map((build) => build.connectionId)).toEqual(["conn_2"]);
+  });
+
   it("is out of scope only when no connection reaches the agent", () => {
     const [row] = integrationAgentRows(
       [GMAIL],
@@ -138,10 +151,14 @@ describe("toolAnswerWrites", () => {
     ]);
   });
 
-  it("allows before turning ask-every-call on, since the setting needs an answer to stand", () => {
+  it("turns ask-every-call on before allowing, so no moment between the two runs unasked", () => {
     expect(toolAnswerWrites(approval("send", { decision: "deny" }), "ask")).toEqual([
-      { kind: "decision", decision: "allow" },
       { kind: "ask_every_call", on: true },
+      { kind: "decision", decision: "allow" },
+    ]);
+    expect(toolAnswerWrites(approval("send", { forCurrentVersion: false }), "ask")).toEqual([
+      { kind: "ask_every_call", on: true },
+      { kind: "decision", decision: "allow" },
     ]);
     expect(toolAnswerWrites(approval("send"), "ask")).toEqual([
       { kind: "ask_every_call", on: true },
@@ -183,6 +200,22 @@ describe("integrationAnswers", () => {
       ["List labels", "Reads never ask", ANSWER_CHIP.always],
       ["Build its own Gmail tools", "Gmail", ANSWER_CHIP.allowed],
     ]);
+  });
+
+  it("draws a read tool's answer as allowed whatever a write version of it left behind", () => {
+    const [row] = integrationAgentRows(
+      [GMAIL],
+      [
+        access("conn_1", [
+          agent("codex", {
+            toolApprovals: [approval("list-labels", { readOnly: true, decision: "deny" })],
+          }),
+        ]),
+      ],
+    );
+    const [answer] = integrationAnswers(row ? [row] : [], "Gmail", false);
+    expect(answer?.chip).toEqual(ANSWER_CHIP.always);
+    expect(answer?.change).toEqual({ kind: "none" });
   });
 
   it("offers no change on a read tool's answer", () => {
