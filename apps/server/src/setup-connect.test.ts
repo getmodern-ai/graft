@@ -45,6 +45,7 @@ function inMemorySetup(
       agentId: null,
       starterId: null,
       goal: null,
+      stockTool: null,
       pendingActionId: null,
       connectionId: null,
       acquireJobId: null,

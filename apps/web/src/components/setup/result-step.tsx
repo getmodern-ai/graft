@@ -83,7 +83,14 @@ function ToolRun({
       return;
     }
     setInputProblem(null);
-    run.mutate({ agentId, vendor: tool.vendor, name: tool.name, body: { input: input.input } });
+    // Over the connection Setup made, never another account the tool was bound to before (GRA-276).
+    const connectionId = context.connection?.id;
+    run.mutate({
+      agentId,
+      vendor: tool.vendor,
+      name: tool.name,
+      body: { input: input.input, ...(connectionId ? { connectionId } : {}) },
+    });
   };
 
   // Run once on arrival only for a tool that takes no input (`runsOnArrival`); a tool with inputs
