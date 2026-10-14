@@ -241,13 +241,14 @@ _Avoid_: grant, permission, consent (fine in prose, not as the noun for the reco
 
 **Setup**:
 The console's guided first run: a person names the agent they run, connects a first
-integration, names the task for a first tool, has Graft acquire it and run it, and leaves with the
-prompt that connects that agent.
+integration, takes one of its ready-made stock tools or names the task for a first tool and has
+Graft acquire it, runs it, and leaves with the prompt that connects that agent.
 It runs as the person's first agent, and every step is one the console offers on its own.
 _Avoid_: onboarding (the word for the effort, in tickets), wizard, tour, getting started
 
 **Starter integration**:
 One of a short list of integrations Setup offers first, each connected in one click and with a
-read-only task known to acquire cleanly. A convenience for the first tool, never a catalogue (ADR
-0001); an integration not on it is connected the way any other is.
+read-only task known to acquire cleanly, and its curated read-only stock tools offered before it.
+A convenience for the first tool, never a catalogue (ADR 0001); an integration not on it is
+connected the way any other is.
 _Avoid_: starter vendor, app, catalogue, supported integration, template
