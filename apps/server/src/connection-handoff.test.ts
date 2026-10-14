@@ -254,7 +254,7 @@ describe("a connection proposed over MCP and entered over HTTP", () => {
       expect(listed.pendingActions).toEqual([
         expect.objectContaining({
           id: actionId,
-          agent: { id: AGENT_A, name: "laptop Hermes" },
+          agent: { id: AGENT_A, name: "laptop Hermes", clientName: null },
           kind: CONNECTION_ASK_KIND,
           url: said.url,
         }),
