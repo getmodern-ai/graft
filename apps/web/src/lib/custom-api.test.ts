@@ -3,7 +3,6 @@ import { describe, expect, it } from "vitest";
 
 import { ApiError } from "./api";
 import {
-  accessOptions,
   checklistProgress,
   connectBodyOf,
   connectedToast,
@@ -253,13 +252,6 @@ describe("the words around the key", () => {
     expect(proposalSummary({ ...draft, primaryHost: "https://" }, null)).toBe(
       "No address yet · API key in a header",
     );
-  });
-
-  it("offers Full access first, recommended, and Ask me first", () => {
-    const [full, ask] = accessOptions("Unleashed");
-    expect(full).toMatchObject({ value: "full", label: "Full access", recommended: true });
-    expect(full?.description).toContain("build Unleashed tools");
-    expect(ask).toMatchObject({ value: "ask", label: "Ask me first", recommended: false });
   });
 
   it("toasts by the access chosen", () => {

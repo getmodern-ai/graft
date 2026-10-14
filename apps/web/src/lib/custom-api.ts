@@ -250,35 +250,6 @@ export function proposalSummary(draft: ConnectionDraft, docsHost: string | null)
   return parts.join(" · ");
 }
 
-export type AccessOption = {
-  value: ConnectAccess;
-  label: string;
-  description: string;
-  recommended: boolean;
-};
-
-/**
- * What the person's agents may do with the integration once it connects (ADR 0008 as amended
- * 2026-10-14): *Full access* records the build approval and the integration's non-destructive tools
- * for the agents whose scope reaches it now; *Ask me first* records nothing.
- */
-export function accessOptions(integrationName: string): AccessOption[] {
-  return [
-    {
-      value: "full",
-      label: "Full access",
-      description: `Your agents can build ${integrationName} tools and use them without asking. Tools that can delete still ask.`,
-      recommended: true,
-    },
-    {
-      value: "ask",
-      label: "Ask me first",
-      description: "Agents ask before they build or use each tool.",
-      recommended: false,
-    },
-  ];
-}
-
 /** The proposal `POST /api/connect` routes, as the person checked it, with no secret in it. */
 export function connectBodyOf(
   registration: ConnectionRegistration,

@@ -50,7 +50,6 @@ import {
 } from "@/lib/connection-form";
 import { connectionKeys, fetchConnection } from "@/lib/connection-queries";
 import {
-  accessOptions,
   checklistProgress,
   connectBodyOf,
   connectedToast,
@@ -76,6 +75,7 @@ import {
   proposalQuery,
   startProposal,
 } from "@/lib/custom-api-queries";
+import { accessOptions } from "@/lib/integrations-discover";
 import { openConsentPopup } from "@/lib/oauth-consent";
 import { awaitLink, type LinkSettled } from "@/lib/provider-link";
 import { providerLabel } from "@/lib/provider-name";
@@ -850,9 +850,11 @@ function CheckStep({
               value: option.value,
               label: option.label,
               description: option.description,
-              aside: option.recommended ? (
-                <Badge variant="secondary">Recommended</Badge>
-              ) : undefined,
+              // Full access is the frame's recommendation (Figma 2121:15654).
+              aside:
+                option.value === "full" ? (
+                  <Badge variant="secondary">Recommended</Badge>
+                ) : undefined,
             }))}
             value={access}
             onChange={setAccess}
