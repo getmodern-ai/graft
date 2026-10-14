@@ -121,6 +121,7 @@ const openAction: PendingActionRow = {
   answeredAt: null,
   answer: null,
   consumedAt: null,
+  closedReason: null,
   owner: "person",
   createdAt: NOW,
   updatedAt: NOW,
@@ -196,6 +197,7 @@ function agentDeps(): AgentDeps {
     updateAgent: vi.fn(async (_db, _p, _a, patch) => ({ ...agentRow, ...patch })),
     revokeAgent: vi.fn(async () => ({ ...agentRow, revokedAt: NOW })),
     revokeMcpTokensForAgent: vi.fn(async () => 0),
+    closePendingActionsForAgent: vi.fn(async () => []),
     issueAgentToken: vi.fn(async () => null),
     setAgentConnectedVia: vi.fn(async () => agentRow),
     replaceAgentConnections: vi.fn(async () => {}),
@@ -463,10 +465,13 @@ function approvalDeps(): ApprovalDeps {
 
 function pendingActionDeps(): PendingActionDeps {
   return {
-    insertPendingAction: vi.fn(async (_db, input) => ({ ...openAction, ...input }) as never),
+    insertPendingAction: vi.fn(
+      async (_db, _scope, input) => ({ ...openAction, ...input }) as never,
+    ),
     findPendingAction: vi.fn(async () => openAction),
     findPendingActionForPerson: vi.fn(async () => openAction),
     listOpenPendingActions: vi.fn(async () => [openAction, buildAction]),
+    listDonePendingActions: vi.fn(async () => []),
     updatePendingActionPayload: vi.fn(async () => null),
     answerPendingAction: vi.fn(async (_db, _p, _id, args) => ({
       ...openAction,
@@ -2044,6 +2049,121 @@ describe("pending actions", () => {
     });
     const token = signHandoffToken(openAction, HANDOFF.secret);
     expect(pendingActions[0]?.url).toBe(`http://console.graft.test/app/pending/pa_1?t=${token}`);
+  });
+
+  /** GRA-292: Requests › Done. The statement is pinned in `@graft/db`'s `scope.test.ts`. */
+  describe("the Done list", () => {
+    const answered: PendingActionRow = {
+      ...openAction,
+      answeredAt: new Date(NOW.getTime() - 60_000),
+      answer: { allow: true },
+      consumedAt: new Date(NOW.getTime() - 30_000),
+    };
+    const revokeClosed: PendingActionRow = {
+      ...buildAction,
+      expiresAt: new Date(NOW.getTime() - 120_000),
+      consumedAt: new Date(NOW.getTime() - 120_000),
+      closedReason: "connection_revoked",
+    };
+    const ranOut: PendingActionRow = {
+      ...scopeAction,
+      expiresAt: new Date(NOW.getTime() - 180_000),
+    };
+
+    it("answers each finished ask with how it finished, when, the agent, the answer and what it was about", async () => {
+      const { app, deps } = harness({ user: { id: "person_1" } });
+      vi.mocked(deps.pendingAction.listDonePendingActions).mockResolvedValue([
+        answered,
+        revokeClosed,
+        ranOut,
+      ]);
+      const res = await app.request("/api/pending-actions?state=done");
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as {
+        pendingActions: Record<string, unknown>[];
+        nextCursor: string | null;
+      };
+      expect(deps.pendingAction.listDonePendingActions).toHaveBeenCalledWith(fakeDb, "person_1", {
+        now: NOW,
+        limit: 51,
+        after: null,
+      });
+      expect(deps.pendingAction.listOpenPendingActions).not.toHaveBeenCalled();
+      expect(body.nextCursor).toBeNull();
+      expect(body.pendingActions[0]).toMatchObject({
+        id: "pa_1",
+        state: "answered",
+        closedReason: null,
+        finishedAt: answered.answeredAt?.toISOString(),
+        agent: { id: "agent_1", name: "laptop Hermes" },
+        answer: { allow: true },
+        subject: { toolId: "tool_1", vendor: "demo", connectionId: "conn_1" },
+      });
+      expect(body.pendingActions[0]).not.toHaveProperty("url");
+      expect(body.pendingActions[2]).toMatchObject({
+        id: "pa_3",
+        state: "expired",
+        closedReason: null,
+        subject: { toolId: null, vendor: "demo", connectionId: "conn_2" },
+      });
+    });
+
+    it("reads an ask a revoke closed as closed, not as expired", async () => {
+      const { app, deps } = harness({ user: { id: "person_1" } });
+      vi.mocked(deps.pendingAction.listDonePendingActions).mockResolvedValue([revokeClosed]);
+      const res = await app.request("/api/pending-actions?state=done");
+      const { pendingActions } = (await res.json()) as {
+        pendingActions: Record<string, unknown>[];
+      };
+      expect(pendingActions[0]).toMatchObject({
+        id: "pa_2",
+        state: "closed",
+        closedReason: "connection_revoked",
+        finishedAt: revokeClosed.expiresAt.toISOString(),
+        subject: { toolId: null, vendor: "demo", connectionId: "conn_1" },
+      });
+    });
+
+    it("pages by the cursor it answered, and the next page starts after the row it names", async () => {
+      const { app, deps } = harness({ user: { id: "person_1" } });
+      vi.mocked(deps.pendingAction.listDonePendingActions).mockResolvedValueOnce([
+        answered,
+        revokeClosed,
+      ]);
+      const first = (await (
+        await app.request("/api/pending-actions?state=done&limit=1")
+      ).json()) as { nextCursor: string | null };
+      expect(first.nextCursor).toEqual(expect.any(String));
+      await app.request(
+        `/api/pending-actions?state=done&limit=1&cursor=${encodeURIComponent(first.nextCursor ?? "")}`,
+      );
+      expect(deps.pendingAction.listDonePendingActions).toHaveBeenLastCalledWith(
+        fakeDb,
+        "person_1",
+        { now: NOW, limit: 2, after: { finishedAt: answered.answeredAt, id: "pa_1" } },
+      );
+    });
+
+    it("refuses an unknown state, a cursor it did not write and a page out of bounds", async () => {
+      const { app } = harness({ user: { id: "person_1" } });
+      for (const query of [
+        "state=all",
+        "state=done&cursor=nope",
+        "state=done&cursor=",
+        "state=done&limit=abc",
+      ]) {
+        const res = await app.request(`/api/pending-actions?${query}`);
+        expect(res.status, query).toBe(400);
+      }
+    });
+
+    it("keeps the inbox the default", async () => {
+      const { app, deps } = harness({ user: { id: "person_1" } });
+      const res = await app.request("/api/pending-actions?state=open");
+      expect(res.status).toBe(200);
+      expect(deps.pendingAction.listOpenPendingActions).toHaveBeenCalled();
+      expect(deps.pendingAction.listDonePendingActions).not.toHaveBeenCalled();
+    });
   });
 
   /**

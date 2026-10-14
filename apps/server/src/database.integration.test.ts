@@ -1132,20 +1132,25 @@ describe.skipIf(!adminUrl)("the schema, the account and the services over a real
       extra: { answer?: Record<string, unknown>; expiresAt?: Date } = {},
     ) => {
       n += 1;
-      await insertPendingAction(db, {
-        id: `pa_suggest_${n}`,
-        agentId,
-        kind: "connection",
-        payload: {
-          vendor,
-          displayName: `${vendor} display`,
-          docsUrl: `https://docs.${vendor}.example`,
-          note: "The agent proposed this connection.",
+      const owner = agentId === theirs.agent.id ? other : personId;
+      await insertPendingAction(
+        db,
+        { personId: owner, agentId },
+        {
+          id: `pa_suggest_${n}`,
+          agentId,
+          kind: "connection",
+          payload: {
+            vendor,
+            displayName: `${vendor} display`,
+            docsUrl: `https://docs.${vendor}.example`,
+            note: "The agent proposed this connection.",
+          },
+          expiresAt: extra.expiresAt ?? at(24 * 60),
+          createdAt: at(minutes),
+          ...(extra.answer ? { answer: extra.answer, answeredAt: at(minutes + 1) } : {}),
         },
-        expiresAt: extra.expiresAt ?? at(24 * 60),
-        createdAt: at(minutes),
-        ...(extra.answer ? { answer: extra.answer, answeredAt: at(minutes + 1) } : {}),
-      });
+      );
       return `pa_suggest_${n}`;
     };
 

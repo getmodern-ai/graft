@@ -134,6 +134,13 @@
       "when": 1791707836849,
       "tag": "0018_setup_stock_tool",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1791943533219,
+      "tag": "0019_pending_action_closed_reason",
+      "breakpoints": true
     }
   ]
 }
