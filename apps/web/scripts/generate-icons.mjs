@@ -37,6 +37,7 @@ const NAMES = [
   "add",
   "apps",
   "arrow_back",
+  "arrow_forward",
   "bolt",
   "check",
   "check_circle",

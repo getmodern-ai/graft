@@ -58,6 +58,16 @@ export function ArrowBackIcon(props: IconProps) {
   );
 }
 
+/** Material Symbols `arrow_forward`, filled. */
+export function ArrowForwardIcon(props: IconProps) {
+  return (
+    <MaterialSymbol
+      d="M686-450H160v-60h526L438-758l42-42 320 320-320 320-42-42 248-248Z"
+      {...props}
+    />
+  );
+}
+
 /** Material Symbols `bolt`, filled. */
 export function BoltIcon(props: IconProps) {
   return <MaterialSymbol d="m320-80 40-280H160l360-520h80l-40 320h240L400-80h-80Z" {...props} />;
