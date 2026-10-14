@@ -51,6 +51,7 @@ export function useAnswerAsk(
       queryClient.invalidateQueries({ queryKey: agentKeys.all });
       queryClient.invalidateQueries({ queryKey: approvalKeys.ofAgent(action.agentId) });
       queryClient.invalidateQueries({ queryKey: approvalKeys.vendorsOfAgent(action.agentId) });
+      queryClient.invalidateQueries({ queryKey: approvalKeys.buildsOfAgent(action.agentId) });
       if (answer.allow && allowedToast) {
         const { title, description } = allowedToast(answer);
         toast.success(title, { description });

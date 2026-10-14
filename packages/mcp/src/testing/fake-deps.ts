@@ -1200,7 +1200,11 @@ export function createFakeDeps(store: FakeStore): FakeDeps {
           if (!conn || conn.personId !== scope.personId) return [];
           return [{ ...row, vendor: conn.vendor, displayName: conn.displayName }];
         })
-        .sort((a, b) => a.displayName.localeCompare(b.displayName));
+        .sort(
+          (a, b) =>
+            a.displayName.localeCompare(b.displayName) ||
+            a.connectionId.localeCompare(b.connectionId),
+        );
     },
     deleteBuildApproval: async (_db, scope, connectionId) => {
       if (!ownsAgent(scope)) return null;

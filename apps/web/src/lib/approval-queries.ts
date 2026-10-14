@@ -19,6 +19,8 @@ export type VendorApproval = Jsonified<VendorApprovalRow>;
 export const approvalKeys = {
   ofAgent: (agentId: string) => ["approvals", agentId] as const,
   vendorsOfAgent: (agentId: string) => ["vendor-approvals", agentId] as const,
+  /** Every agent's build approvals: a revoke deletes them across agents (ADR 0007). */
+  builds: ["build-approvals"] as const,
   buildsOfAgent: (agentId: string) => ["build-approvals", agentId] as const,
 };
 
