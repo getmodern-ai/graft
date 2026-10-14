@@ -1,16 +1,16 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import type * as React from "react";
-import { useId } from "react";
+import { type RefObject, useId } from "react";
 
-import { ConnectItsAgent } from "@/components/agent/agent-card";
+import { AgentConnectionDialog } from "@/components/agent/agent-connection-dialog";
 import { CreateAgentDialog } from "@/components/agent/create-agent-dialog";
 import { SetupPromptBlock } from "@/components/agent/setup-prompt-block";
 import { AddIcon, ArrowForwardIcon, CheckIcon } from "@/components/icons";
 import { HarnessMark, IntegrationMark } from "@/components/marks";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { agentsQuery } from "@/lib/agent-queries";
+import { type AgentListItem, agentsQuery } from "@/lib/agent-queries";
 import { connectionsQuery } from "@/lib/connection-queries";
 import {
   agentStepAction,
@@ -26,7 +26,14 @@ import type { HarnessMarkId } from "@/lib/marks";
 import { setupQuery, setupVendorsQuery } from "@/lib/setup-queries";
 import { cn } from "@/lib/utils";
 
-type StepProps = { step: HomeChecklistStep; onCreateAgent: () => void };
+/**
+ * Opens *Connect an agent* for one agent awaiting its software, with the button that asked, for
+ * the dialog to return focus to. Home holds the dialog (`HomeConnectAgentDialog`).
+ */
+export type ConnectAgent = (agent: AgentListItem, trigger: HTMLButtonElement | null) => void;
+
+type HomeDialogs = { onCreateAgent: () => void; onConnectAgent: ConnectAgent };
+type StepProps = HomeDialogs & { step: HomeChecklistStep };
 
 /** The agents the first step's marks name, in the sentence's order. */
 const AGENT_MARKS: readonly HarnessMarkId[] = [
@@ -48,12 +55,11 @@ export function GetStartedPanel({
   checklist,
   emphasis = true,
   onCreateAgent,
-}: {
+  onConnectAgent,
+}: HomeDialogs & {
   checklist: HomeChecklist;
   /** False above the panels, where the header's *Connect an integration* is the screen's primary. */
   emphasis?: boolean;
-  /** Opens Home's `HomeCreateAgentDialog`, which lives above the views. */
-  onCreateAgent: () => void;
 }) {
   const id = useId();
   const setup = useQuery(setupQuery);
@@ -61,7 +67,11 @@ export function GetStartedPanel({
     const Body = STEP_BODIES[row.id];
     return (
       <ChecklistRow key={row.id} number={index + 1} done={row.done}>
-        <Body step={{ ...row, primary: emphasis && row.primary }} onCreateAgent={onCreateAgent} />
+        <Body
+          step={{ ...row, primary: emphasis && row.primary }}
+          onCreateAgent={onCreateAgent}
+          onConnectAgent={onConnectAgent}
+        />
       </ChecklistRow>
     );
   };
@@ -171,7 +181,7 @@ function MarkRow({ children }: { children: React.ReactNode }) {
   );
 }
 
-function AgentStep({ step, onCreateAgent }: StepProps) {
+function AgentStep({ step, onCreateAgent, onConnectAgent }: StepProps) {
   const agents = useQuery(agentsQuery);
   const setup = useQuery(setupQuery);
   const action = agentStepAction(agents.data?.agents ?? [], setup.data);
@@ -194,7 +204,14 @@ function AgentStep({ step, onCreateAgent }: StepProps) {
               Connect its agent
             </Button>
           ) : action.kind === "dialog" ? (
-            <ConnectItsAgent agent={action.agent} variant={variant} />
+            <Button
+              variant={variant}
+              size="sm"
+              aria-label={`Connect ${action.agent.name}`}
+              onClick={(event) => onConnectAgent(action.agent, event.currentTarget)}
+            >
+              Connect its agent
+            </Button>
           ) : (
             <Button variant={variant} size="sm" onClick={onCreateAgent}>
               <AddIcon />
@@ -211,6 +228,32 @@ function AgentStep({ step, onCreateAgent }: StepProps) {
         </MarkRow>
       )}
     </>
+  );
+}
+
+/**
+ * *Connect an agent* for the agent the step or a *Your agents* row named, held at Home's level for
+ * `HomeCreateAgentDialog`'s reason: issuing the token is step one done, which swaps the step's
+ * action for *Done* and the row's for its requests, and the token is shown once. The agent is the
+ * one clicked, as it stood; the dialog keeps the token it issued over the refreshed list.
+ */
+export function HomeConnectAgentDialog({
+  agent,
+  returnFocus,
+  onClose,
+}: {
+  agent: AgentListItem | null;
+  returnFocus: RefObject<HTMLButtonElement | null>;
+  onClose: () => void;
+}) {
+  if (!agent) return null;
+  return (
+    <AgentConnectionDialog
+      key={agent.id}
+      agent={agent}
+      onClose={onClose}
+      returnFocus={returnFocus}
+    />
   );
 }
 

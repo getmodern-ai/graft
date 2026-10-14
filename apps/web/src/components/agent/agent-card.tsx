@@ -141,21 +141,14 @@ export function AgentCard({
 }
 
 /** *Connect its agent* through the dialog; Home's *Your agents* (GRA-327) draws it too. */
-export function ConnectItsAgent({
-  agent,
-  variant = "outline",
-}: {
-  agent: AgentListItem;
-  /** Home's checklist draws it as the primary when it is the next step (GRA-328). */
-  variant?: "default" | "outline";
-}) {
+export function ConnectItsAgent({ agent }: { agent: AgentListItem }) {
   const trigger = useRef<HTMLButtonElement>(null);
   const [connecting, setConnecting] = useState(false);
   return (
     <>
       <Button
         ref={trigger}
-        variant={variant}
+        variant="outline"
         size="sm"
         aria-label={`Connect ${agent.name}`}
         onClick={() => setConnecting(true)}

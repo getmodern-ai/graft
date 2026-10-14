@@ -1,10 +1,15 @@
 import { useQuery } from "@tanstack/react-query";
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useState } from "react";
+import { useRef, useState } from "react";
 
 import { ActivityPanel } from "@/components/home/activity-panel";
 import { AgentsPanel } from "@/components/home/agents-panel";
-import { GetStartedPanel, HomeCreateAgentDialog } from "@/components/home/get-started-panel";
+import {
+  type ConnectAgent,
+  GetStartedPanel,
+  HomeConnectAgentDialog,
+  HomeCreateAgentDialog,
+} from "@/components/home/get-started-panel";
 import { GoodFirstPanel } from "@/components/home/good-first-panel";
 import { IntegrationsPanel } from "@/components/home/integrations-panel";
 import { NeedsYouPanel } from "@/components/home/needs-you-panel";
@@ -21,7 +26,7 @@ import {
 } from "@/components/page/page-header";
 import { useScreenTitle } from "@/components/shell/screen-title";
 import { Button } from "@/components/ui/button";
-import { agentsQuery } from "@/lib/agent-queries";
+import { type AgentListItem, agentsQuery } from "@/lib/agent-queries";
 import { homeActivityQuery } from "@/lib/home";
 import { homeChecklist, homeView } from "@/lib/home-checklist";
 import { homeGreeting, welcomeGreeting } from "@/lib/home-greeting";
@@ -69,10 +74,17 @@ function HomeRoute() {
   const view = homeView(checklist);
   const integrationOpen = checklist?.steps.some((step) => step.id === "integration" && !step.done);
 
-  // One create dialog for both views, mounted beside them rather than inside either: the agent it
-  // creates is step one done, which can swap the view, and the token it shows once must outlive it.
+  // The two dialogs that show a token once, mounted beside both views rather than inside either:
+  // what they do is step one done, which swaps the view or the button that opened them, and the
+  // token must outlive both. Every other action on Home navigates or copies, and shows nothing once.
   const [creating, setCreating] = useState(false);
   const openCreate = () => setCreating(true);
+  const [connecting, setConnecting] = useState<AgentListItem | null>(null);
+  const connectTrigger = useRef<HTMLButtonElement | null>(null);
+  const openConnect: ConnectAgent = (agent, trigger) => {
+    connectTrigger.current = trigger;
+    setConnecting(agent);
+  };
 
   const body =
     view === "start" && checklist ? (
@@ -91,7 +103,11 @@ function HomeRoute() {
 
         {/* The panels would each say they are empty; the frame shows what they will hold. */}
         <div className="grid gap-8 lg:grid-cols-[minmax(0,1fr)_22.5rem] lg:gap-6">
-          <GetStartedPanel checklist={checklist} onCreateAgent={openCreate} />
+          <GetStartedPanel
+            checklist={checklist}
+            onCreateAgent={openCreate}
+            onConnectAgent={openConnect}
+          />
           <WhatYouSeePanel />
         </div>
 
@@ -119,14 +135,19 @@ function HomeRoute() {
 
         {view === "partial" && checklist ? (
           <>
-            <GetStartedPanel checklist={checklist} emphasis={false} onCreateAgent={openCreate} />
+            <GetStartedPanel
+              checklist={checklist}
+              emphasis={false}
+              onCreateAgent={openCreate}
+              onConnectAgent={openConnect}
+            />
             {integrationOpen ? <GoodFirstPanel /> : null}
           </>
         ) : null}
 
         <div className="grid gap-8 lg:grid-cols-[minmax(0,1fr)_22.5rem] lg:gap-6">
           <NeedsYouPanel />
-          <AgentsPanel />
+          <AgentsPanel onConnectAgent={openConnect} />
         </div>
 
         <div className="grid gap-8 lg:grid-cols-2 lg:gap-6">
@@ -142,6 +163,11 @@ function HomeRoute() {
     <>
       {body}
       <HomeCreateAgentDialog open={creating} onOpenChange={setCreating} />
+      <HomeConnectAgentDialog
+        agent={connecting}
+        returnFocus={connectTrigger}
+        onClose={() => setConnecting(null)}
+      />
     </>
   );
 }

@@ -2,8 +2,8 @@ import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { useState } from "react";
 
-import { ConnectItsAgent } from "@/components/agent/agent-card";
 import { CreateAgentDialog } from "@/components/agent/create-agent-dialog";
+import type { ConnectAgent } from "@/components/home/get-started-panel";
 import {
   HomeListFailed,
   HomeListLoading,
@@ -33,9 +33,10 @@ import { type SetupStateData, setupQuery } from "@/lib/setup-queries";
  * *Your agents* (GRA-327): each active agent's mark, name and client line (GRA-324's decisions in
  * `lib/agent-cards.ts`), with its open requests as a chip, or *Connect its agent* while it awaits
  * its software (ADR 0024); then *Connect another agent*, which opens the agents screen's create
- * dialog here.
+ * dialog here. *Connect its agent* opens Home's `HomeConnectAgentDialog` (GRA-328): issuing the
+ * token swaps this row's action away, and the dialog showing it once must not go with it.
  */
-export function AgentsPanel() {
+export function AgentsPanel({ onConnectAgent }: { onConnectAgent: ConnectAgent }) {
   const agents = useQuery(agentsQuery);
   // The sidebar's read and key, so a chip's count is a share of the badge's.
   const pending = useQuery({ ...pendingActionsQuery, refetchInterval: 15_000 });
@@ -66,6 +67,7 @@ export function AgentsPanel() {
               agent={agent}
               requests={requests.get(agent.id) ?? 0}
               setup={setup.data}
+              onConnectAgent={onConnectAgent}
             />
           ))
         )}
@@ -108,10 +110,12 @@ function AgentRow({
   agent,
   requests,
   setup,
+  onConnectAgent,
 }: {
   agent: AgentListItem;
   requests: number;
   setup: SetupStateData | undefined;
+  onConnectAgent: ConnectAgent;
 }) {
   const target = connectAgentTarget(agent, setup);
   return (
@@ -139,7 +143,14 @@ function AgentRow({
           Connect its agent
         </Button>
       ) : target === "dialog" ? (
-        <ConnectItsAgent agent={agent} />
+        <Button
+          variant="outline"
+          size="sm"
+          aria-label={`Connect ${agent.name}`}
+          onClick={(event) => onConnectAgent(agent, event.currentTarget)}
+        >
+          Connect its agent
+        </Button>
       ) : requests > 0 ? (
         <Badge render={<Link to="/pending" />}>{requestsLabel(requests)}</Badge>
       ) : null}
