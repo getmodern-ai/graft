@@ -9,6 +9,7 @@ import { ServiceError } from "../errors";
 import type { ConnectionDeps } from "./connection.deps";
 import {
   completeOAuthConsent,
+  connectionStateOf,
   connectThroughProvider,
   isConnectionUsable,
   markOAuthConsentRequired,
@@ -101,7 +102,7 @@ function fakeDeps(overrides: Partial<ConnectionDeps> = {}): ConnectionDeps {
     insertConnection: vi.fn(async (_db, input) => ({ ...row, ...input }) as ConnectionRow),
     findConnection: vi.fn(async () => row),
     findConnectionForUpdate: vi.fn(async () => row),
-    findConnectionForShare: vi.fn(async () => row),
+    findConnectionForNoKeyUpdate: vi.fn(async () => row),
     findConnectionByIdUnscoped: vi.fn(async () => row),
     listConnections: vi.fn(async () => [row]),
     lockConnectionKey: vi.fn(async () => {}),
@@ -1550,6 +1551,32 @@ describe("the consent", () => {
     expect(isConnectionUsable(relayed, withBroker)).toBe(true);
     expect(isConnectionUsable({ ...relayed, revokedAt: NOW }, withBroker)).toBe(false);
     expect(isConnectionUsable(relayed)).toBe(false);
+  });
+
+  it("names the first reason a connection is not usable, and connected exactly when it is (GRA-291)", () => {
+    const base = toConnectionOutput({ ...row, credentialSetAt: NOW });
+    const relayed = toConnectionOutput({ ...row, provider: "broker", providerRef: "acct_1" });
+    const cases = [
+      [base, "connected"],
+      [{ ...base, revokedAt: NOW }, "revoked"],
+      [{ ...base, credentialSetAt: null }, "awaiting_credential"],
+      [toConnectionOutput(oauthRow), "awaiting_consent"],
+      [
+        toConnectionOutput({
+          ...oauthRow,
+          oauthRefreshState: {
+            consentRequired: { at: NOW.toISOString(), reason: "invalid_grant" },
+          },
+        }),
+        "consent_required",
+      ],
+      [relayed, "provider_unavailable"],
+      [{ ...relayed, revokedAt: NOW }, "revoked"],
+    ] as const;
+    for (const [connection, state] of cases) {
+      expect(connectionStateOf(connection)).toBe(state);
+      expect(isConnectionUsable(connection)).toBe(state === "connected");
+    }
   });
 });
 

@@ -4,6 +4,7 @@ import {
   findPendingAction,
   findPendingActionForPerson,
   insertPendingAction,
+  listDonePendingActions,
   listOpenPendingActions,
   updatePendingActionPayload,
 } from "@graft/db/repo/pending-action";
@@ -14,6 +15,8 @@ export type PendingActionDeps = {
   findPendingAction: typeof findPendingAction;
   findPendingActionForPerson: typeof findPendingActionForPerson;
   listOpenPendingActions: typeof listOpenPendingActions;
+  /** GRA-292: the Done list, keyset-paged. */
+  listDonePendingActions: typeof listDonePendingActions;
   answerPendingAction: typeof answerPendingAction;
   consumePendingAction: typeof consumePendingAction;
   /** GRA-147: the provider-link fallback rewrites an open ask's payload onto the keyring. */
@@ -27,6 +30,7 @@ export const defaultPendingActionDeps: PendingActionDeps = {
   findPendingAction,
   findPendingActionForPerson,
   listOpenPendingActions,
+  listDonePendingActions,
   answerPendingAction,
   consumePendingAction,
   updatePendingActionPayload,

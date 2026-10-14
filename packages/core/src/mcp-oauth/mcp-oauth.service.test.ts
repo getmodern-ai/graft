@@ -241,11 +241,18 @@ function harness(overrides: { clock?: Date } = {}) {
     findAgentByTokenHash: vi.fn(async () => null),
     findAgentByMcpAccessTokenHash: deps.findAgentByMcpAccessTokenHash,
     listAgents: vi.fn(async () =>
-      [...store.agents.values()].map((row) => ({ ...row, workingSetCount: 0 })),
+      [...store.agents.values()].map((row) => ({
+        ...row,
+        workingSetCount: 0,
+        connectionIds: [],
+        lastActiveAt: null,
+        hasRunTool: false,
+      })),
     ),
     updateAgent: vi.fn(async () => null),
     revokeAgent: vi.fn(async () => null),
     revokeMcpTokensForAgent: vi.fn(async () => 0),
+    closePendingActionsForAgent: vi.fn(async () => []),
     issueAgentToken: vi.fn(async () => null),
     setAgentConnectedVia: vi.fn(async (_db, _personId, agentId, via) => {
       const row = store.agents.get(agentId);

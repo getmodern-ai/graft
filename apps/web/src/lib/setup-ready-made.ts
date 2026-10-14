@@ -79,5 +79,5 @@ export function connectStepDescription(options: {
   const { vendorName, agentName, record } = options;
   if (record?.stockTool) return `Your tool is ready the moment ${vendorName} is connected.`;
   if (record?.goal) return `Graft starts building your tool the moment ${vendorName} is connected.`;
-  return `${agentName} asks for this connection as its own, the way it would from your harness. Answer it here.`;
+  return `${agentName} asks for this connection as its own, the way it would from your chat. Answer it here.`;
 }

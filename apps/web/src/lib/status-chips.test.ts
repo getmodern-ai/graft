@@ -87,6 +87,14 @@ describe("status chips", () => {
     expect(AGENT_STATUS_CHIP.awaiting_harness.variant).toBe("outline");
   });
 
+  // Person-facing copy says agent, never harness (CONTEXT.md, *Harness*; GRA-332).
+  it("names no harness in any agent chip", () => {
+    expect(AGENT_STATUS_CHIP.awaiting_harness.label).toBe("Not connected yet");
+    for (const chip of Object.values(AGENT_STATUS_CHIP)) {
+      expect(chip.label.toLowerCase()).not.toContain("harness");
+    }
+  });
+
   it("keeps the three tool annotations visually distinct", () => {
     const variants = new Set(Object.values(TOOL_ANNOTATION_CHIP).map((chip) => chip.variant));
     expect(variants.size).toBe(3);

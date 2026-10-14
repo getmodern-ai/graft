@@ -13,6 +13,7 @@ import {
   createAgentAwaitingHarness,
   createAgentForClient,
   issueAwaitingAgentToken,
+  listAgents,
   removeConnectionFromAgentScope,
   revokeAgent,
   rotateAgentToken,
@@ -65,10 +66,13 @@ function fakeDeps(overrides: Partial<AgentDeps> = {}): AgentDeps {
     findAgentForUpdate: vi.fn(async () => row),
     findAgentByTokenHash: vi.fn(async () => row),
     findAgentByMcpAccessTokenHash: vi.fn(async () => null),
-    listAgents: vi.fn(async () => [{ ...row, workingSetCount: 0 }]),
+    listAgents: vi.fn(async () => [
+      { ...row, workingSetCount: 0, connectionIds: [], lastActiveAt: null, hasRunTool: false },
+    ]),
     updateAgent: vi.fn(async (_db, _p, _a, patch) => ({ ...row, ...patch })),
     revokeAgent: vi.fn(async () => ({ ...row, revokedAt: NOW })),
     revokeMcpTokensForAgent: vi.fn(async () => 0),
+    closePendingActionsForAgent: vi.fn(async () => []),
     issueAgentToken: vi.fn(async (_db, _p, _a, token) => ({ ...awaitingRow, ...token })),
     setAgentConnectedVia: vi.fn(async (_db, _p, _a, via) => ({
       ...row,
@@ -212,6 +216,68 @@ describe("createAgent", () => {
   });
 });
 
+describe("listAgents", () => {
+  const ranAt = new Date("2026-10-01T10:00:00Z");
+  const listed = (overrides: { lastActiveAt: Date | null; hasRunTool: boolean }) => ({
+    ...row,
+    id: "agent_2",
+    scopeMode: "listed" as const,
+    revokedAt: NOW,
+    workingSetCount: 0,
+    connectionIds: ["conn_b"],
+    ...overrides,
+  });
+  const onAll = {
+    ...row,
+    workingSetCount: 2,
+    connectionIds: ["conn_a", "conn_b"],
+    lastActiveAt: null,
+    hasRunTool: false,
+  };
+
+  it("carries each row's scope and last activity, folds hasRunTool from the rows with no second read, and keeps the row's flag off the agent", async () => {
+    const deps = fakeDeps({
+      listAgents: vi.fn(async () => [onAll, listed({ lastActiveAt: ranAt, hasRunTool: true })]),
+    });
+    const answer = await listAgents(ctx, PRINCIPAL, deps);
+    expect(deps.listAgents).toHaveBeenCalledTimes(1);
+    expect(deps.listAgents).toHaveBeenCalledWith(fakeDb, "person_1");
+    expect(answer.hasRunTool).toBe(true);
+    expect(
+      answer.agents.map(({ id, scopeMode, connectionIds, lastActiveAt }) => ({
+        id,
+        scopeMode,
+        connectionIds,
+        lastActiveAt,
+      })),
+    ).toEqual([
+      {
+        id: row.id,
+        scopeMode: row.scopeMode,
+        connectionIds: ["conn_a", "conn_b"],
+        lastActiveAt: null,
+      },
+      { id: "agent_2", scopeMode: "listed", connectionIds: ["conn_b"], lastActiveAt: ranAt },
+    ]);
+    expect(answer.agents[0]).not.toHaveProperty("tokenHash");
+    expect(answer.agents[1]).not.toHaveProperty("hasRunTool");
+  });
+
+  it("answers hasRunTool false for an agent active only through refused or failed calls: activity is not a successful run", async () => {
+    const deps = fakeDeps({
+      listAgents: vi.fn(async () => [onAll, listed({ lastActiveAt: ranAt, hasRunTool: false })]),
+    });
+    const answer = await listAgents(ctx, PRINCIPAL, deps);
+    expect(answer.agents[1]?.lastActiveAt).toEqual(ranAt);
+    expect(answer.hasRunTool).toBe(false);
+  });
+
+  it("answers hasRunTool false for no agents", async () => {
+    const none = fakeDeps({ listAgents: vi.fn(async () => []) });
+    expect(await listAgents(ctx, PRINCIPAL, none)).toEqual({ agents: [], hasRunTool: false });
+  });
+});
+
 describe("toAgentOutput", () => {
   it("never carries the token hash", () => {
     const output = toAgentOutput(row);
@@ -267,10 +333,22 @@ describe("revokeAgent", () => {
     expect(result?.revokedAt).toEqual(NOW);
   });
 
+  /** GRA-292: so the Done list reads them as closed by the revoke, not as expired a day later. */
+  it("closes the asks the agent left open, at the same moment and in the same transaction", async () => {
+    const deps = fakeDeps();
+    await revokeAgent(ctx, PRINCIPAL, "agent_1", deps);
+    expect(deps.closePendingActionsForAgent).toHaveBeenCalledWith(
+      fakeDb,
+      { personId: "person_1", agentId: "agent_1" },
+      NOW,
+    );
+  });
+
   it("touches no token when there is no such agent, or it is revoked already", async () => {
     const deps = fakeDeps({ revokeAgent: vi.fn(async () => null) });
     await expect(revokeAgent(ctx, PRINCIPAL, "missing", deps)).resolves.toBeNull();
     expect(deps.revokeMcpTokensForAgent).not.toHaveBeenCalled();
+    expect(deps.closePendingActionsForAgent).not.toHaveBeenCalled();
   });
 });
 
@@ -308,7 +386,7 @@ describe("createAgentAwaitingHarness", () => {
   });
 });
 
-/** ADR 0024 (GRA-208): the token Setup's finish step and *Connect a harness* issue, once. */
+/** ADR 0024 (GRA-208): the token Setup's finish step and *Connect an agent* issue, once. */
 describe("issueAwaitingAgentToken", () => {
   it("mints once for an agent awaiting its harness and stores only the hash and the prefix", async () => {
     const deps = fakeDeps({ findAgent: vi.fn(async () => awaitingRow) });

@@ -418,11 +418,11 @@ async function startConsoleLink(
  * approval for the integration's tools, destructive ones left out, through the two writes the
  * connection confirmation makes. An agent that gains the connection later asks. Answers the ids.
  *
- * The row is read share-locked (`findConnectionForShare`) and refused when it is revoked or gone
+ * The row is read under `findConnectionForNoKeyUpdate` and refused when it is revoked or gone
  * (Greptile on #238): a revoke landing between the find and these writes sweeps the approvals, and
  * writing them after would hand them back on a Reconnect; the revoke's lock waits for this commit.
- * A share lock, not the revoke's own, so a scope write inserting a row that names the connection
- * is not blocked by it and the two cannot deadlock. Inside the caller's transaction.
+ * Not the revoke's own lock, so a scope write inserting a row that names the connection is not
+ * blocked by it and the two cannot deadlock. Inside the caller's transaction.
  */
 export async function recordFullAccess(
   ctx: ServiceContext,
@@ -430,7 +430,7 @@ export async function recordFullAccess(
   connection: Pick<ConnectionOutput, "id" | "vendor">,
   deps: Pick<ConsoleConnectDeps, "agent" | "approval" | "connection">,
 ): Promise<string[]> {
-  const locked = await deps.connection.findConnectionForShare(
+  const locked = await deps.connection.findConnectionForNoKeyUpdate(
     ctx.db,
     principal.personId,
     connection.id,

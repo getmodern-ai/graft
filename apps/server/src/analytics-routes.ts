@@ -53,6 +53,20 @@ export function connectProperties(answer: unknown): AnalyticsProperties {
   };
 }
 
+/** The job and its agent on a console Create's answer (`ConnectionAcquireJob`), or null for none. */
+export function acquireStartedProperties(answer: unknown): AnalyticsProperties {
+  const job =
+    typeof answer === "object" && answer !== null ? (answer as Record<string, unknown>) : {};
+  const agent =
+    typeof job.agent === "object" && job.agent !== null
+      ? (job.agent as Record<string, unknown>)
+      : {};
+  return {
+    job_id: typeof job.jobId === "string" ? job.jobId : null,
+    agent_id: typeof agent.id === "string" ? agent.id : null,
+  };
+}
+
 export const TRACKED_ROUTES: ReadonlyArray<TrackedRoute> = [
   { method: "POST", path: /^\/agents$/, event: "agent_created" },
   { method: "POST", path: /^\/agents\/[^/]+\/revoke$/, event: "agent_revoked" },
@@ -70,11 +84,19 @@ export const TRACKED_ROUTES: ReadonlyArray<TrackedRoute> = [
     properties: connectProperties,
   },
   { method: "POST", path: /^\/connections\/[^/]+\/revoke$/, event: "connection_revoked" },
+  {
+    // Create on an integration's page (GRA-303), the console's counterpart of Setup's Build row.
+    method: "POST",
+    path: /^\/connections\/[^/]+\/acquire$/,
+    event: "acquire_started",
+    properties: acquireStartedProperties,
+  },
   { method: "POST", path: /^\/pending-actions\/[^/]+\/connection$/, event: "connection_confirmed" },
   { method: "POST", path: /^\/pending-actions\/[^/]+\/credential$/, event: "credential_entered" },
   { method: "POST", path: /^\/pending-actions\/[^/]+\/answer$/, event: "approval_answered" },
   { method: "PUT", path: /^\/me\/model-key$/, event: "model_key_set" },
   { method: "DELETE", path: /^\/me\/model-key$/, event: "model_key_removed" },
+  { method: "POST", path: /^\/me\/password$/, event: "password_set" },
   {
     method: "POST",
     path: /^\/setup\/start$/,

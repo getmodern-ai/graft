@@ -19,7 +19,7 @@ import type { SetupStep } from "@graft/core/setup/setup.rules";
 export type SetupStage = 1 | 2 | 3 | 4;
 
 export const SETUP_STAGES: readonly { stage: SetupStage; label: string }[] = [
-  { stage: 1, label: "Harness" },
+  { stage: 1, label: "Agent" },
   { stage: 2, label: "Integration" },
   { stage: 3, label: "Tool" },
   { stage: 4, label: "Connect & build" },

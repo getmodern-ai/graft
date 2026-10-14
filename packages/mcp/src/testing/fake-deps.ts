@@ -436,6 +436,24 @@ export function createFakeDeps(store: FakeStore): FakeDeps {
     // authorization server's own suite in `@graft/core` drives the OAuth path over its own fakes.
     findAgentByMcpAccessTokenHash: async () => null,
     revokeMcpTokensForAgent: async () => 0,
+    /** The repo's predicate (GRA-292): the agent's open asks, both clocks and the reason stamped. */
+    closePendingActionsForAgent: async (_db, scope, at) => {
+      const closed: PendingActionRow[] = [];
+      if (store.agents.get(scope.agentId)?.personId !== scope.personId) return closed;
+      for (const [id, row] of store.pendingActions) {
+        if (row.agentId === scope.agentId && row.consumedAt === null && row.expiresAt > at) {
+          const updated = {
+            ...row,
+            expiresAt: at,
+            consumedAt: at,
+            closedReason: "agent_revoked" as const,
+          };
+          store.pendingActions.set(id, updated);
+          closed.push(updated);
+        }
+      }
+      return closed;
+    },
     issueAgentToken: async (_db, personId, agentId, token, replacing = null) => {
       const row = store.agents.get(agentId);
       if (!row || row.personId !== personId) return null;
@@ -465,6 +483,24 @@ export function createFakeDeps(store: FakeStore): FakeDeps {
           workingSetCount: [...store.workingSet.values()].filter(
             (entry) => entry.agentId === row.id,
           ).length,
+          connectionIds:
+            row.scopeMode === "all"
+              ? [...store.connections.values()]
+                  .filter((connection) => connection.personId === personId)
+                  .map((connection) => connection.id)
+                  .sort()
+              : // The person's rows alone, as the real statement reads them off `connection`.
+                [...(store.agentConnections.get(row.id) ?? [])]
+                  .filter((id) => store.connections.get(id)?.personId === personId)
+                  .sort(),
+          lastActiveAt:
+            store.usage
+              .filter((usage) => usage.agentId === row.id && !usage.dryRun)
+              .map((usage) => usage.createdAt)
+              .sort((a, b) => b.getTime() - a.getTime())[0] ?? null,
+          hasRunTool: store.usage.some(
+            (usage) => usage.agentId === row.id && !usage.dryRun && usage.outcome === "ok",
+          ),
         })),
     updateAgent: async (_db, personId, agentId, patch) => {
       const row = store.agents.get(agentId);
@@ -578,7 +614,7 @@ export function createFakeDeps(store: FakeStore): FakeDeps {
       const row = store.connections.get(id);
       return row && row.personId === personId ? row : null;
     },
-    findConnectionForShare: async (_db, personId, id) => {
+    findConnectionForNoKeyUpdate: async (_db, personId, id) => {
       const row = store.connections.get(id);
       return row && row.personId === personId ? row : null;
     },
@@ -708,7 +744,12 @@ export function createFakeDeps(store: FakeStore): FakeDeps {
           row.consumedAt === null &&
           row.expiresAt > at
         ) {
-          const updated = { ...row, expiresAt: at, consumedAt: at };
+          const updated = {
+            ...row,
+            expiresAt: at,
+            consumedAt: at,
+            closedReason: "connection_revoked" as const,
+          };
           store.pendingActions.set(id, updated);
           closed.push(updated);
         }
@@ -1207,6 +1248,27 @@ export function createFakeDeps(store: FakeStore): FakeDeps {
       store.buildApprovals.set(key(row.agentId, row.connectionId), row);
       return row;
     },
+    listBuildApprovals: async (_db, scope) => {
+      if (!ownsAgent(scope)) return [];
+      return [...store.buildApprovals.values()]
+        .filter((row) => row.agentId === scope.agentId)
+        .flatMap((row) => {
+          const conn = store.connections.get(row.connectionId);
+          if (!conn || conn.personId !== scope.personId) return [];
+          return [{ ...row, vendor: conn.vendor, displayName: conn.displayName }];
+        })
+        .sort(
+          (a, b) =>
+            a.displayName.localeCompare(b.displayName) ||
+            a.connectionId.localeCompare(b.connectionId),
+        );
+    },
+    deleteBuildApproval: async (_db, scope, connectionId) => {
+      if (!ownsAgent(scope)) return null;
+      const row = store.buildApprovals.get(key(scope.agentId, connectionId)) ?? null;
+      store.buildApprovals.delete(key(scope.agentId, connectionId));
+      return row;
+    },
     findVendorApproval: async (_db, scope, vendor) =>
       ownsAgent(scope) ? (store.vendorApprovals.get(key(scope.agentId, vendor)) ?? null) : null,
     listVendorApprovals: async (_db, scope) =>
@@ -1305,7 +1367,16 @@ export function createFakeDeps(store: FakeStore): FakeDeps {
   const ownsAction = (personId: string, row: PendingActionRow | undefined) =>
     row !== undefined && store.agents.get(row.agentId)?.personId === personId;
   const pendingAction: PendingActionDeps = {
-    insertPendingAction: async (_db, input) => {
+    /** The repo's guard (Greptile on #225): only for an active agent of the scope. */
+    insertPendingAction: async (_db, scope, input) => {
+      const holder = store.agents.get(input.agentId);
+      if (
+        input.agentId !== scope.agentId ||
+        holder?.personId !== scope.personId ||
+        holder.revokedAt !== null
+      ) {
+        return null;
+      }
       const row: PendingActionRow = {
         id: input.id,
         agentId: input.agentId,
@@ -1316,6 +1387,7 @@ export function createFakeDeps(store: FakeStore): FakeDeps {
         answeredAt: input.answeredAt ?? null,
         answer: input.answer ?? null,
         consumedAt: input.consumedAt ?? null,
+        closedReason: input.closedReason ?? null,
         owner: "person",
         createdAt: input.createdAt ?? store.now(),
         updatedAt: input.updatedAt ?? store.now(),
@@ -1337,10 +1409,26 @@ export function createFakeDeps(store: FakeStore): FakeDeps {
           (row) => ownsAction(personId, row) && row.answeredAt === null && row.expiresAt > now,
         )
         .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime() || b.id.localeCompare(a.id)),
+    /** The Done list's predicates and keyset (GRA-292): answered or past expiry, after the cursor. */
+    listDonePendingActions: async (_db, personId, args) => {
+      const finished = (row: PendingActionRow) => (row.answeredAt ?? row.expiresAt).getTime();
+      return [...store.pendingActions.values()]
+        .filter(
+          (row) =>
+            ownsAction(personId, row) &&
+            (row.answeredAt !== null || row.expiresAt <= args.now) &&
+            (!args.after ||
+              finished(row) < args.after.finishedAt.getTime() ||
+              (finished(row) === args.after.finishedAt.getTime() && row.id < args.after.id)),
+        )
+        .sort((a, b) => finished(b) - finished(a) || (b.id < a.id ? -1 : b.id > a.id ? 1 : 0))
+        .slice(0, args.limit);
+    },
     answerPendingAction: async (_db, personId, id, args) => {
       const row = store.pendingActions.get(id);
       if (!ownsAction(personId, row) || !row) return null;
-      if (row.answeredAt !== null || row.expiresAt <= args.answeredAt) return null;
+      if (row.answeredAt !== null || row.consumedAt !== null) return null;
+      if (row.expiresAt <= args.answeredAt) return null;
       const updated = { ...row, answer: args.answer, answeredAt: args.answeredAt };
       store.pendingActions.set(id, updated);
       return updated;
@@ -1356,7 +1444,9 @@ export function createFakeDeps(store: FakeStore): FakeDeps {
     updatePendingActionPayload: async (_db, personId, id, args) => {
       const row = store.pendingActions.get(id);
       if (!ownsAction(personId, row) || !row) return null;
-      if (row.answeredAt !== null || row.expiresAt <= args.now) return null;
+      if (row.answeredAt !== null || row.consumedAt !== null || row.expiresAt <= args.now) {
+        return null;
+      }
       // The repo's optimistic predicates: still this provider's, and unwritten since the read.
       if (row.updatedAt.getTime() !== args.expect.updatedAt.getTime()) return null;
       if ((row.payload as { provider?: unknown }).provider !== args.expect.provider) return null;
@@ -1435,6 +1525,21 @@ export function createFakeDeps(store: FakeStore): FakeDeps {
             )
             .slice(0, limit)
         : [],
+    listAcquireJobsForConnection: async (_db, personId, { connectionId, since, limit }) =>
+      [...store.acquireJobs.values()]
+        .filter((row) => row.connectionId === connectionId && row.createdAt >= since)
+        .flatMap((job) => {
+          const owner = store.agents.get(job.agentId);
+          return owner?.personId === personId
+            ? [{ job, agent: { id: owner.id, name: owner.name, revokedAt: owner.revokedAt } }]
+            : [];
+        })
+        .sort(
+          (a, b) =>
+            b.job.createdAt.getTime() - a.job.createdAt.getTime() ||
+            b.job.id.localeCompare(a.job.id),
+        )
+        .slice(0, limit),
     updateAcquireJob: async (_db, scope, id, patch) => {
       const row = store.acquireJobs.get(id);
       if (!ownsJob(scope, row) || !row) return null;

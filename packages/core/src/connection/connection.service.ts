@@ -119,13 +119,35 @@ export function isConnectionUsable(
   connection: ConnectionOutput,
   providers: readonly ProviderDescription[] = DEFAULT_PROVIDERS,
 ): boolean {
-  if (connection.revokedAt !== null) return false;
+  return connectionStateOf(connection, providers) === "connected";
+}
+
+/**
+ * Where a connection stands, one word: `connected` exactly when `isConnectionUsable` says so, and
+ * otherwise the first reason it is not, in the order that function asks. `provider_unavailable` is
+ * a row whose provider this deployment no longer enables, which the person cannot fix from here.
+ */
+export type ConnectionState =
+  | "connected"
+  | "revoked"
+  | "provider_unavailable"
+  | "awaiting_credential"
+  | "awaiting_consent"
+  | "consent_required";
+
+export function connectionStateOf(
+  connection: ConnectionOutput,
+  providers: readonly ProviderDescription[] = DEFAULT_PROVIDERS,
+): ConnectionState {
+  if (connection.revokedAt !== null) return "revoked";
   const provider = providers.find((candidate) => candidate.name === connection.provider);
-  if (!provider) return false;
-  if (provider.connect.kind !== "form") return true;
+  if (!provider) return "provider_unavailable";
+  if (provider.connect.kind !== "form") return "connected";
   // A `none` connection holds no credential and is usable from registration (GRA-66).
-  if (connection.credentialSetAt === null && takesCredential(connection.scheme)) return false;
-  return connection.oauth === null || connection.oauth.status === "connected";
+  if (connection.credentialSetAt === null && takesCredential(connection.scheme)) {
+    return "awaiting_credential";
+  }
+  return connection.oauth === null ? "connected" : connection.oauth.status;
 }
 
 /**

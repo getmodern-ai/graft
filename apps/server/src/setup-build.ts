@@ -3,6 +3,7 @@ import {
   type AgentDeps,
   type ApprovalDeps,
   type ConnectionDeps,
+  type ConnectionOutput,
   getAcquireJob,
   getAgent,
   getConnection,
@@ -109,7 +110,10 @@ export type SetupGoalContext = {
   job: { id: string; goal: string; status: AcquireJobRow["status"] } | null;
 };
 
-function availability(deps: Pick<SetupBuildRouteDeps, "model">): SetupBuildAvailability {
+/** Whether a console Build or Create can start a job: the `acquire` door's own model check. */
+export function setupBuildAvailability(
+  deps: Pick<SetupBuildRouteDeps, "model">,
+): SetupBuildAvailability {
   return acquireConfigured(deps)
     ? { available: true }
     : { available: false, reason: ACQUIRE_UNCONFIGURED, message: SETUP_BUILD_UNCONFIGURED_MESSAGE };
@@ -140,7 +144,7 @@ export async function setupGoalContext(
       : null,
     starterId: starter && isStarterVendorId(starter.id) ? starter.id : null,
     goal: starter?.goal ?? "",
-    build: availability(deps),
+    build: setupBuildAvailability(deps),
     job: held?.job ? { id: held.job.id, goal: held.job.goal, status: held.job.status } : null,
   };
 }
@@ -240,20 +244,45 @@ export async function setupGoalSuggestions(
     goalSuggestions: GoalSuggestionMemo;
   },
 ): Promise<SetupGoalSuggestionsResult> {
-  const notAsked: SetupGoalSuggestionsResult = { suggestions: [], outcome: "not_asked" };
+  if (!canProposeGoals(deps)) return NOT_ASKED;
+  const record = await deps.setup.findSetup(ctx.db, principal.personId);
+  if (record?.step !== "goal" || record.skippedAt || record.completedAt) return NOT_ASKED;
+  const connection = await recordConnection(ctx, principal, record.connectionId, deps);
+  if (!connection) return NOT_ASKED;
+  return proposeGoalsForConnection(principal, connection, deps, `setup:${principal.personId}`);
+}
+
+const NOT_ASKED: SetupGoalSuggestionsResult = { suggestions: [], outcome: "not_asked" };
+
+function canProposeGoals(deps: Pick<SetupBuildRouteDeps, "model">): boolean {
+  return acquireConfigured(deps) && Boolean(deps.model?.proposeGoals);
+}
+
+/**
+ * The suggested goals for one of the person's connections, whoever asks: Setup's goal step above,
+ * and an integration's page (GRA-303, `connection-acquire.ts`). One memo entry per person and
+ * connection, so the two share a proposal. None, and no call, where no model can author or the
+ * adapter cannot propose, or where the connection is revoked; `traceId` names the caller on the
+ * model's trace.
+ */
+export async function proposeGoalsForConnection(
+  principal: Principal,
+  connection: Pick<
+    ConnectionOutput,
+    "id" | "vendor" | "displayName" | "primaryHost" | "hosts" | "revokedAt"
+  >,
+  deps: Pick<SetupBuildRouteDeps, "model"> & { goalSuggestions: GoalSuggestionMemo },
+  traceId: string,
+): Promise<SetupGoalSuggestionsResult> {
   const model = deps.model;
   const propose = model?.proposeGoals?.bind(model);
-  if (!acquireConfigured(deps) || !propose) return notAsked;
-  const record = await deps.setup.findSetup(ctx.db, principal.personId);
-  if (record?.step !== "goal" || record.skippedAt || record.completedAt) return notAsked;
-  const connection = await recordConnection(ctx, principal, record.connectionId, deps);
-  if (!connection || connection.revokedAt) return notAsked;
+  if (!acquireConfigured(deps) || !propose || connection.revokedAt) return NOT_ASKED;
   const starter = starterVendorFor(connection.vendor);
   return deps.goalSuggestions.run(`${principal.personId}:${connection.id}`, async () => {
     try {
       const proposal = await propose({
         personId: principal.personId,
-        traceId: `setup:${principal.personId}`,
+        traceId,
         vendor: connection.vendor,
         displayName: connection.displayName,
         primaryHost: connection.primaryHost,
@@ -284,7 +313,7 @@ export async function buildSetupTool(
   input: { goal: string; discardJob?: boolean },
   deps: SetupBuildRouteDeps,
 ): Promise<SetupState> {
-  const build = availability(deps);
+  const build = setupBuildAvailability(deps);
   if (!build.available) {
     throw new ServiceError("CONFLICT", build.message, { details: { reason: build.reason } });
   }

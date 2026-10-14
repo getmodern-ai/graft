@@ -34,7 +34,7 @@ export type StatusChip = {
  */
 export const AGENT_STATUS_CHIP = {
   active: { variant: "success", label: "Active" },
-  awaiting_harness: { variant: "outline", label: "Awaiting harness" },
+  awaiting_harness: { variant: "outline", label: "Not connected yet" },
   revoked: { variant: "destructive", label: "Revoked" },
 } as const satisfies Record<"active" | "awaiting_harness" | "revoked", StatusChip>;
 

@@ -111,14 +111,14 @@ export async function runAgentTool(
     if (!subject.readOnly) {
       return new ServiceError(
         "CONFLICT",
-        `${wire} is not read-only, so running it asks for your approval first; the console runs read-only tools only, so run it from the harness, where the ask reaches you`,
+        `${wire} is not read-only, so running it asks for your approval first; the console runs read-only tools only, so run it from your agent, where the ask reaches you`,
         { details: { reason: "tool_not_read_only", tool: wire } },
       );
     }
     if (!(await isPromoted(ctx, scope, subject.id, deps.workingSet))) {
       return new ServiceError(
         "CONFLICT",
-        `${wire} is not in ${agent.name}'s working set; promote it first, as the harness would`,
+        `${wire} is not in ${agent.name}'s working set; promote it first, as the agent would`,
         { details: { reason: "tool_not_in_working_set", tool: wire } },
       );
     }

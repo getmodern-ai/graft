@@ -5,7 +5,7 @@ import { backTargetOf, SETUP_RAIL_STEPS, setupProgress, setupRail } from "./setu
 describe("setupRail", () => {
   it("lists the seven steps in order in the person's words: Integration, Task, Build", () => {
     expect(setupRail("harness").map((entry) => entry.label)).toEqual([
-      "Harness",
+      "Agent",
       "Integration",
       "Connect",
       "Task",
@@ -85,7 +85,7 @@ describe("the rail's links (GRA-215)", () => {
 
 describe("setupProgress", () => {
   it("says which step of seven, with a colon and no dash", () => {
-    expect(setupProgress("harness")).toEqual({ text: "Step 1 of 7: Harness", fraction: 1 / 7 });
+    expect(setupProgress("harness")).toEqual({ text: "Step 1 of 7: Agent", fraction: 1 / 7 });
     expect(setupProgress("vendor").text).toBe("Step 2 of 7: Integration");
     expect(setupProgress("finish")).toEqual({ text: "Step 7 of 7: Finish", fraction: 1 });
     expect(setupProgress("completed")).toEqual({ text: "Setup complete", fraction: 1 });

@@ -1,4 +1,5 @@
-import type { SocialProviderName } from "@graft/auth";
+import type { SetFirstPasswordOutcome, SocialProviderName } from "@graft/auth";
+import { MAX_PASSWORD_LENGTH, MIN_PASSWORD_LENGTH } from "@graft/auth/password.rules";
 import {
   type AgentDeps,
   type AgentScopeToggleOutput,
@@ -8,6 +9,7 @@ import {
   type ConnectionDeps,
   type ConnectionOutput,
   createAgent,
+  createIntegrationDeps,
   defaultAcquireJobDeps,
   defaultIntegrationToolsDeps,
   defaultSetupDeps,
@@ -21,6 +23,7 @@ import {
   getPendingActionForPerson,
   getPersonModelKey,
   getSetupState,
+  type IntegrationDeps,
   type IntegrationDirectory,
   type IntegrationTool,
   type IntegrationToolsDeps,
@@ -29,7 +32,10 @@ import {
   type LedgerDeps,
   listAgents,
   listApprovals,
+  listBuildApprovals,
   listConnections,
+  listDonePendingActions,
+  listIntegrations,
   listIntegrationTools,
   listOpenPendingActions,
   listSuggestedIntegrations,
@@ -44,7 +50,12 @@ import {
   moveSetupOn,
   orNotFound,
   type PendingActionDeps,
+  type PendingActionDoneState,
+  type PendingActionSubject,
   type Principal,
+  pendingActionDoneState,
+  pendingActionFinishedAt,
+  pendingActionSubject,
   planSetup,
   reconnectConnection,
   registerConnection,
@@ -79,12 +90,14 @@ import {
   updateAgentLimits,
   validateVendor,
   type WorkingSetDeps,
+  withdrawBuildApproval,
   withdrawVendorApproval,
 } from "@graft/core";
 import type { DbOrTx } from "@graft/db";
 import type { PendingActionRow } from "@graft/db/repo/pending-action";
 import type { AuthoredToolRow } from "@graft/db/repo/tool";
 import { agentScopeMode } from "@graft/db/schema/agent";
+import type { PendingActionClosedReason } from "@graft/db/schema/pending-action";
 import { setupHarness } from "@graft/db/schema/setup";
 import type { UsageOutcome } from "@graft/db/schema/usage";
 import type { WorkingSetPromotedBy } from "@graft/db/schema/working-set";
@@ -117,6 +130,13 @@ import { cors } from "hono/cors";
 import { z } from "zod";
 
 import { trackedRoute } from "./analytics-routes";
+import {
+  type ConnectionAcquireDeps,
+  type ConnectionGoalSuggestions,
+  connectionGoalSuggestions,
+  listConnectionJobs,
+  startConnectionAcquire,
+} from "./connection-acquire";
 import { createConnectionProposalStore } from "./connection-proposals";
 import { type ConsoleConnectDeps, connectFromConsole, recordFullAccess } from "./console-connect";
 import {
@@ -178,6 +198,11 @@ import {
 } from "./setup-stock";
 import { runAgentTool } from "./tool-run";
 
+export type {
+  ConnectionAcquireJob,
+  ConnectionAcquireJobs,
+  ConnectionGoalSuggestions,
+} from "./connection-acquire";
 export type {
   ConnectionProposalAvailability,
   ConnectionProposalStarted,
@@ -264,7 +289,19 @@ export type ModelOutput = ModelDeployment & { personKey: boolean };
 export type AuthHandle = {
   handler: (request: Request) => Promise<Response>;
   getSession: (headers: Headers) => Promise<SessionLike>;
+  /**
+   * `@graft/auth`'s `setFirstPassword` over the session's headers (GRA-298), behind
+   * `POST /me/password`. Optional so a harness that never sets a password binds nothing; absent,
+   * the route refuses saying so.
+   */
+  setFirstPassword?: (headers: Headers, newPassword: string) => Promise<SetFirstPasswordOutcome>;
 };
+
+/** `POST /me/password`'s body: the new password, held to Better Auth's lengths (GRA-298). */
+const setPasswordBody = z.object({
+  newPassword: z.string().min(MIN_PASSWORD_LENGTH).max(MAX_PASSWORD_LENGTH),
+});
+export type SetPasswordBody = z.input<typeof setPasswordBody>;
 
 /**
  * How a person may sign in at this deployment (GRA-81): email and password always, and the
@@ -287,6 +324,11 @@ export type ApiDeps = {
   pendingAction: PendingActionDeps;
   /** The person's own model key (GRA-31, ADR 0014) — the vault's encrypt half rides inside. */
   modelKey: ModelKeyDeps;
+  /**
+   * The integrations list's four reads (GRA-291). Optional, and the real reads under
+   * `connection.providers` when absent; a suite that reaches `/integrations` passes fakes.
+   */
+  integration?: IntegrationDeps;
   /**
    * The person's Setup record (ADR 0024; GRA-204). Optional, and `defaultSetupDeps` when absent,
    * so a harness that never reaches `/setup` binds nothing; a suite that does passes fakes.
@@ -419,6 +461,29 @@ export type PendingActionCard = {
   consumedAt: Date | null;
   url: string;
 };
+
+/**
+ * A finished ask as the console's Done list shows it (GRA-292): the card less its link, which a
+ * finished ask has no use for, plus how it finished and when (`@graft/core`'s
+ * `pendingActionDoneState` and `pendingActionFinishedAt`), the revoke that closed it if one did,
+ * and what it was about (`pendingActionSubject`), so a Change action reads the approval standing
+ * now through `/approvals` or `/vendor-approvals` rather than the answer recorded here.
+ */
+export type DonePendingActionCard = Omit<PendingActionCard, "url"> & {
+  state: PendingActionDoneState;
+  closedReason: PendingActionClosedReason | null;
+  finishedAt: Date;
+  subject: PendingActionSubject;
+};
+
+/** `GET /pending-actions?state=done`'s answer: a page, and where the next starts (null on the last). */
+export type DonePendingActionsOutput = {
+  pendingActions: DonePendingActionCard[];
+  nextCursor: string | null;
+};
+
+/** `GET /pending-actions`' `state`: `open` (the inbox, and the default) or `done`. */
+const pendingActionsState = z.enum(["open", "done"]).default("open");
 
 /**
  * The person's answer to a `tool`, `build` or `scope` ask: `allow`; for a tool ask, whether it
@@ -571,6 +636,17 @@ const setupNextBody = z.union([
 ]);
 /** The continue's wire shape, as the console posts it. */
 export type SetupNextBody = z.input<typeof setupNextBody>;
+
+/**
+ * `POST /connections/:id/acquire` (GRA-303): the agent the person picked before Create, and the
+ * goal as they accepted or typed it, `acquire`'s bound.
+ */
+const connectionAcquireBody = z.strictObject({
+  agentId: z.string().min(1),
+  goal: z.string().trim().min(1).max(GOAL_MAX_LENGTH),
+});
+/** The Create's wire shape, as the console posts it. */
+export type ConnectionAcquireBody = z.input<typeof connectionAcquireBody>;
 
 /**
  * `POST /agents/:id/tools/:vendor/:name/run` (GRA-208): the tool's input, which the run holds to
@@ -786,6 +862,17 @@ export type ToolVersionOutput = {
 export type ToolboxToolOutput = ToolOutput & {
   lineage: StockLineage;
   versions: ToolVersionOutput[];
+};
+
+/**
+ * One build approval on the agent's page (ADR 0008 as amended 2026-09-18; GRA-295): the connection
+ * `acquire` may work against without asking, the integration it names, and when it was granted.
+ */
+export type BuildApprovalOutput = {
+  connectionId: string;
+  vendor: string;
+  displayName: string;
+  grantedAt: Date;
 };
 
 /**
@@ -1180,6 +1267,29 @@ export function createApi(options: ApiOptions): Hono {
   api.delete("/me/model-key", async (c) => {
     const principal = await principalOf(c.req.raw.headers);
     return c.json({ deleted: await deletePersonModelKey(ctx, principal, modelKeyDeps) });
+  });
+
+  /**
+   * A first password for a person who signed up with Google or GitHub (GRA-298; ADR 0020), so the
+   * email door opens for them too. Better Auth keeps this server-only, so it is here, behind the
+   * session and the origin check; a person who already holds a password is refused 409 and changes
+   * it at Better Auth's own `/change-password` with the current one. The lengths are checked
+   * before Better Auth is asked, so the refusal is this API's shape.
+   */
+  api.post("/me/password", async (c) => {
+    await principalOf(c.req.raw.headers);
+    const body = await parseBody(c.req.raw, setPasswordBody);
+    if (!options.auth.setFirstPassword) {
+      throw new ServiceError("BAD_REQUEST", "This server cannot set a password");
+    }
+    const outcome = await options.auth.setFirstPassword(c.req.raw.headers, body.newPassword);
+    if (outcome === "password_exists") {
+      throw new ServiceError(
+        "CONFLICT",
+        "You already have a password. Change it with your current one instead.",
+      );
+    }
+    return c.json({ set: true });
   });
 
   /**
@@ -1651,7 +1761,7 @@ export function createApi(options: ApiOptions): Hono {
 
   api.get("/agents", async (c) => {
     const principal = await principalOf(c.req.raw.headers);
-    return c.json({ agents: await listAgents(ctx, principal, agentDeps) });
+    return c.json(await listAgents(ctx, principal, agentDeps));
   });
 
   api.post("/agents", async (c) => {
@@ -1694,7 +1804,7 @@ export function createApi(options: ApiOptions): Hono {
 
   /**
    * The static token of an agent **awaiting its harness** (ADR 0024; GRA-208), for Setup's finish
-   * step and *Connect a harness* on such an agent, answered once, `201 { agent, token }`, as
+   * step and *Connect an agent* on such an agent, answered once, `201 { agent, token }`, as
    * `POST /agents` answers. For the agent Setup runs as, while Setup is not completed and no client
    * holds the agent, a **replacement** (ADR 0024 as amended 2026-09-25): the finish step held the
    * only plaintext, so a reload lost it, and the new hash replaces the old one, which stops
@@ -1834,6 +1944,42 @@ export function createApi(options: ApiOptions): Hono {
     return c.json({ changes });
   });
 
+  /**
+   * The agent's build approvals, one per connection, for the agent's page to list and withdraw
+   * (ADR 0008 as amended 2026-09-18). Granted only from an answer (the build ask, a connection's
+   * `approveBuild`, Setup's Build), never here. A revoked agent's still answer, as its history does.
+   */
+  api.get("/agents/:id/build-approvals", async (c) => {
+    const principal = await principalOf(c.req.raw.headers);
+    const agent = orNotFound(
+      await getAgent(ctx, principal, c.req.param("id"), agentDeps),
+      "Agent not found",
+    );
+    const rows = await listBuildApprovals(
+      ctx,
+      { personId: principal.personId, agentId: agent.id },
+      approvalDeps,
+    );
+    const buildApprovals: BuildApprovalOutput[] = rows.map((row) => ({
+      connectionId: row.connectionId,
+      vendor: row.vendor,
+      displayName: row.displayName,
+      grantedAt: row.grantedAt,
+    }));
+    return c.json({ buildApprovals });
+  });
+
+  /** Withdraw one: the agent's next `acquire` against the connection asks again. */
+  api.delete("/agents/:id/build-approvals/:connectionId", async (c) => {
+    const principal = await principalOf(c.req.raw.headers);
+    const scope = { personId: principal.personId, agentId: c.req.param("id") };
+    const row = orNotFound(
+      await withdrawBuildApproval(ctx, scope, c.req.param("connectionId"), approvalDeps),
+      "No build approval for this connection and agent",
+    );
+    return c.json({ buildApproval: { agentId: row.agentId, connectionId: row.connectionId } });
+  });
+
   api.put("/agents/:id/scope", async (c) => {
     const principal = await principalOf(c.req.raw.headers);
     const body = await parseBody(c.req.raw, scopeBody);
@@ -1902,6 +2048,23 @@ export function createApi(options: ApiOptions): Hono {
   api.get("/connections", async (c) => {
     const principal = await principalOf(c.req.raw.headers);
     return c.json({ connections: await listConnections(ctx, principal, connectionDeps) });
+  });
+
+  /**
+   * The integrations list (GRA-291): one row per vendor the person holds a live connection of, with
+   * its connections and their states, the active agents whose scope reaches any of them, the live
+   * tool count, the last call and the worst connection's reason for needing the person
+   * (`@graft/core`'s `IntegrationOutput`). Four statements whatever the person holds.
+   */
+  api.get("/integrations", async (c) => {
+    const principal = await principalOf(c.req.raw.headers);
+    const integrations = await listIntegrations(
+      ctx,
+      principal,
+      { executeToolName },
+      options.deps.integration ?? createIntegrationDeps(connectionDeps.providers),
+    );
+    return c.json({ integrations });
   });
 
   /**
@@ -2091,6 +2254,70 @@ export function createApi(options: ApiOptions): Hono {
   });
 
   /**
+   * An integration's page gets a new tool (GRA-303; ADR 0024 as amended 2026-10-14;
+   * `connection-acquire.ts`). Create is the picked agent's build approval and starts its job, in
+   * `ConnectionAcquireJob`'s shape; the list finds the connection's recent jobs after a reload,
+   * and each is polled through `GET /agents/:id/acquire-jobs/:jobId`. The chips share Setup's memo,
+   * so the model is asked once per person and connection whichever screen asks.
+   */
+  const connectionAcquireDeps: ConnectionAcquireDeps = {
+    agent: agentDeps,
+    connection: connectionDeps,
+    approval: approvalDeps,
+    acquireJob: acquireJobDeps,
+    // Read at call time, as Setup's are: `index.ts` binds the runner after this is built.
+    get model() {
+      return options.acquire?.model ?? null;
+    },
+    get acquireRunner() {
+      return options.acquire?.acquireRunner;
+    },
+  };
+
+  api.post("/connections/:id/acquire", async (c) => {
+    const principal = await principalOf(c.req.raw.headers);
+    const body = await parseBody(c.req.raw, connectionAcquireBody);
+    const job = await startConnectionAcquire(
+      ctx,
+      principal,
+      { connectionId: c.req.param("id"), ...body },
+      connectionAcquireDeps,
+    );
+    return c.json(job, 201);
+  });
+
+  api.get("/connections/:id/acquire-jobs", async (c) => {
+    const principal = await principalOf(c.req.raw.headers);
+    return c.json(
+      await listConnectionJobs(ctx, principal, c.req.param("id"), connectionAcquireDeps),
+    );
+  });
+
+  api.get("/connections/:id/goal-suggestions", async (c) => {
+    const principal = await principalOf(c.req.raw.headers);
+    const { suggestions, build, outcome, error, cached, dropped } = await connectionGoalSuggestions(
+      ctx,
+      principal,
+      c.req.param("id"),
+      {
+        ...connectionAcquireDeps,
+        goalSuggestions,
+      },
+    );
+    useLogger().set({
+      goalSuggestions: {
+        outcome,
+        count: suggestions.length,
+        ...(dropped ? { dropped } : {}),
+        ...(cached ? { cached } : {}),
+        ...(error ? { error } : {}),
+      },
+    });
+    const body: ConnectionGoalSuggestions = { suggestions, build };
+    return c.json(body);
+  });
+
+  /**
    * One connection turned on or off for one agent (GRA-294): the integration page's *Agents with
    * access* and the agent page's per-integration switch, each a single write under the agent's
    * row lock, so two toggles never race the way a read-modify-write of `PUT /agents/:id/scope`
@@ -2205,13 +2432,57 @@ export function createApi(options: ApiOptions): Hono {
     return c.json(result);
   });
 
-  /** The console's inbox: every open action across the person's agents, newest first, each with its link. */
+  /**
+   * The console's inbox: every open action across the person's agents, newest first, each with its
+   * link. `?state=done` is Requests › Done instead (GRA-292): the answered, expired and
+   * revoke-closed asks, newest finish first, `limit` at a time from `cursor`
+   * (`DonePendingActionsOutput`). The agents are read once for the page, revoked ones included.
+   */
   api.get("/pending-actions", async (c) => {
     const principal = await principalOf(c.req.raw.headers);
-    const rows = await listOpenPendingActions(ctx, principal, pendingActionDeps);
-    return c.json({
-      pendingActions: await Promise.all(rows.map((row) => card(row, principal))),
-    });
+    const state = pendingActionsState.safeParse(c.req.query("state"));
+    if (!state.success) {
+      throw new ServiceError("BAD_REQUEST", "state is open or done");
+    }
+    if (state.data === "open") {
+      const rows = await listOpenPendingActions(ctx, principal, pendingActionDeps);
+      return c.json({
+        pendingActions: await Promise.all(rows.map((row) => card(row, principal))),
+      });
+    }
+    const limit = c.req.query("limit");
+    const page = await listDonePendingActions(
+      ctx,
+      principal,
+      { cursor: c.req.query("cursor") ?? null, limit: limit === undefined ? null : Number(limit) },
+      pendingActionDeps,
+    );
+    const agents = new Map(
+      (await listAgents(ctx, principal, agentDeps)).agents.map((agent) => [agent.id, agent]),
+    );
+    const output: DonePendingActionsOutput = {
+      pendingActions: page.rows.map((row) => {
+        const agent = agents.get(row.agentId);
+        return {
+          id: row.id,
+          agentId: row.agentId,
+          agent: agent ? { id: agent.id, name: agent.name } : null,
+          kind: row.kind,
+          payload: row.payload,
+          expiresAt: row.expiresAt,
+          createdAt: row.createdAt,
+          answeredAt: row.answeredAt,
+          answer: row.answer,
+          consumedAt: row.consumedAt,
+          state: pendingActionDoneState(row),
+          closedReason: row.closedReason,
+          finishedAt: pendingActionFinishedAt(row),
+          subject: pendingActionSubject(row),
+        };
+      }),
+      nextCursor: page.nextCursor,
+    };
+    return c.json(output);
   });
 
   /**

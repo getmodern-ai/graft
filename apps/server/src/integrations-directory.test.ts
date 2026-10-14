@@ -113,7 +113,11 @@ async function askFor(
   },
 ) {
   const now = h.store.now().getTime();
-  await h.fake.pendingAction.insertPendingAction(h.fake.db, {
+  const scope = {
+    personId: h.store.agents.get(args.agentId)?.personId ?? PERSON,
+    agentId: args.agentId,
+  };
+  await h.fake.pendingAction.insertPendingAction(h.fake.db, scope, {
     id: args.id,
     agentId: args.agentId,
     kind: "connection",

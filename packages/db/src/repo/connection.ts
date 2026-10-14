@@ -39,27 +39,6 @@ export async function findConnection(
 }
 
 /**
- * The read with the row share-locked for the transaction (`SELECT ... FOR SHARE`): a revoke, which
- * locks the row for update, waits for the commit, while a foreign-key check from another
- * transaction (an `agent_connection` or `build_approval` insert naming the row) does not, so two
- * writes taking their rows in opposite orders cannot deadlock on it (Greptile on #238). The
- * console connect's access reads through it (GRA-304).
- */
-export async function findConnectionForShare(
-  db: DbOrTx,
-  personId: string,
-  id: string,
-): Promise<ConnectionRow | null> {
-  const [row] = await db
-    .select()
-    .from(connection)
-    .where(and(eq(connection.id, id), eq(connection.personId, personId)))
-    .limit(1)
-    .for("share");
-  return row ?? null;
-}
-
-/**
  * The same read with the row locked for the transaction (`SELECT ... FOR UPDATE`): a write that
  * needs to know the state it is moving the row *from* reads through this, so a concurrent writer
  * waits for the commit and then sees the moved row rather than the same starting state. The
@@ -78,6 +57,27 @@ export async function findConnectionForUpdate(
     .where(and(eq(connection.id, id), eq(connection.personId, personId)))
     .limit(1)
     .for("update");
+  return row ?? null;
+}
+
+/**
+ * The same read locked `FOR NO KEY UPDATE`: it waits for a revoke (`findConnectionForUpdate`) and
+ * a revoke waits for it, but it does not block the `KEY SHARE` lock a foreign-key check takes, so
+ * a transaction inserting a row that references the connection (a scope save's `agent_connection`)
+ * while holding another lock never deadlocks against it. The console's Create reads through it
+ * (GRA-303, Greptile on #237).
+ */
+export async function findConnectionForNoKeyUpdate(
+  db: DbOrTx,
+  personId: string,
+  id: string,
+): Promise<ConnectionRow | null> {
+  const [row] = await db
+    .select()
+    .from(connection)
+    .where(and(eq(connection.id, id), eq(connection.personId, personId)))
+    .limit(1)
+    .for("no key update");
   return row ?? null;
 }
 
