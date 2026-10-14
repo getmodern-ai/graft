@@ -1,4 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
+import { Link } from "@tanstack/react-router";
 import type * as React from "react";
 
 import {
@@ -17,7 +18,6 @@ import { Skeleton } from "@/components/ui/skeleton";
 import {
   type ActivityIcon,
   activityRowView,
-  agentActivityHref,
   agentRecentActivityQuery,
   integrationNameOf,
   RECENT_ACTIVITY_LIMIT,
@@ -58,13 +58,11 @@ export function AgentRecentActivity({ agent }: { agent: Agent }) {
             What {agent.name} ran, and what you said no to.
           </p>
         </div>
-        {/* A plain link until the Activity screen's route lands (GRA-330), so the type program
-            does not need it to exist. */}
         <Button
           variant="ghost"
           size="sm"
           nativeButton={false}
-          render={<a href={agentActivityHref(agent.id)} />}
+          render={<Link to="/activity" search={{ agent: agent.id }} />}
         >
           All
           <ArrowForwardIcon />

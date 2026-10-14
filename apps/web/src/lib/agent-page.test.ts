@@ -3,7 +3,6 @@ import { describe, expect, it } from "vitest";
 import {
   type ActivityRow,
   activityRowView,
-  agentActivityHref,
   agentHeaderFacts,
   agentIntegrationsStat,
   agentRequestCount,
@@ -267,11 +266,5 @@ describe("activityRowView", () => {
     expect(ask("build", true)).toBe("Allowed building tools for Gmail");
     expect(ask("scope", false)).toBe("Said no to giving it Gmail");
     expect(ask("credential", true)).toBe("Answered a request");
-  });
-});
-
-describe("agentActivityHref", () => {
-  it("opens the Activity screen filtered by the agent", () => {
-    expect(agentActivityHref("agent 1")).toBe("/activity?agent=agent+1");
   });
 });

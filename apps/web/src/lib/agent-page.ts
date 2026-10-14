@@ -231,11 +231,3 @@ export function lastActiveDetail(stats: Pick<AgentStats, "lastRun">): string {
   if (!stats.lastRun) return "No tool has run yet";
   return activityToolLabel(stats.lastRun.tool.wireName);
 }
-
-/**
- * The Activity screen filtered by the agent (GRA-330's `?agent=`), as a plain href: *All* links
- * there whether or not that route has landed.
- */
-export function agentActivityHref(agentId: string): string {
-  return `/activity?${new URLSearchParams({ agent: agentId })}`;
-}
