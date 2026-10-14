@@ -3,6 +3,7 @@ import { and, asc, eq, exists, getTableColumns, inArray, isNull, or, sql } from 
 import type { DbOrTx } from "../index";
 import { agent, agentConnection, type NewAgent } from "../schema/agent";
 import { connection } from "../schema/connection";
+import { usageLedger } from "../schema/usage";
 import { workingSet } from "../schema/working-set";
 import type { AgentScope } from "./scope";
 
@@ -14,7 +15,18 @@ import type { AgentScope } from "./scope";
  */
 
 export type AgentRow = typeof agent.$inferSelect;
-export type AgentListRow = AgentRow & { workingSetCount: number };
+/**
+ * An agent as the console's list draws it: the row, the size of its working set, its scope as it
+ * resolves under its mode (`listScopeConnectionIds`'s rule), the moment of its last call that was
+ * not a dry run whatever its outcome, null for an agent that has made none, and whether it has ever
+ * had a call that was not a dry run succeed (GRA-290).
+ */
+export type AgentListRow = AgentRow & {
+  workingSetCount: number;
+  connectionIds: string[];
+  lastActiveAt: Date | null;
+  hasRunTool: boolean;
+};
 export type AgentPatch = Partial<
   Pick<AgentRow, "name" | "workingSetCap" | "idleWindowDays" | "scopeMode">
 >;
@@ -94,13 +106,62 @@ export async function findAgentForUpdate(
   return row ?? null;
 }
 
-/** Every agent of a person, revoked ones included, oldest first. */
+/**
+ * Every agent of a person, revoked ones included, oldest first, in **one statement** whatever the
+ * number of agents (GRA-290): each figure is a subquery correlated to the person-scoped agent row.
+ * The scope is `listScopeConnectionIds`'s rule per row (ADR 0007 as amended 2026-09-19): every
+ * connection of the person's, named by the parameter and not only through the agent, when the row
+ * is on `all`, and its list's when it is on `listed`, revoked connections included on both. The
+ * last activity skips dry runs, which `acquire`'s job makes on the agent's behalf, and counts a
+ * refused or failed call as activity; `hasRunTool` counts only a call that answered `ok`. Both are
+ * read off `usage_ledger_agent_id_created_at_idx`.
+ */
 export async function listAgents(db: DbOrTx, personId: string): Promise<AgentListRow[]> {
+  const scope = db
+    .select({
+      // Qualified by hand: drizzle renders a column bare in a one-table select, and inside this
+      // subquery a bare "id" would read as the innermost table's only by Postgres's scoping rule.
+      ids: sql`coalesce(array_agg("connection"."id" order by "connection"."id"), '{}')`,
+    })
+    .from(connection)
+    .where(
+      and(
+        eq(connection.personId, personId),
+        or(
+          eq(agent.scopeMode, "all"),
+          inArray(
+            connection.id,
+            db
+              .select({ connectionId: agentConnection.connectionId })
+              .from(agentConnection)
+              .where(eq(agentConnection.agentId, agent.id)),
+          ),
+        ),
+      ),
+    );
+  const lastActive = db
+    .select({ at: sql`max("usage_ledger"."created_at")` })
+    .from(usageLedger)
+    .where(and(eq(usageLedger.agentId, agent.id), eq(usageLedger.dryRun, false)));
+  const ranOk = db
+    .select({ id: usageLedger.id })
+    .from(usageLedger)
+    .where(
+      and(
+        eq(usageLedger.agentId, agent.id),
+        eq(usageLedger.dryRun, false),
+        eq(usageLedger.outcome, "ok"),
+      ),
+    );
   return db
     .select({
       ...getTableColumns(agent),
-      // The count follows the person-scoped agent in this statement (ADR 0007).
+      // Each figure follows the person-scoped agent in this statement (ADR 0007).
       workingSetCount: db.$count(workingSet, eq(workingSet.agentId, agent.id)),
+      connectionIds: sql<string[]>`${scope}`,
+      // A bare subquery loses the column's mapping; `timestamp` without a zone needs it back.
+      lastActiveAt: sql<Date | null>`${lastActive}`.mapWith(usageLedger.createdAt),
+      hasRunTool: exists(ranOk).mapWith(Boolean),
     })
     .from(agent)
     .where(eq(agent.personId, personId))

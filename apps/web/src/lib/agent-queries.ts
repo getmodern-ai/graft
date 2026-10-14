@@ -1,4 +1,5 @@
 import type {
+  AgentListAnswer,
   AgentListOutput,
   AgentOutput,
   AgentScopeMode,
@@ -39,7 +40,7 @@ export const agentKeys = {
 
 export const agentsQuery = queryOptions({
   queryKey: agentKeys.all,
-  queryFn: () => api<{ agents: AgentListItem[] }>("/agents"),
+  queryFn: () => api<Jsonified<AgentListAnswer>>("/agents"),
 });
 
 export const agentQuery = (agentId: string) =>
