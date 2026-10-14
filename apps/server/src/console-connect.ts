@@ -442,7 +442,9 @@ export async function recordFullAccess(
       { details: { reason: "connection_revoked", connectionId: connection.id } },
     );
   }
-  const agents = (await listAgents(ctx, principal, deps.agent)).filter((agent) => !agent.revokedAt);
+  const agents = (await listAgents(ctx, principal, deps.agent)).agents.filter(
+    (agent) => !agent.revokedAt,
+  );
   const approved: string[] = [];
   for (const agent of agents) {
     const scope = { personId: principal.personId, agentId: agent.id };
