@@ -189,6 +189,33 @@ export function settleAnsweredAsk(queryClient: QueryClient, id: string, record: 
   });
 }
 
+/**
+ * The cached ask settled as connected, for a flow whose answer the server records out of this
+ * page's sight: an OAuth callback, a link provider's return, a credential's consent. Once the agent
+ * takes the answer every read is `409 consumed`, so without this the handoff page's fallback
+ * (`handoffAnswered`) would know nothing of the connection it just made (Greptile on #250).
+ */
+export function settleConnectedAsk(
+  queryClient: QueryClient,
+  id: string,
+  connectionId: string,
+  now: Date = new Date(),
+) {
+  queryClient.setQueriesData<{ pendingAction: PendingAction }>(
+    { queryKey: pendingKeys.one(id) },
+    (current) =>
+      current && current.pendingAction.answeredAt === null
+        ? {
+            pendingAction: {
+              ...current.pendingAction,
+              answeredAt: now.toISOString(),
+              answer: { connectionId },
+            },
+          }
+        : current,
+  );
+}
+
 /** Whether the action can still be answered from here. */
 export function isOpen(action: PendingAction, now: Date = new Date()): boolean {
   return action.answeredAt === null && new Date(action.expiresAt).getTime() > now.getTime();
