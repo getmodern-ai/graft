@@ -71,6 +71,10 @@ catalog:
   clsx: ^2.1.1
   tailwind-merge: ^3.7.0
   sonner: ^2.0.8
+  # The engine under Cando's `command` primitive, at Cando's line (GRA-289): the arrow keys, Enter
+  # and the selection. It carries Radix's dialog with it, which nothing here mounts, since the
+  # primitive's `CommandDialog` is Base UI's.
+  cmdk: ^1.1.1
   # The design system's three supporting packages (ADR 0017), at Cando's lines. `next-themes` is the
   # theme provider the console mounts in `__root.tsx`; `shadcn` is the CLI package, a devDependency
   # only because it ships `shadcn/tailwind.css`, which `apps/web/src/index.css` imports for the

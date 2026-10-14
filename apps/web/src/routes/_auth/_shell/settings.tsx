@@ -12,7 +12,7 @@ import { PasswordRow } from "@/components/settings/password-row";
 import { SettingsCard, SettingsRowGroup } from "@/components/settings/settings-card";
 import { SettingsSection } from "@/components/settings/settings-section";
 import { useScreenTitle } from "@/components/shell/screen-title";
-import { modelKeyQuery } from "@/lib/model-key-queries";
+import { modelKeyQuery, modelQuery } from "@/lib/model-key-queries";
 
 /**
  * The person's settings — the account (how they sign in; GRA-298's password row) and the model key
@@ -24,7 +24,11 @@ import { modelKeyQuery } from "@/lib/model-key-queries";
  * console has one settings screen and no settings sidebar to carry the navigation instead.
  */
 export const Route = createFileRoute("/_auth/_shell/settings")({
-  loader: ({ context }) => context.queryClient.ensureQueryData(modelKeyQuery),
+  loader: ({ context }) =>
+    Promise.all([
+      context.queryClient.ensureQueryData(modelKeyQuery),
+      context.queryClient.ensureQueryData(modelQuery),
+    ]),
   component: SettingsRoute,
 });
 
