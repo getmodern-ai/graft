@@ -70,6 +70,12 @@ export const AWAITING_RECONNECTION_CHIP: StatusChip = {
 };
 
 /**
+ * On an agent page's integration row whose connection needs the person (GRA-326): the destructive
+ * tone, since its tools will not run until they act, and the act itself as the words (GRA-282).
+ */
+export const RECONNECT_CHIP: StatusChip = { variant: "destructive", label: "Reconnect" };
+
+/**
  * The chips a connection's card wears for its status — one, or two for a revoked connection, whose
  * second chip is the way back (`AWAITING_RECONNECTION_CHIP`).
  */
