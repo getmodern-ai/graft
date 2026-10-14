@@ -44,16 +44,16 @@ export const agentRecentActivityQuery = (agentId: string) =>
   });
 
 /**
- * The header's line under the name: the client that consented (ADR 0018) or *Not recorded*, since
- * when, and how it signs in. A static-token agent's moment is its creation, which is when the
- * token was minted; an agent awaiting its software (ADR 0024) has neither yet and says so.
+ * The header's line under the name: the client that consented (ADR 0018) or *Not recorded*, when
+ * it was created, and how it signs in; an agent awaiting its software (ADR 0024) says it has not
+ * signed in yet. *Created*, never *connected*: an agent Setup minted is connected by a later
+ * consent, and the record keeps no moment for that.
  */
 export function agentHeaderFacts(
   agent: Pick<Agent, "connectedVia" | "tokenPrefix" | "createdAt">,
-): { client: string; since: { verb: string; at: string }; signsIn: string } {
+): { client: string; created: string; signsIn: string } {
   const client = agent.connectedVia?.clientName ?? "Not recorded";
-  const verb = agent.connectedVia ? "connected" : "created";
-  return { client, since: { verb, at: agent.createdAt }, signsIn: signsInPhrase(agent) };
+  return { client, created: agent.createdAt, signsIn: signsInPhrase(agent) };
 }
 
 function signsInPhrase(agent: Pick<Agent, "connectedVia" | "tokenPrefix">): string {
@@ -154,7 +154,10 @@ export function activityRowView(row: ActivityRow, integration: string | null): A
       return { icon: "failed", title: `${tool} failed`, integration, sentence: null };
     }
     if (row.reason === "awaiting_approval") {
-      const words = toolActionWords(row.tool.wireName);
+      // `execute__<connection>` has no action of its own to read; its words would be the id.
+      const words = row.tool.wireName.startsWith("execute__")
+        ? "run a command"
+        : toolActionWords(row.tool.wireName);
       return {
         icon: "asked",
         title: words ? `Asked to ${words}` : `Asked to run ${tool}`,

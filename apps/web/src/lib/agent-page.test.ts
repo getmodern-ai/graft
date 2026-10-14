@@ -17,23 +17,20 @@ import {
 const at = "2026-10-14T00:00:00Z";
 
 describe("agentHeaderFacts", () => {
-  it("names the client, when it connected and that it signs in with OAuth", () => {
+  it("names the client, when it was created and that it signs in with OAuth", () => {
+    // Created, not connected: a consent may land on an agent Setup minted earlier.
     expect(
       agentHeaderFacts({
         connectedVia: { clientId: "c", clientName: "Claude" },
         tokenPrefix: null,
         createdAt: at,
       }),
-    ).toEqual({
-      client: "Claude",
-      since: { verb: "connected", at },
-      signsIn: "signs in with OAuth",
-    });
+    ).toEqual({ client: "Claude", created: at, signsIn: "signs in with OAuth" });
   });
 
-  it("says Not recorded and created for a static-token agent", () => {
+  it("says Not recorded for a static-token agent", () => {
     expect(agentHeaderFacts({ connectedVia: null, tokenPrefix: "grft_ab", createdAt: at })).toEqual(
-      { client: "Not recorded", since: { verb: "created", at }, signsIn: "signs in with a token" },
+      { client: "Not recorded", created: at, signsIn: "signs in with a token" },
     );
   });
 
@@ -204,6 +201,20 @@ describe("activityRowView", () => {
       integration: "Google Drive",
       sentence: "waiting for you",
     });
+  });
+
+  it("reads a command waiting on the build approval without the connection's id", () => {
+    expect(
+      activityRowView(
+        run({
+          outcome: "refused",
+          reason: "awaiting_approval",
+          asked: true,
+          tool: { id: null, wireName: "execute__conn_123", description: null },
+        }),
+        "Gmail",
+      ).title,
+    ).toBe("Asked to run a command");
   });
 
   it("reads a refusal with its reason's sentence, and an unknown one generically", () => {

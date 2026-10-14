@@ -61,7 +61,7 @@ export function AgentHeader({ agent }: { agent: Agent }) {
           <StatusChip chip={agentStatusChip(agent)} className="shrink-0" />
         </div>
         <p className="text-muted-foreground text-sm">
-          {facts.client} · {facts.since.verb} <Time iso={facts.since.at} /> · {facts.signsIn}
+          {facts.client} · created <Time iso={facts.created} /> · {facts.signsIn}
           {agent.tokenPrefix ? (
             <>
               {" "}
