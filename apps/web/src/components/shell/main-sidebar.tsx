@@ -20,6 +20,7 @@ import {
   useSidebar,
 } from "@/components/ui/sidebar";
 import { count } from "@/lib/format";
+import { integrationsQuery } from "@/lib/integration-queries";
 import {
   DOCS_NAV_ITEM,
   FOOTER_NAV_ITEMS,
@@ -28,6 +29,7 @@ import {
   type NavItem,
 } from "@/lib/main-sidebar-nav-items";
 import { pendingActionsQuery } from "@/lib/pending-action-queries";
+import { openRequestCount } from "@/lib/sign-in-requests";
 
 /**
  * The console's sidebar (the Figma "App v2" sidebar, GRA-309): the wordmark, the Search row that
@@ -172,9 +174,11 @@ function SidebarNavigation({ items }: { items: readonly NavItem[] }) {
 }
 
 /**
- * How many asks are waiting, beside the Requests row — the one number a person opening the
- * console wants first (ADR 0006). Polled, because an ask arrives while the person is on another
- * screen. Nothing when zero: a "0" would be furniture on the row most people see most.
+ * How many requests are waiting, beside the Requests row — the one number a person opening the
+ * console wants first (ADR 0006). The open asks and the connections that need the person to sign
+ * in, which Requests lists in Open with them (`openRequestCount`, GRA-313). Polled, because an ask
+ * arrives while the person is on another screen. Nothing when zero: a "0" would be furniture on the
+ * row most people see most.
  *
  * Two renderings of one number. `SidebarMenuBadge` is the primitive's own count — a sibling of the
  * row positioned over its right edge, `pointer-events-none`, outside the link's accessible name —
@@ -185,7 +189,8 @@ function SidebarNavigation({ items }: { items: readonly NavItem[] }) {
  */
 function usePendingCount() {
   const { data } = useQuery({ ...pendingActionsQuery, refetchInterval: 15_000 });
-  return data?.pendingActions.length ?? 0;
+  const integrations = useQuery({ ...integrationsQuery, refetchInterval: 15_000 });
+  return openRequestCount(data?.pendingActions.length ?? 0, integrations.data?.integrations);
 }
 
 function PendingCount() {

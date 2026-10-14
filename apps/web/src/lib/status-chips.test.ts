@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  ACTIVITY_ANSWER_CHIP,
   ACTIVITY_OUTCOME_CHIP,
   AGENT_STATUS_CHIP,
   APPROVAL_DECISION_CHIP,
@@ -15,6 +16,7 @@ import {
   MODEL_KEY_STATUS_CHIP,
   MODEL_STATUS_CHIP,
   NO_PASSING_VERSION_CHIP,
+  RECONNECT_CHIP,
   SIGN_IN_ACCOUNT_CHIP,
   type StatusChip,
   TOOL_ACCESS_CHIP,
@@ -30,8 +32,10 @@ const EVERY_CHIP: StatusChip[] = [
   ...Object.values(CONNECTION_STATUS_CHIP),
   AWAITING_CLIENT_SECRET_CHIP,
   AWAITING_RECONNECTION_CHIP,
+  RECONNECT_CHIP,
   ...Object.values(CALL_OUTCOME_CHIP),
   ...Object.values(ACTIVITY_OUTCOME_CHIP),
+  ...Object.values(ACTIVITY_ANSWER_CHIP),
   DRY_RUN_CHIP,
   NO_PASSING_VERSION_CHIP,
   SIGN_IN_ACCOUNT_CHIP,
@@ -95,6 +99,16 @@ describe("status chips", () => {
       ok: { variant: "secondary", label: "Ran" },
       error: { variant: "destructive", label: "Failed" },
       refused: { variant: "outline", label: "Blocked" },
+    });
+  });
+
+  // GRA-330: an answer is a moment too, in a run's tones.
+  it("draws an activity answer as Allowed, Connected, Denied or Declined", () => {
+    expect(ACTIVITY_ANSWER_CHIP).toEqual({
+      allowed: { variant: "secondary", label: "Allowed" },
+      connected: { variant: "secondary", label: "Connected" },
+      denied: { variant: "outline", label: "Denied" },
+      declined: { variant: "outline", label: "Declined" },
     });
   });
 

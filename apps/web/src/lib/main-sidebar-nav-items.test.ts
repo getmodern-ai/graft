@@ -15,11 +15,18 @@ describe("NAV_ITEMS", () => {
       "Requests",
       "Agents",
       "Integrations",
+      "Activity",
     ]);
   });
 
   it("puts Home at the root and Integrations on the integrations list", () => {
-    expect(NAV_ITEMS.map((item) => item.to)).toEqual(["/", "/pending", "/agents", "/integrations"]);
+    expect(NAV_ITEMS.map((item) => item.to)).toEqual([
+      "/",
+      "/pending",
+      "/agents",
+      "/integrations",
+      "/activity",
+    ]);
   });
 
   it("puts Settings in the footer, under the docs link", () => {
