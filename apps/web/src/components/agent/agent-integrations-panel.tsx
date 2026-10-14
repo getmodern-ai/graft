@@ -117,14 +117,18 @@ export function AgentIntegrationsPanel({
 
   const live = connections.filter((connection) => connection.revokedAt === null);
   const reads = [toolbox, approvals, vendorApprovals];
-  const rows = agentIntegrationRows({
-    agentName: agent.name,
-    connections,
-    scope,
-    tools: toolbox.data?.tools ?? [],
-    approvals: approvals.data?.approvals ?? [],
-    vendorApprovals: vendorApprovals.data?.vendorApprovals ?? [],
-  });
+  // The access line waits on these three reads; the switches do not, since the scope and the
+  // connections are the page's own (a failed read must never take away the way to turn one off).
+  const access =
+    toolbox.data && approvals.data && vendorApprovals.data
+      ? {
+          tools: toolbox.data.tools,
+          approvals: approvals.data.approvals,
+          vendorApprovals: vendorApprovals.data.vendorApprovals,
+        }
+      : null;
+  const failed = reads.find((read) => read.isError);
+  const rows = agentIntegrationRows({ agentName: agent.name, connections, scope, access });
   const later = laterSwitchCopy(agent.name);
   const busy = frozen || write.isPending;
 
@@ -149,20 +153,19 @@ export function AgentIntegrationsPanel({
       </div>
       <SettingsCard>
         <SettingsRowGroup>
-          {reads.some((read) => read.isPending) ? (
-            <PanelSkeleton />
-          ) : reads.some((read) => read.isError) ? (
+          {failed ? (
             <div className="px-4 py-3.5">
               <RetryNotice
-                error={reads.find((read) => read.isError)?.error}
-                message="Could not load what this agent can run."
+                error={failed.error}
+                message="Could not load what this agent can run without asking."
                 retrying={reads.some((read) => read.isFetching)}
                 onRetry={() => {
                   for (const read of reads) if (read.isError) void read.refetch();
                 }}
               />
             </div>
-          ) : rows.length === 0 ? (
+          ) : null}
+          {rows.length === 0 ? (
             <p className="px-4 py-3.5 text-muted-foreground text-sm">
               No integrations connected yet.
             </p>
@@ -172,6 +175,7 @@ export function AgentIntegrationsPanel({
                 key={row.vendor}
                 row={row}
                 agentName={agent.name}
+                loading={access === null && !failed}
                 disabled={busy}
                 onTurn={turnOne}
               />
@@ -202,15 +206,6 @@ export function AgentIntegrationsPanel({
   );
 }
 
-function PanelSkeleton() {
-  return (
-    <div className="flex flex-col gap-3 px-4 py-3.5">
-      <Skeleton className="h-9 w-full" />
-      <Skeleton className="h-9 w-full" />
-    </div>
-  );
-}
-
 /**
  * One integration. Its one connection's switch sits on the row; an integration with several lists
  * them under it, each with its own, since a switch is one connection (GRA-294).
@@ -218,11 +213,14 @@ function PanelSkeleton() {
 function IntegrationRow({
   row,
   agentName,
+  loading,
   disabled,
   onTurn,
 }: {
   row: AgentIntegrationRow;
   agentName: string;
+  /** The access line's reads are in flight: a skeleton stands where the line will be. */
+  loading: boolean;
   disabled: boolean;
   onTurn: (entry: AgentIntegrationConnection, on: boolean) => void;
 }) {
@@ -253,7 +251,11 @@ function IntegrationRow({
               </Link>
             ) : null}
           </div>
-          <span className="text-muted-foreground text-xs">{row.line}</span>
+          {loading ? (
+            <Skeleton className="h-4 w-48 max-w-full" />
+          ) : (
+            <span className="text-muted-foreground text-xs">{row.line}</span>
+          )}
         </div>
         <Button
           variant="ghost"

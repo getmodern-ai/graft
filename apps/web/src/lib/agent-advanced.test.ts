@@ -28,26 +28,40 @@ describe("agentSignInOf and agentSignInLine", () => {
   const client = { clientId: "c", clientName: "Claude" };
 
   it("says an OAuth agent signs in through its client (GRA-287 item 5)", () => {
-    const signIn = agentSignInOf({ connectedVia: client, tokenPrefix: null });
+    const signIn = agentSignInOf({ connectedVia: client, tokenPrefix: null, revokedAt: null });
     expect(signIn).toEqual({ kind: "oauth", clientName: "Claude", tokenPrefix: null });
     expect(agentSignInLine(signIn)).toBe("Signs in through Claude with OAuth.");
   });
 
   it("names a static token by its prefix alone", () => {
-    const signIn = agentSignInOf({ connectedVia: null, tokenPrefix: "grft_ab12" });
+    const signIn = agentSignInOf({ connectedVia: null, tokenPrefix: "grft_ab12", revokedAt: null });
     expect(signIn).toEqual({ kind: "token", tokenPrefix: "grft_ab12" });
     expect(agentSignInLine(signIn)).toBe("Signs in with the token grft_ab12…");
   });
 
   it("names both when a client connected an agent that also holds a token", () => {
-    expect(agentSignInLine(agentSignInOf({ connectedVia: client, tokenPrefix: "grft_ab12" }))).toBe(
-      "Signs in through Claude with OAuth, and with the token grft_ab12…",
-    );
+    expect(
+      agentSignInLine(
+        agentSignInOf({ connectedVia: client, tokenPrefix: "grft_ab12", revokedAt: null }),
+      ),
+    ).toBe("Signs in through Claude with OAuth, and with the token grft_ab12…");
   });
 
   it("says an agent awaiting its first sign-in is not signed in", () => {
-    const signIn = agentSignInOf({ connectedVia: null, tokenPrefix: null });
+    const signIn = agentSignInOf({ connectedVia: null, tokenPrefix: null, revokedAt: null });
     expect(signIn).toEqual({ kind: "none" });
     expect(agentSignInLine(signIn)).toBe("Not signed in yet. Connect an agent to sign it in.");
+  });
+
+  it("says a revoked agent no longer signs in, whatever it signed in with", () => {
+    const at = "2026-10-14T00:00:00.000Z";
+    for (const agent of [
+      { connectedVia: client, tokenPrefix: null, revokedAt: at },
+      { connectedVia: null, tokenPrefix: "grft_ab12", revokedAt: at },
+    ]) {
+      const signIn = agentSignInOf(agent);
+      expect(signIn).toEqual({ kind: "revoked" });
+      expect(agentSignInLine(signIn)).toBe("Revoked. Every token it held is refused.");
+    }
   });
 });

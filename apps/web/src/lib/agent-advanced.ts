@@ -24,15 +24,20 @@ export function unusedToolsLine(agent: Pick<Agent, "idleWindowDays">): string {
 
 /**
  * How the agent signs in, honest per kind (GRA-287 item 5): through the MCP client that connected
- * it, by its static token, both, or not yet. The token is named by its prefix alone; the whole
+ * it, by its static token, both, or not yet; and once revoked, that it no longer does, since a
+ * revoke refuses every token it held (ADR 0007). The token is named by its prefix alone; the whole
  * token was shown once and is not held.
  */
 export type AgentSignIn =
   | { kind: "oauth"; clientName: string; tokenPrefix: string | null }
   | { kind: "token"; tokenPrefix: string }
-  | { kind: "none" };
+  | { kind: "none" }
+  | { kind: "revoked" };
 
-export function agentSignInOf(agent: Pick<Agent, "connectedVia" | "tokenPrefix">): AgentSignIn {
+export function agentSignInOf(
+  agent: Pick<Agent, "connectedVia" | "tokenPrefix" | "revokedAt">,
+): AgentSignIn {
+  if (agent.revokedAt !== null) return { kind: "revoked" };
   if (agent.connectedVia) {
     return {
       kind: "oauth",
@@ -54,5 +59,7 @@ export function agentSignInLine(signIn: AgentSignIn): string {
       return `Signs in with the token ${signIn.tokenPrefix}…`;
     case "none":
       return "Not signed in yet. Connect an agent to sign it in.";
+    case "revoked":
+      return "Revoked. Every token it held is refused.";
   }
 }

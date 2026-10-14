@@ -132,11 +132,27 @@ describe("integrationAccessClause", () => {
 });
 
 describe("integrationAccessLine", () => {
-  const base = { agentName: "Claude", toolCount: 6, on: true, blocked: false, clause: "x" };
+  const base = {
+    agentName: "Claude",
+    on: true,
+    blocked: false,
+    access: { toolCount: 6, clause: "x" },
+  };
 
   it("leads with the tool count", () => {
     expect(integrationAccessLine(base)).toBe("6 tools · x");
-    expect(integrationAccessLine({ ...base, toolCount: 1 })).toBe("1 tool · x");
+    expect(integrationAccessLine({ ...base, access: { toolCount: 1, clause: "x" } })).toBe(
+      "1 tool · x",
+    );
+  });
+
+  it("says what the scope and the connections say while the access is not read", () => {
+    const unread = { ...base, access: null };
+    expect(integrationAccessLine(unread)).toBe("Available to Claude");
+    expect(integrationAccessLine({ ...unread, on: false })).toBe("Not available to Claude");
+    expect(integrationAccessLine({ ...unread, blocked: true })).toBe(
+      "Can't run until you reconnect",
+    );
   });
 
   it("says an integration that is off is not available to the agent", () => {
@@ -152,7 +168,7 @@ describe("integrationAccessLine", () => {
   });
 
   it("says an integration with no tools has none yet", () => {
-    expect(integrationAccessLine({ ...base, toolCount: 0 })).toBe(
+    expect(integrationAccessLine({ ...base, access: { toolCount: 0, clause: "x" } })).toBe(
       "No tools yet · Claude can build them",
     );
   });
@@ -169,9 +185,7 @@ describe("agentIntegrationRows", () => {
         connection({ id: "conn_drive", vendor: "google_drive", displayName: "Drive" }),
       ],
       scope: all,
-      tools: [read, send],
-      approvals: [],
-      vendorApprovals: [],
+      access: { tools: [read, send], approvals: [], vendorApprovals: [] },
     });
     expect(rows.map((row) => [row.displayName, row.toolCount, row.line])).toEqual([
       ["Drive", 0, "No tools yet · Claude can build them"],
@@ -192,9 +206,7 @@ describe("agentIntegrationRows", () => {
         connection({ id: "conn_a", displayName: "Gmail", createdAt: "2026-10-01T00:00:00Z" }),
       ],
       scope: { mode: "listed", connectionIds: new Set(["conn_b"]) },
-      tools: [],
-      approvals: [],
-      vendorApprovals: [],
+      access: { tools: [], approvals: [], vendorApprovals: [] },
     });
     expect(row?.displayName).toBe("Gmail");
     expect(row?.connections.map((entry) => [entry.connection.id, entry.on])).toEqual([
@@ -218,9 +230,7 @@ describe("agentIntegrationRows", () => {
       agentName: "Claude",
       connections: [signedOut],
       scope: all,
-      tools: [send],
-      approvals: [],
-      vendorApprovals: [],
+      access: { tools: [send], approvals: [], vendorApprovals: [] },
     });
     expect(row?.needsReconnect).toBe(true);
     expect(row?.line).toBe("1 tool · can't run until you reconnect");
@@ -228,7 +238,7 @@ describe("agentIntegrationRows", () => {
 
   it("shows a revoked connection only where the agent's list still names it", () => {
     const revoked = connection({ revokedAt: AT });
-    const args = { agentName: "Claude", tools: [], approvals: [], vendorApprovals: [] };
+    const args = { agentName: "Claude", access: null };
     expect(agentIntegrationRows({ ...args, connections: [revoked], scope: all })).toEqual([]);
     expect(
       agentIntegrationRows({
@@ -243,6 +253,8 @@ describe("agentIntegrationRows", () => {
       scope: { mode: "listed", connectionIds: new Set([revoked.id]) },
     });
     expect(row?.connections[0]?.status).toBe("revoked");
+    expect(row?.toolCount).toBeNull();
+    expect(row?.line).toBe("Can't run until you reconnect");
     expect(row?.needsReconnect).toBe(true);
   });
 });

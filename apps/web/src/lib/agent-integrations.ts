@@ -40,8 +40,8 @@ export type AgentIntegrationRow = {
   vendor: string;
   displayName: string;
   connections: AgentIntegrationConnection[];
-  /** The person's tools of the vendor with a current version, as the integrations read counts. */
-  toolCount: number;
+  /** The person's tools of the vendor with a current version; null until the toolbox is read. */
+  toolCount: number | null;
   /** Some connection on the row needs the person before its tools run again. */
   needsReconnect: boolean;
   /** "6 tools · reads run without asking, Send asks every time". */
@@ -111,20 +111,29 @@ export function integrationAccessClause(
   return clauses.join(", ");
 }
 
-/** The line under a row's name. */
+/**
+ * The line under a row's name. `access` is null while the toolbox and the answers are not read (or
+ * their read failed): the line then says only what the scope and the connections say, which the
+ * page already holds, so the switches never wait on it.
+ */
 export function integrationAccessLine(input: {
   agentName: string;
-  toolCount: number;
   on: boolean;
   /** Every connection the agent reaches on the row needs the person. */
   blocked: boolean;
-  clause: string;
+  access: { toolCount: number; clause: string } | null;
 }): string {
-  const tools = input.toolCount === 0 ? "No tools yet" : count(input.toolCount, "tool");
+  const { access } = input;
+  if (access === null) {
+    if (!input.on) return `Not available to ${input.agentName}`;
+    if (input.blocked) return "Can't run until you reconnect";
+    return `Available to ${input.agentName}`;
+  }
+  const tools = access.toolCount === 0 ? "No tools yet" : count(access.toolCount, "tool");
   if (!input.on) return `${tools} · not available to ${input.agentName}`;
   if (input.blocked) return `${tools} · can't run until you reconnect`;
-  if (input.toolCount === 0) return `${tools} · ${input.agentName} can build them`;
-  return `${tools} · ${input.clause}`;
+  if (access.toolCount === 0) return `${tools} · ${input.agentName} can build them`;
+  return `${tools} · ${access.clause}`;
 }
 
 /**
@@ -137,9 +146,12 @@ export function agentIntegrationRows(input: {
   agentName: string;
   connections: readonly Connection[];
   scope: ScopeState;
-  tools: readonly Tool[];
-  approvals: readonly ApprovalAnswer[];
-  vendorApprovals: readonly VendorAnswer[];
+  /** The toolbox and the agent's answers, or null until all three are read. */
+  access: {
+    tools: readonly Tool[];
+    approvals: readonly ApprovalAnswer[];
+    vendorApprovals: readonly VendorAnswer[];
+  } | null;
 }): AgentIntegrationRow[] {
   const byVendor = new Map<string, AgentIntegrationConnection[]>();
   const oldestFirst = [...input.connections].sort((a, b) => a.createdAt.localeCompare(b.createdAt));
@@ -153,24 +165,27 @@ export function agentIntegrationRows(input: {
 
   const rows: AgentIntegrationRow[] = [];
   for (const [vendor, connections] of byVendor) {
-    const tools = input.tools.filter(
+    const { access } = input;
+    const tools = (access?.tools ?? []).filter(
       (tool) => tool.vendor === vendor && tool.currentVersionId !== null,
     );
     const reached = connections.filter((entry) => entry.on);
-    const vendorApproval = input.vendorApprovals.find((row) => row.vendor === vendor) ?? null;
+    const vendorApproval = access?.vendorApprovals.find((row) => row.vendor === vendor) ?? null;
     const [oldest] = connections;
     rows.push({
       vendor,
       displayName: oldest?.connection.displayName ?? vendor,
       connections,
-      toolCount: tools.length,
+      toolCount: access ? tools.length : null,
       needsReconnect: connections.some((entry) => entry.status !== "connected"),
       line: integrationAccessLine({
         agentName: input.agentName,
-        toolCount: tools.length,
         on: reached.length > 0,
         blocked: reached.length > 0 && reached.every((entry) => entry.status !== "connected"),
-        clause: integrationAccessClause(tools, input.approvals, vendorApproval),
+        access: access && {
+          toolCount: tools.length,
+          clause: integrationAccessClause(tools, access.approvals, vendorApproval),
+        },
       }),
     });
   }
