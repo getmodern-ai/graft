@@ -59,6 +59,7 @@ export function NameRow() {
   return (
     <>
       <SettingsRow
+        stacked
         title="Name"
         description="How Graft greets you."
         action={
@@ -155,6 +156,7 @@ export function EmailRow() {
   if (isPending || !session) return <RowSkeleton />;
   return (
     <SettingsRow
+      stacked
       title="Email"
       description="Where Graft sends sign-in and password emails."
       action={

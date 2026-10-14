@@ -1607,11 +1607,17 @@ recent calls are a disclosure in the body, not the banded `CardFooter`. A notice
 an `Alert`; a labelled control with a sentence beside it is an `Item` (`components/ui/item.tsx`,
 ported with the rest); nothing draws its own `rounded-* border` frame. The settings screen is
 Cando's row family, ported to `components/settings/` — `SettingsSection` (an `h2`), `SettingsCard`,
-`SettingsRowGroup` with inset dividers, and the `SettingsRow` variants — with one section, Building tools:
-the Model row, which `GET /api/me/model` and `lib/model-status.ts` decide (GRA-297: the
-deployment's model *Included*, *Your key*, *Needs a key* under the hosted form with no fixed
-model, *Not configured* under the open form with none, where a key would not be routed), above
-the key's behaviour as rows. A failed **query** toasts once with a working Retry
+`SettingsRowGroup` with inset dividers, and the `SettingsRow` variants, App v2's type (GRA-331) —
+with three sections. **Account**: the name (Better Auth's `/update-user`), the address with its
+verified chip, a row per provider `GET /api/sign-in-methods` names (`linkSocial`, `unlinkAccount`,
+returning to `/settings?provider=<p>[&error=<code>]`; `lib/account-settings.ts`'s `canDisconnect`
+never offers removing the last way to sign in the door still shows, and a linked account may carry
+another address, ADR 0020 as amended 2026-10-14), and GRA-298's password row. **Appearance**: the
+Theme row, a `ToggleGroup` writing the one `next-themes` setting the account menu's radio group
+writes. **Building tools**: the Model row, which `GET /api/me/model` and `lib/model-status.ts`
+decide (GRA-297: the deployment's model *Included*, *Your key*, *Needs a key* under the hosted
+form with no fixed model, *Not configured* under the open form with none, where a key would not
+be routed), above *Use your own key*, whose form is a dialog. A failed **query** toasts once with a working Retry
 (`lib/query-error-retry.ts`, keyed to the query hash so a second failure replaces rather than
 stacks, dismissed on the next success) beside the mutation toast; a read that fails before a screen
 draws toasts *and* shows the route boundary, as Cando's does. A screen-level empty is the `Empty`

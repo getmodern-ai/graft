@@ -21,6 +21,7 @@ export function ThemeRow() {
 
   return (
     <SettingsRow
+      stacked
       title={<span id={titleId}>Theme</span>}
       description="Match your computer, or pick one."
       action={
