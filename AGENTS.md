@@ -1423,6 +1423,17 @@ Back read it as the *Tool* stage) until its task is chosen, when `POST /api/setu
 vendor, the first host as the primary) through the starter's routing (`connectSetupProposal`). No
 column holds it: a reload on that tool screen returns to the directory.
 
+**The directory answers outside Setup too, beside the person's own suggestions** (ADR 0001 as
+amended 2026-10-14; GRA-305). `GET /api/integrations/directory` and `/search` are Setup's two
+handlers mounted a second time, same answers. `GET /api/integrations/suggested`
+(`IntegrationSuggestions`) is `@graft/core`'s `listSuggestedIntegrations` over
+`repo/pending-action.ts`'s `listSuggestedConnectionAsks`: per vendor, the newest `connection` ask
+of the person's live agents, kept when it was not answered with a connection and the person holds
+no unrevoked connection of that vendor, newest first, at most `SUGGESTED_INTEGRATIONS_LIMIT` (12),
+with the agent, the ask's state (`open`, `declined`, `expired`) and age, and the directory entry's
+`logoUrl` (null under the starters). `directory` and `suggested` are registered before any
+`/integrations/:vendor…` route (`INTEGRATION_RESERVED_SEGMENTS`).
+
 **Setup's words are integration and task** (GRA-216; CONTEXT.md, *Integration*; ADR 0024's
 amendment of 2026-09-24). Person-facing copy says *integration* for the service a person connects
 and *task* for what the first tool should do: Setup's steps (*Choose an integration*, *What should
