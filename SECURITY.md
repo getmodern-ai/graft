@@ -53,7 +53,11 @@ where a decision is theirs. Anything that breaks either is in scope:
   token that still works, a rotation of another person's agent or of one a client holds, or a run
   of any other tool, is in scope. The session also sets a first password for a person who signed
   up with Google or GitHub and holds none (`POST /api/me/password`, GRA-298); one set over a
-  password the person holds, or on anyone's account but the session's, is in scope.
+  password the person holds, or on anyone's account but the session's, is in scope. It links and
+  unlinks a Google or GitHub account for the session's person (Better Auth's `linkSocial` and
+  `unlinkAccount`; ADR 0020 as amended 2026-10-14), whose address may differ from the person's;
+  a link that attaches to anyone but the session's person, or a sign-in that attaches through an
+  address either side has not verified, is in scope.
 
 Out of scope: a vendor's own API, a self-hosted deployment's own misconfiguration (an exposed
 database, a public console with no reverse proxy, a leaked `.env`), and the quality of what the

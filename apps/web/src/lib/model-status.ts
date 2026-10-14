@@ -1,4 +1,4 @@
-import type { Model } from "./model-key-queries";
+import type { Model, ModelKey } from "./model-key-queries";
 
 /**
  * Which of four things the Settings screen's Model row says (GRA-297), from `GET /me/model`:
@@ -31,3 +31,23 @@ export const MODEL_ROW_COPY = {
       "This deployment has no model configured, so no tool can be built here until its operator sets one.",
   },
 } as const satisfies Record<ModelStatus, { value: string | null; description: string }>;
+
+/**
+ * The *Use your own key* row's words (GRA-331; Figma 2100:10414): the frame's sentence while no key
+ * is set, and once one is, which models it runs and through what, since the row is the one place a
+ * set key is described and the key itself is never shown.
+ */
+export const OWN_KEY_ROW = {
+  title: "Use your own key",
+  description:
+    "Run tool building on your Anthropic or OpenAI account. The docs it reads go to your provider instead of Graft.",
+} as const;
+
+export function ownKeyModels(
+  key: Pick<ModelKey, "authoringModel" | "triageModel" | "baseUrl">,
+): string {
+  const authoring = key.authoringModel ?? "the provider's default";
+  const triage = key.triageModel ?? "the provider's default";
+  const through = key.baseUrl ? ` Through ${key.baseUrl}.` : "";
+  return `Writes with ${authoring}, reads docs with ${triage}.${through}`;
+}
