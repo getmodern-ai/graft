@@ -623,7 +623,14 @@ the mode, and `listAgentIdsForConnection` — the agents a revoke announces to �
 usable row in scope and answers `connected`. The console draws the mode as a `Select` — `All
 connections` first, `Selected connections` revealing the picker — through `components/agent/scope-mode-field.tsx`
 in the create dialog and the consent card; the labels and the write's body are
-`src/lib/scope-mode.ts`, tested.
+`src/lib/scope-mode.ts`, tested. **One connection is turned on or off for one agent by its own
+write** (GRA-294): `PUT` and `DELETE /api/connections/:id/agents/:agentId` are
+`addConnectionToAgentScope` and `removeConnectionFromAgentScope`, each under the agent's row lock in
+one transaction, answering `AgentScopeToggleOutput`; a removal from an agent on `all` materialises
+`listed` without that connection, so later connections stop arriving, and answers `materialised:
+true`. Every scope write but a grant to an agent on `all` tells the agent's session after the
+commit. The agent page's switches are `src/lib/scope-toggles.ts` (`turnLater`, `turnConnection`),
+tested against the server's model.
 
 **A tool follows its vendor's reconnected connection** (GRA-122; ADR 0007 as amended 2026-09-20).
 `authored_tool.default_connection_id` is the row the tool was authored against, and a run resolves
