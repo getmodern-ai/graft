@@ -104,8 +104,11 @@ export function CommandPalette() {
       onOpenChangeComplete={(isOpen) => {
         if (!isOpen) setQuery("");
       }}
-      // 640px at 112px from the top, the Figma frame's; Cando's primitive puts it at a third.
-      className="top-28 sm:max-w-160"
+      // 640px at 112px from the top, the Figma frame's (Cando's primitive puts it at a third). On a
+      // short screen, a phone on its side, the offset shrinks to 12svh and the dialog is held to the
+      // height left beneath it, a flex column whose list is what gives way, so the input and the
+      // key hints stay on screen (Greptile on #226).
+      className="top-[min(7rem,12svh)] flex max-h-[calc(100svh_-_2_*_min(7rem,12svh))] flex-col sm:max-w-160"
     >
       {/* `shouldFilter={false}`: the rows arrive filtered and grouped by `filterPalette`, so cmdk
           only moves the selection and answers Enter. The `**:` classes restyle the primitive's
@@ -114,9 +117,9 @@ export function CommandPalette() {
       <Command
         shouldFilter={false}
         loop
-        className="**:data-[slot=input-group]:bg-transparent **:data-[slot=command-input-wrapper]:px-2 **:data-[slot=command-input-wrapper]:py-2.5 **:[[data-slot=input-group-addon]>svg]:size-5"
+        className="min-h-0 **:data-[slot=command-input-wrapper]:shrink-0 **:data-[slot=input-group]:bg-transparent **:data-[slot=command-input-wrapper]:px-2 **:data-[slot=command-input-wrapper]:py-2.5 **:[[data-slot=input-group-addon]>svg]:size-5"
       >
-        <div className="relative">
+        <div className="relative shrink-0">
           <CommandInput
             placeholder="Search screens"
             value={query}
@@ -127,7 +130,7 @@ export function CommandPalette() {
             esc
           </Kbd>
         </div>
-        <CommandList className="max-h-[min(28rem,60svh)] p-2">
+        <CommandList className="max-h-112 min-h-0 flex-1 p-2">
           <CommandEmpty className="text-muted-foreground text-sm">
             No screen matches “{query.trim()}”.
           </CommandEmpty>
@@ -158,7 +161,7 @@ export function CommandPalette() {
             description says the same to a screen reader. */}
         <div
           aria-hidden="true"
-          className="flex items-center gap-4 border-t bg-muted/50 px-4 py-2.5 text-muted-foreground text-xs"
+          className="flex shrink-0 items-center gap-4 border-t bg-muted/50 px-4 py-2.5 text-muted-foreground text-xs"
         >
           <span className="flex items-center gap-1">
             <Kbd>↑</Kbd>
