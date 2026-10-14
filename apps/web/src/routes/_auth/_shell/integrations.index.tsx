@@ -248,6 +248,17 @@ function RevokedConnections() {
   const revoked = (connections.data?.connections ?? []).filter(
     (connection) => connection.revokedAt !== null,
   );
+  // A failed read is not "none revoked": this is where a revoked connection comes back, so say so.
+  if (connections.isError) {
+    return (
+      <RetryNotice
+        error={connections.error}
+        message="Could not load your revoked connections."
+        onRetry={() => void connections.refetch()}
+        retrying={connections.isFetching}
+      />
+    );
+  }
   if (revoked.length === 0) return null;
 
   return (
