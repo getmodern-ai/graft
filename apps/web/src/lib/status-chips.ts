@@ -85,6 +85,28 @@ export function connectionStatusChips(
   return [CONNECTION_STATUS_CHIP[status]];
 }
 
+/**
+ * A live connection whose provider this deployment no longer enables (GRA-291's `ConnectionState`):
+ * nothing the person enters brings it back, so the destructive tone, and words that do not ask
+ * them to act.
+ */
+export const PROVIDER_UNAVAILABLE_CHIP: StatusChip = {
+  variant: "destructive",
+  label: "Unavailable",
+};
+
+/**
+ * The chip for a connection as the integrations read words it (`IntegrationConnection.state`), or
+ * revoked: the card's first chip, plus the one state only the server can tell.
+ */
+export function connectionStateChip(
+  connection: Pick<Connection, "oauth">,
+  state: ConnectionStatus | "provider_unavailable",
+): StatusChip {
+  if (state === "provider_unavailable") return PROVIDER_UNAVAILABLE_CHIP;
+  return connectionStatusChips(connection, state)[0] ?? CONNECTION_STATUS_CHIP[state];
+}
+
 export const CALL_OUTCOME_CHIP = {
   ok: { variant: "success", label: "OK" },
   error: { variant: "destructive", label: "Error" },
