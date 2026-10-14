@@ -1,4 +1,4 @@
-import { NAV_ITEMS, type NavTarget } from "@/lib/main-sidebar-nav-items";
+import { type NavTarget, SCREEN_NAV_ITEMS } from "@/lib/main-sidebar-nav-items";
 
 /**
  * One row of the command palette (`components/shell/command-palette.tsx`): what it reads as, the
@@ -26,19 +26,19 @@ export type PaletteGroupName = (typeof PALETTE_GROUPS)[number];
 export type PaletteGroup = { name: PaletteGroupName; items: PaletteItem[] };
 
 /**
- * The words each screen answers to beyond its label. *Requests* and *asks* reach Pending actions
- * because that is what the person calls them; *integrations* reaches Connections (CONTEXT.md,
- * *Integration*).
+ * The words each screen answers to beyond its label: the name a screen had before its label
+ * changed (GRA-282, GRA-309), so a person who learned the old one still finds it.
  */
 const NAV_KEYWORDS: Record<NavTarget, readonly string[]> = {
+  "/": ["start", "overview"],
+  "/pending": ["pending", "actions", "asks", "approvals", "inbox"],
   "/agents": ["harness", "token"],
-  "/pending": ["requests", "asks", "approvals", "inbox"],
-  "/connections": ["integrations", "tools"],
+  "/connections": ["connections", "tools"],
   "/settings": ["model", "key", "preferences"],
 };
 
-/** The four screens the sidebar names, as palette rows, so the two cannot list different ones. */
-export const NAVIGATION_ITEMS: readonly PaletteItem[] = NAV_ITEMS.map((item) => ({
+/** The screens the sidebar names, as palette rows, so the two cannot list different ones. */
+export const NAVIGATION_ITEMS: readonly PaletteItem[] = SCREEN_NAV_ITEMS.map((item) => ({
   id: `go:${item.to}`,
   group: "Go to",
   label: item.label,
@@ -51,7 +51,7 @@ export const NAVIGATION_ITEMS: readonly PaletteItem[] = NAV_ITEMS.map((item) => 
  * arrived, and a group with nothing left omitted so no heading stands over an empty list.
  *
  * A row matches when every word of the query starts a word of its label or keywords, ignoring
- * case: "pen act" finds Pending actions, "set" finds Settings, "tings" finds nothing. A blank
+ * case: "req" finds Requests, "set" finds Settings, "tings" finds nothing. A blank
  * query matches every row.
  */
 export function filterPalette(items: readonly PaletteItem[], query: string): PaletteGroup[] {

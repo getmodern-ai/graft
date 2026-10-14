@@ -35,6 +35,7 @@ const outFile = join(dirname(fileURLToPath(import.meta.url)), "../src/components
  */
 const NAMES = [
   "add",
+  "apps",
   "arrow_back",
   "bolt",
   "check",
@@ -51,7 +52,9 @@ const NAMES = [
   "error",
   "explore",
   "extension",
+  "help",
   "history",
+  "home",
   "hourglass",
   "inbox",
   "info",
