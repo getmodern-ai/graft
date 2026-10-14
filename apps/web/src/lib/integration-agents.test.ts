@@ -139,9 +139,27 @@ describe("toolAnswerWrites", () => {
     ]);
   });
 
-  it("turns ask-every-call off for Always allow, allowing first where no current allow stands", () => {
+  // The allow answers the tool's open asks only once it no longer asks every call (GRA-302), so
+  // Always allow turns asking off first and then allows, a current allow included.
+  it("turns ask-every-call off before allowing for Always allow, so the open asks close", () => {
     expect(toolAnswerWrites(approval("send", { askEveryCall: true }), "always")).toEqual([
       { kind: "ask_every_call", on: false },
+      { kind: "decision", decision: "allow" },
+    ]);
+    expect(
+      toolAnswerWrites(
+        approval("send", { askEveryCall: true, forCurrentVersion: false }),
+        "always",
+      ),
+    ).toEqual([
+      { kind: "ask_every_call", on: false },
+      { kind: "decision", decision: "allow" },
+    ]);
+    expect(
+      toolAnswerWrites(approval("send", { decision: "deny", askEveryCall: true }), "always"),
+    ).toEqual([
+      { kind: "ask_every_call", on: false },
+      { kind: "decision", decision: "allow" },
     ]);
     expect(toolAnswerWrites(approval("send", { decision: "deny" }), "always")).toEqual([
       { kind: "decision", decision: "allow" },

@@ -109,9 +109,13 @@ export type ToolAnswerWrite =
 
 /**
  * The writes that take a tool's answer to `target`. Setting an answer outright keeps the
- * ask-every-call setting as it stood (`setApprovalFromConsole`), so *Always allow* turns it off
- * after allowing and *Ask every time* turns it on, then allows. Nothing when the answer is
- * already there.
+ * ask-every-call setting as it stood (`setApprovalFromConsole`), so the two are separate requests,
+ * ordered so that the person's choice is never weakened between them nor by a failed second one:
+ * *Ask every time* turns asking on before the allow lands. *Always allow* turns asking off first
+ * and then writes the allow, even over a current one, because the allow is what answers the
+ * tool's open asks and it answers them only once the tool no longer asks every call. Every answer
+ * listed here is a row, so the setting can be written on a deny as well (`setAskEveryCall`).
+ * Nothing when the answer is already there.
  */
 export function toolAnswerWrites(
   approval: ToolApproval,
@@ -121,15 +125,11 @@ export function toolAnswerWrites(
   if (current === target) return [];
   if (target === "deny") return [{ kind: "decision", decision: "deny" }];
   const allowed = approval.decision === "allow" && approval.forCurrentVersion;
-  const allow: ToolAnswerWrite[] = allowed ? [] : [{ kind: "decision", decision: "allow" }];
-  const on = target === "ask";
-  const setting: ToolAnswerWrite[] =
-    approval.askEveryCall === on ? [] : [{ kind: "ask_every_call", on }];
-  // Ordered so that no moment between the two requests, nor a failure of the second, leaves the
-  // tool running without asking when the person chose that it ask: asking is turned on before the
-  // allow lands, and turned off only after it. Every answer listed here is a row, so the setting
-  // can be written on a deny as well (`setAskEveryCall`).
-  return on ? [...setting, ...allow] : [...allow, ...setting];
+  const allow: ToolAnswerWrite = { kind: "decision", decision: "allow" };
+  if (target === "ask") {
+    return [{ kind: "ask_every_call", on: true }, ...(allowed ? [] : [allow])];
+  }
+  return approval.askEveryCall ? [{ kind: "ask_every_call", on: false }, allow] : [allow];
 }
 
 /** One row of *Your answers for <integration>*. */
