@@ -4,6 +4,7 @@ import { GATEWAY_PROVIDER } from "@graft/core/connection/gateway-provider";
 import { KEYRING_PROVIDER, providerDisplayName } from "@graft/core/connection/provider";
 import type { AuthScheme } from "@graft/proxy/types";
 import type {
+  ConnectionBody,
   ConnectionCallOutput,
   ConnectionSubmitBody,
   ToolboxToolOutput,
@@ -192,9 +193,16 @@ export function connectionStatus(connection: Connection): ConnectionStatus {
  */
 export type StoredCredential = { connection: Connection; authorizeUrl?: string };
 
-/** The person's own Add connection: registered with its credential in one transaction (GRA-28). */
+/**
+ * The person's own Add connection: registered with its credential in one transaction (GRA-28).
+ * `access` is the console connect's choice (GRA-304): `full` records the in-scope agents' approvals
+ * with the row.
+ */
 export function createConnection(
-  input: ConnectionRegistration & { credential: Record<string, string> },
+  input: ConnectionRegistration & {
+    credential: Record<string, string>;
+    access?: ConnectionBody["access"];
+  },
 ) {
   return api<StoredCredential>("/connections", { method: "POST", body: input });
 }
