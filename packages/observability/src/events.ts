@@ -27,6 +27,9 @@ export type AnalyticsEvent =
   // The console, at the API's mutation routes
   | "agent_created"
   | "agent_revoked"
+  // An active static-token agent's token rotated in the console (GRA-306). No property: the token
+  // and its prefix are never an event's.
+  | "agent_token_rotated"
   | "mcp_client_consented"
   | "connection_created"
   // The console connect, with no agent asking (GRA-304): `kind` (connected | form | link),

@@ -48,6 +48,7 @@ import {
   retryProviderRelease,
   revokeAgent,
   revokeApproval,
+  rotateAgentToken,
   type ServiceContext,
   ServiceError,
   type ServiceErrorCode,
@@ -58,9 +59,11 @@ import {
   type StockDeps,
   type StockLineage,
   setAgentScope,
+  setApprovalFromConsole,
   setAskEveryCall,
   setConnectionCredential,
   setPersonModelKey,
+  setVendorApprovalDestructive,
   skipSetup,
   startSetup,
   stockLineageOf,
@@ -390,6 +393,16 @@ const answerBody = z.object({
   includesDestructive: z.boolean().optional(),
 });
 const askEveryCallBody = z.object({ on: z.boolean() });
+const approvalDecisionBody = z.object({ decision: z.enum(["allow", "deny"]) });
+const vendorApprovalPatch = z.object({ includesDestructive: z.boolean() });
+
+/**
+ * The answer the console sets outright for one agent and tool (ADR 0008 as amended 2026-10-14;
+ * GRA-302), `PUT /agents/:id/approvals/:toolId`; the console imports this rather than writing it.
+ */
+export type ApprovalDecisionBody = z.input<typeof approvalDecisionBody>;
+/** An integration's standing approval widened or narrowed, `PATCH /agents/:id/vendor-approvals/:vendor`. */
+export type VendorApprovalPatchBody = z.input<typeof vendorApprovalPatch>;
 
 /** The answer's wire shape, as the console posts it — the console imports this rather than writing it again. */
 export type AnswerBody = z.input<typeof answerBody>;
@@ -1573,6 +1586,19 @@ export function createApi(options: ApiOptions): Hono {
   });
 
   /**
+   * Rotate an active static-token agent's token (ADR 0007 as amended 2026-10-14; GRA-306),
+   * answered once, `201 { agent, token }` as the issue above answers: the old token is refused from
+   * the next request on. An agent a client connected, one awaiting its harness (the issue route
+   * above gives its first token) and a revoked one are `409 agent_token_not_rotatable`, another
+   * person's a 404 (`rotateAgentToken`).
+   */
+  api.post("/agents/:id/token/rotate", async (c) => {
+    const principal = await principalOf(c.req.raw.headers);
+    await parseBody(c.req.raw, z.object({}), { emptyIs: {} });
+    return c.json(await rotateAgentToken(ctx, principal, c.req.param("id"), agentDeps), 201);
+  });
+
+  /**
    * Run an authored tool as one of the person's agents (GRA-208; ADR 0024; `tool-run.ts`): read-only
    * tools in the agent's working set only, synchronous, `AgentToolRunOutput`. Setup's result step is
    * the only caller; the route is the agent's, not Setup's.
@@ -2287,7 +2313,8 @@ export function createApi(options: ApiOptions): Hono {
   /**
    * One agent's standing approvals per integration (ADR 0008 as amended 2026-10-09; GRA-237) —
    * what the agent's page lists beside the per-tool approvals, to withdraw one. Recorded only from
-   * an answer (`POST /pending-actions/:id/answer`, or the ask card's `answer_ask`), never here.
+   * an answer (`POST /pending-actions/:id/answer`, or the ask card's `answer_ask`), never here;
+   * widened or narrowed by `PATCH /agents/:id/vendor-approvals/:vendor` (GRA-302).
    */
   api.get("/vendor-approvals", async (c) => {
     const principal = await principalOf(c.req.raw.headers);
@@ -2301,6 +2328,45 @@ export function createApi(options: ApiOptions): Hono {
     const scope = { personId: principal.personId, agentId: agentIdOf(c.req.query("agentId")) };
     const vendorApproval = orNotFound(
       await withdrawVendorApproval(ctx, scope, c.req.param("vendor"), approvalDeps),
+      "No standing approval for this integration and agent",
+    );
+    return c.json({ vendorApproval });
+  });
+
+  /**
+   * Set one agent's answer for one tool outright, `{ decision: "allow" | "deny" }` (ADR 0008 as
+   * amended 2026-10-14; GRA-302): the integration page's and Requests' Change. For the version the
+   * tool runs now, creating the answer where none stood, and answering the open asks it settles
+   * (`setApprovalFromConsole`). Answers `{ approval, answeredPendingActionIds }`. 400 for a
+   * read-only tool, which never asks; 404 for another person's agent or tool; 409 for a revoked
+   * agent or a tool with no version. Under the agent's path, as the agent routes since GRA-208 are.
+   */
+  api.put("/agents/:id/approvals/:toolId", async (c) => {
+    const principal = await principalOf(c.req.raw.headers);
+    const body = await parseBody(c.req.raw, approvalDecisionBody);
+    const scope = { personId: principal.personId, agentId: c.req.param("id") };
+    return c.json(
+      await setApprovalFromConsole(ctx, scope, c.req.param("toolId"), body.decision, approvalDeps),
+    );
+  });
+
+  /**
+   * Widen one agent's standing approval for an integration to its destructive tools, or narrow it
+   * back, `{ includesDestructive }` (ADR 0008 as amended 2026-10-14; GRA-302). Only one that
+   * stands: 404 when none does, since recording one is an answer's, never this route's.
+   */
+  api.patch("/agents/:id/vendor-approvals/:vendor", async (c) => {
+    const principal = await principalOf(c.req.raw.headers);
+    const body = await parseBody(c.req.raw, vendorApprovalPatch);
+    const scope = { personId: principal.personId, agentId: c.req.param("id") };
+    const vendorApproval = orNotFound(
+      await setVendorApprovalDestructive(
+        ctx,
+        scope,
+        c.req.param("vendor"),
+        body.includesDestructive,
+        approvalDeps,
+      ),
       "No standing approval for this integration and agent",
     );
     return c.json({ vendorApproval });

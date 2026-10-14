@@ -56,6 +56,7 @@ export function connectProperties(answer: unknown): AnalyticsProperties {
 export const TRACKED_ROUTES: ReadonlyArray<TrackedRoute> = [
   { method: "POST", path: /^\/agents$/, event: "agent_created" },
   { method: "POST", path: /^\/agents\/[^/]+\/revoke$/, event: "agent_revoked" },
+  { method: "POST", path: /^\/agents\/[^/]+\/token\/rotate$/, event: "agent_token_rotated" },
   { method: "PUT", path: /^\/agents\/[^/]+\/scope$/, event: "scope_changed" },
   { method: "PUT", path: /^\/connections\/[^/]+\/agents\/[^/]+$/, event: "scope_changed" },
   { method: "DELETE", path: /^\/connections\/[^/]+\/agents\/[^/]+$/, event: "scope_changed" },
