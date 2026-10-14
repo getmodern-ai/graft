@@ -21,7 +21,7 @@ function card(
   return {
     id: "pa_1",
     agentId: "agt_1",
-    agent: { id: "agt_1", name: "Codex" },
+    agent: { id: "agt_1", name: "Codex", clientName: null },
     kind,
     payload,
     expiresAt: "2026-10-14T10:00:00.000Z",
@@ -210,7 +210,7 @@ describe("doneRowCopy: unanswered asks", () => {
   it("says an expiry, and that the agent asks again", () => {
     const copy = doneRowCopy(
       card("connection", proposal(), {
-        agent: { id: "agt_1", name: "Hermes" },
+        agent: { id: "agt_1", name: "Hermes", clientName: null },
         answeredAt: null,
         answer: null,
         state: "expired",
