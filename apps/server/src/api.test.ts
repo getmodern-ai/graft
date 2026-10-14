@@ -2942,7 +2942,7 @@ describe("the public setup prompt", () => {
       expect(res.status).toBe(400);
       const body = (await res.json()) as { error: string; message: string; details: unknown };
       expect(body.error).toBe("BAD_REQUEST");
-      expect(body.message).toMatch(/^There is no setup prompt for the harness/);
+      expect(body.message).toMatch(/^There is no setup prompt for the agent/);
       expect(body.details).toEqual({ harnesses: Object.keys(SITE_SETUP_PROMPTS) });
       expect(res.headers.get("access-control-allow-origin")).toBe("*");
     }

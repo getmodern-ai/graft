@@ -37,7 +37,7 @@ export function HarnessSetup({ token, agentName }: { token?: string; agentName: 
     <>
       <CodeBlock label="MCP server URL" code={mcpEndpointUrl(origin)} copyLabel="Copy URL" />
       <Field>
-        <FieldLabel htmlFor={id}>Harness</FieldLabel>
+        <FieldLabel htmlFor={id}>Agent</FieldLabel>
         <Select
           value={harness}
           items={HARNESS_ITEMS}

@@ -44,7 +44,7 @@ export function RevokeAgentDialog({
       toast.success(`${agent.name} is revoked`, {
         description: client
           ? `${client} is refused at the MCP endpoint from now on and will ask you to connect again.`
-          : "Its harness is refused at the MCP endpoint from now on.",
+          : "Its token is refused at the MCP endpoint from now on.",
       });
       onOpenChange(false);
     },
@@ -73,7 +73,7 @@ export function RevokeAgentDialog({
             The agent's working set and history stay here.{" "}
             {client
               ? `To reconnect ${client}, connect it again; it will ask for a new agent.`
-              : "To reconnect the harness, create a new agent."}
+              : "To connect it again, create a new agent."}
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>

@@ -83,7 +83,7 @@ export function CreateAgentDialog({
             <DialogHeader>
               <DialogTitle>{created.agent.name} is ready</DialogTitle>
               <DialogDescription>
-                Connect your harness with the token below. It will not be shown again.
+                Connect your agent with the token below. It will not be shown again.
               </DialogDescription>
             </DialogHeader>
             <TokenOnce token={created.token} agentName={created.agent.name} />

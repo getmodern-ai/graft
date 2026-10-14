@@ -38,7 +38,7 @@ export function SetupPromptBlock({
       code={prompt}
       copyLabel="Copy prompt"
       wrap
-      hint="Paste it into your harness as your first message. It walks the harness through connecting as this agent and holds no token."
+      hint="Paste it into your agent as your first message. It walks the agent through connecting to Graft and holds no token."
     />
   );
 }

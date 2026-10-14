@@ -101,7 +101,7 @@ describe("connectStepDescription", () => {
 
   it("asks for the connection as the agent's own with neither chosen", () => {
     const expected =
-      "Claude asks for this connection as its own, the way it would from your harness. Answer it here.";
+      "Claude asks for this connection as its own, the way it would from your chat. Answer it here.";
     expect(connectStepDescription({ ...names, record: { stockTool: null, goal: null } })).toBe(
       expected,
     );

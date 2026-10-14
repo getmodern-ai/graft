@@ -327,7 +327,7 @@ export async function createAgentAwaitingHarness(
 
 /**
  * Issue the static token of an agent **awaiting its harness** (ADR 0024; GRA-208): Setup's finish
- * step for a token harness, and *Connect a harness* on such an agent. The token is in the answer
+ * step for a token harness, and *Connect an agent* on such an agent. The token is in the answer
  * and nowhere else, as `createAgent`'s is. Every other agent is refused, since a second token
  * would orphan the first and an OAuth agent's client holds its own: `NOT_FOUND` for no agent of
  * the person's, `CONFLICT` with `agent_not_awaiting_harness` and a sentence naming why for a

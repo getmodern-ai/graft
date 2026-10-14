@@ -200,7 +200,7 @@ export function FinishStep({
       {sections.prompt && harness ? (
         <SetupPromptCard
           harness={harness}
-          label={entry?.label ?? "your harness"}
+          label={entry?.label ?? "your agent"}
           agentName={agentName}
           connection={context.data.connection}
           tool={promptTool}
@@ -284,7 +284,7 @@ function BuildFailed({ arrival }: { arrival: Extract<ToolArrival, { kind: "faile
       <WarningIcon />
       <AlertTitle>The tool did not pass</AlertTitle>
       <AlertDescription>
-        {arrival.message} The prompt leaves the tool out; once your harness is connected, ask it for
+        {arrival.message} The prompt leaves the tool out; once your agent is connected, ask it for
         what you wanted and Graft acquires it there.
       </AlertDescription>
     </Alert>
@@ -401,8 +401,8 @@ function AskInChat({ context }: { context: SetupTool }) {
       wrap
       hint={
         tool.wireName
-          ? `Your harness finds ${tool.wireName} among Graft's tools. If its list has not refreshed, ask it again in a new chat.`
-          : "The tool is still on its way. Ask once it has joined the agent's tools, and the harness finds it there."
+          ? `Your agent finds ${tool.wireName} among Graft's tools. If its list has not refreshed, ask it again in a new chat.`
+          : "The tool is still on its way. Ask once it has joined the agent's tools, and it finds the tool there."
       }
     />
   );
