@@ -14,7 +14,7 @@ function card(id: string): PendingAction {
   return {
     id,
     agentId: "agt_1",
-    agent: { id: "agt_1", name: "laptop Hermes" },
+    agent: { id: "agt_1", name: "laptop Hermes", clientName: null },
     kind: "tool",
     payload: { toolId: "tool_1" },
     expiresAt: "2026-10-15T00:00:00.000Z",

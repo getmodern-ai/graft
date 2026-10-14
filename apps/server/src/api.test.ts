@@ -2598,6 +2598,27 @@ describe("pending actions", () => {
       expect(deps.pendingAction.consumePendingAction).not.toHaveBeenCalled();
     });
 
+    it("Allow with Full access (GRA-314) also allows the integration's tools, destructive ones left out, never narrowing what stands", async () => {
+      const { app, deps } = harness({ user: { id: "person_1" } });
+      answersScope(deps);
+      vi.mocked(deps.agent.listAgentConnectionIds).mockResolvedValueOnce(["conn_1", "conn_2"]);
+      const res = await app.request(
+        "/api/pending-actions/pa_3/answer",
+        json({ allow: true, approveBuild: true, allowVendor: true }),
+      );
+      expect(res.status).toBe(200);
+      expect(await res.json()).toMatchObject({
+        buildApproval: { agentId: "agent_1" },
+        vendorApproval: { vendor: "demo", includesDestructive: false },
+      });
+      expect(deps.approval.upsertVendorApproval).toHaveBeenCalledWith(
+        fakeDb,
+        { personId: "person_1", agentId: "agent_1" },
+        { vendor: "demo", includesDestructive: false, grantedAt: NOW },
+        { keep: true },
+      );
+    });
+
     it("Allow with the choice off grows the scope and grants nothing else", async () => {
       const { app, deps } = harness({ user: { id: "person_1" } });
       answersScope(deps);

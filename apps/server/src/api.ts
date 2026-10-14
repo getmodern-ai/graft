@@ -58,6 +58,7 @@ import {
   type Principal,
   pendingActionDoneState,
   pendingActionFinishedAt,
+  pendingActionIntegrationName,
   pendingActionSubject,
   planSetup,
   reconnectConnection,
@@ -112,6 +113,7 @@ import {
   type DocsProposalDeps,
   HANDOFF_TOKEN_PARAM,
   type HandoffConfig,
+  type HandoffRefusalReason,
   handoffUrl,
   type McpDeps,
   notifyAgentsReachingConnection,
@@ -459,7 +461,11 @@ export type ApiOptions = {
 export type PendingActionCard = {
   id: string;
   agentId: string;
-  agent: { id: string; name: string } | null;
+  /**
+   * The asking agent, with the MCP client it connected through (ADR 0018) so the handoff page can
+   * draw its harness's mark (GRA-314); `clientName` is null for a static-token agent.
+   */
+  agent: { id: string; name: string; clientName: string | null } | null;
   kind: string;
   payload: Record<string, unknown>;
   expiresAt: Date;
@@ -498,7 +504,8 @@ const pendingActionsState = z.enum(["open", "done"]).default("open");
  * should ask every call from now on (ADR 0008 as amended 2026-09-15), and whether the yes is for
  * every tool of the tool's integration, destructive ones only with `includesDestructive` (ADR 0008
  * as amended 2026-10-09; GRA-237); for a scope ask, whether the agent may also build against the
- * connection (GRA-75's choice, GRA-104's card). Absent fields leave the setting where it stands
+ * connection (GRA-75's choice, GRA-104's card) and, with `allowVendor`, run the integration's
+ * non-destructive tools without asking (the handoff page's Full access, GRA-314). Absent fields leave the setting where it stands
  * and grant nothing.
  */
 const answerBody = z.object({
@@ -524,10 +531,27 @@ export type VendorApprovalPatchBody = z.input<typeof vendorApprovalPatch>;
 export type AnswerBody = z.input<typeof answerBody>;
 
 /** How a handoff verdict lands on the wire: the reason word rides in `details`. */
-const HANDOFF_REFUSAL_CODE: Record<"tampered" | "expired" | "consumed", ServiceErrorCode> = {
+const HANDOFF_REFUSAL_CODE: Record<HandoffRefusalReason, ServiceErrorCode> = {
   tampered: "FORBIDDEN",
   expired: "GONE",
   consumed: "CONFLICT",
+  closed: "GONE",
+};
+
+/**
+ * `details` on a refused link read (`GET /pending-actions/:id?t=`). For an ask that expired or that
+ * a revoke closed (GRA-314), the agent's name, the integration and when it asked ride beside the
+ * reason, so the page can say "Hermes asked 24 hours ago": the read is the owning person's, the
+ * row found under them, so nothing reaches anyone the Done list would not show it to. A forged or
+ * spent link carries the reason alone.
+ */
+export type HandoffRefusalDetails = {
+  reason: HandoffRefusalReason;
+  closedReason?: PendingActionClosedReason;
+  kind?: string;
+  agentName?: string | null;
+  integrationName?: string | null;
+  askedAt?: Date;
 };
 
 const agentBody = z.object({
@@ -1220,7 +1244,9 @@ export function createApi(options: ApiOptions): Hono {
     return {
       id: row.id,
       agentId: row.agentId,
-      agent: agent ? { id: agent.id, name: agent.name } : null,
+      agent: agent
+        ? { id: agent.id, name: agent.name, clientName: agent.connectedVia?.clientName ?? null }
+        : null,
       kind: row.kind,
       payload: row.payload,
       expiresAt: row.expiresAt,
@@ -2496,7 +2522,9 @@ export function createApi(options: ApiOptions): Hono {
         return {
           id: row.id,
           agentId: row.agentId,
-          agent: agent ? { id: agent.id, name: agent.name } : null,
+          agent: agent
+            ? { id: agent.id, name: agent.name, clientName: agent.connectedVia?.clientName ?? null }
+            : null,
           kind: row.kind,
           payload: row.payload,
           expiresAt: row.expiresAt,
@@ -2517,9 +2545,10 @@ export function createApi(options: ApiOptions): Hono {
 
   /**
    * Where a handoff link lands (`<console>/pending/<id>?t=…` calls this with the same `t`). The
-   * token is verified against the row — tampered 403, already used 409, expired 410, each naming
-   * its reason in `details` — and the session must be the owning person's too: the link is a
-   * pointer the person carries, never a credential (ADR 0006).
+   * token is verified against the row — tampered 403, already used 409, expired or closed by a
+   * revoke 410, each naming its reason in `details` (`HandoffRefusalDetails`) — and the session
+   * must be the owning person's too: the link is a pointer the person carries, never a credential
+   * (ADR 0006).
    */
   api.get("/pending-actions/:id", async (c) => {
     const principal = await principalOf(c.req.raw.headers);
@@ -2534,9 +2563,21 @@ export function createApi(options: ApiOptions): Hono {
       now: pendingActionDeps.now(),
     });
     if (!verdict.ok) {
-      throw new ServiceError(HANDOFF_REFUSAL_CODE[verdict.reason], verdict.message, {
-        details: { reason: verdict.reason },
-      });
+      const about = verdict.reason === "expired" || verdict.reason === "closed";
+      const agent = about ? await getAgent(ctx, principal, row.agentId, agentDeps) : null;
+      const details: HandoffRefusalDetails = {
+        reason: verdict.reason,
+        ...(verdict.closedReason ? { closedReason: verdict.closedReason } : {}),
+        ...(about
+          ? {
+              kind: row.kind,
+              agentName: agent?.name ?? null,
+              integrationName: pendingActionIntegrationName(row.payload),
+              askedAt: row.createdAt,
+            }
+          : {}),
+      };
+      throw new ServiceError(HANDOFF_REFUSAL_CODE[verdict.reason], verdict.message, { details });
     }
     return c.json({ pendingAction: await card(row, principal) });
   });

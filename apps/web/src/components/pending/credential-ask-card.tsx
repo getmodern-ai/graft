@@ -1,3 +1,4 @@
+import { integrationNameFor } from "@graft/core/approval/vendor-approval.rules";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { toast } from "sonner";
@@ -5,7 +6,8 @@ import { toast } from "sonner";
 import { CredentialFields } from "@/components/connection/credential-fields";
 import { ConsentStatus } from "@/components/connection/oauth-client-notice";
 import { useOAuthConsent } from "@/components/connection/use-oauth-consent";
-import { AskCard, Hosts, useAnswerAsk } from "@/components/pending/ask-card";
+import { AskCard, type AskLayout, Hosts, useAnswerAsk } from "@/components/pending/ask-card";
+import { SecretHint } from "@/components/pending/focused-ask-card";
 import { Badge } from "@/components/ui/badge";
 import { FieldGroup } from "@/components/ui/field";
 import {
@@ -32,9 +34,12 @@ import { type Ask, isOpen, pendingKeys } from "@/lib/pending-action-queries";
 export function CredentialAskCard({
   ask,
   onAnswered,
+  layout = "card",
 }: {
   ask: Extract<Ask, { kind: "credential" }>;
   onAnswered?: () => void;
+  /** The handoff page's `focused` (GRA-314): the same inputs and answer under its question. */
+  layout?: AskLayout;
 }) {
   const { action, payload } = ask;
   const queryClient = useQueryClient();
@@ -97,6 +102,89 @@ export function CredentialAskCard({
   };
 
   const busy = save.isPending || decline.isPending || reconsent.isPending || consent.running;
+  const focused = layout === "focused";
+  const agentName = action.agent?.name ?? "Your agent";
+  const reasonQuote = payload.reason ? (
+    <figure className="flex flex-col gap-1.5">
+      <figcaption className="flex flex-wrap items-center gap-2 text-muted-foreground text-xs">
+        <Badge variant="outline">in the agent's words</Badge>
+        What the integration answered, as the agent reports it.
+      </figcaption>
+      <blockquote className="border-l-2 pl-3 italic">{payload.reason}</blockquote>
+    </figure>
+  ) : null;
+  const explanation = (
+    <p className="text-muted-foreground text-xs">
+      {oauth
+        ? payload.revoked
+          ? "This connection was revoked, and its client secret with it. Enter the secret of the client you registered with the integration; the consent then runs in a popup and reconnects it."
+          : "The client secret is still in place. Reconnect runs the integration's consent again in a popup; the new tokens replace the old, and no approval is touched."
+        : payload.revoked
+          ? "This connection was revoked. Entering a credential reconnects it: its tools stay and ask again on their own terms."
+          : `The new credential replaces the old one for scheme ${payload.scheme}; nothing else about the connection changes, and no approval is touched.`}
+    </p>
+  );
+  const fields =
+    isOpen(action) && needsSecret ? (
+      <FieldGroup>
+        <CredentialFields
+          scheme={payload.scheme}
+          value={credential}
+          onChange={setCredential}
+          errors={errors}
+          idPrefix={`ask-${action.id}`}
+          disabled={busy}
+          autoFocus
+        />
+      </FieldGroup>
+    ) : null;
+
+  if (focused) {
+    const integration = integrationNameFor(payload.vendor, payload.connectionName);
+    return (
+      <AskCard
+        action={action}
+        title={null}
+        settled={(recorded) =>
+          typeof recorded?.connectionId === "string"
+            ? `${payload.connectionName} is connected again. ${agentName} picks up where it left off.`
+            : "Declined. The credential stands as it was; the agent is told so."
+        }
+        approveLabel={oauth ? (needsSecret ? "Save and reconnect" : "Reconnect") : "Save"}
+        pending={busy}
+        onAnswer={(allow) => (allow ? submit() : decline.mutate({ allow: false }))}
+        focused={{
+          vendor: payload.vendor,
+          integrationName: integration,
+          question: oauth
+            ? `Reconnect ${payload.connectionName} for ${agentName}?`
+            : `Enter a new key for ${payload.connectionName}?`,
+          lead: payload.revoked
+            ? `${payload.connectionName} was revoked. ${agentName} needs it again; ${needsSecret ? "enter the key" : "sign in"} to reconnect it.`
+            : `${integration} refused the key ${agentName} was using. ${needsSecret ? "Enter a new one" : "Sign in again"} to carry on.`,
+          summary: `${payload.hosts.join(", ")} · approvals stay as they are`,
+          details: {
+            label: "Details",
+            content: (
+              <>
+                {reasonQuote}
+                {explanation}
+              </>
+            ),
+          },
+          secret: needsSecret,
+        }}
+      >
+        {fields ? (
+          <div className="flex flex-col gap-1.5">
+            {fields}
+            <SecretHint hosts={payload.hosts} agentName={agentName} />
+          </div>
+        ) : null}
+        <ConsentStatus state={consent.state} onCancel={consent.cancel} />
+      </AskCard>
+    );
+  }
 
   return (
     <AskCard
@@ -127,37 +215,9 @@ export function CredentialAskCard({
       pending={busy}
       onAnswer={(allow) => (allow ? submit() : decline.mutate({ allow: false }))}
     >
-      {payload.reason ? (
-        <figure className="flex flex-col gap-1.5">
-          <figcaption className="flex flex-wrap items-center gap-2 text-muted-foreground text-xs">
-            <Badge variant="outline">in the agent's words</Badge>
-            What the integration answered, as the agent reports it.
-          </figcaption>
-          <blockquote className="border-l-2 pl-3 italic">{payload.reason}</blockquote>
-        </figure>
-      ) : null}
-      <p className="text-muted-foreground text-xs">
-        {oauth
-          ? payload.revoked
-            ? "This connection was revoked, and its client secret with it. Enter the secret of the client you registered with the integration; the consent then runs in a popup and reconnects it."
-            : "The client secret is still in place. Reconnect runs the integration's consent again in a popup; the new tokens replace the old, and no approval is touched."
-          : payload.revoked
-            ? "This connection was revoked. Entering a credential reconnects it: its tools stay and ask again on their own terms."
-            : `The new credential replaces the old one for scheme ${payload.scheme}; nothing else about the connection changes, and no approval is touched.`}
-      </p>
-      {isOpen(action) && needsSecret ? (
-        <FieldGroup>
-          <CredentialFields
-            scheme={payload.scheme}
-            value={credential}
-            onChange={setCredential}
-            errors={errors}
-            idPrefix={`ask-${action.id}`}
-            disabled={busy}
-            autoFocus
-          />
-        </FieldGroup>
-      ) : null}
+      {reasonQuote}
+      {explanation}
+      {fields}
       <ConsentStatus state={consent.state} onCancel={consent.cancel} />
     </AskCard>
   );

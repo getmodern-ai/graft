@@ -1,12 +1,27 @@
+import { integrationNameFor } from "@graft/core/approval/vendor-approval.rules";
 import { KEYRING_PROVIDER } from "@graft/core/connection/provider";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { useState } from "react";
 import { toast } from "sonner";
 
-import { AskCard, type AskOrigin, DocsLink, Hosts } from "@/components/pending/ask-card";
+import {
+  AskCard,
+  type AskLayout,
+  type AskOrigin,
+  DocsLink,
+  Hosts,
+} from "@/components/pending/ask-card";
 import { BuildApprovalItem } from "@/components/pending/build-approval-item";
+import { ChoiceCards } from "@/components/pending/choice-cards";
 import { Badge } from "@/components/ui/badge";
+import {
+  type AccessChoice,
+  accessChoiceSent,
+  accessLegend,
+  accessOptions,
+  DEFAULT_ACCESS_CHOICE,
+} from "@/lib/access-choice";
 import { agentKeys } from "@/lib/agent-queries";
 import { approvalKeys } from "@/lib/approval-queries";
 import {
@@ -38,15 +53,22 @@ export function ScopeAskCard({
   ask,
   onAnswered,
   origin = "agent",
+  layout = "card",
 }: {
   ask: Extract<Ask, { kind: "scope" }>;
   onAnswered?: () => void;
   /** Setup's connect step passes `setup`: the documentation link is not the agent's reading. */
   origin?: AskOrigin;
+  /**
+   * The handoff page's `focused` (GRA-314): *Full access / Ask me first* in place of the build
+   * line, Full access adding the integration's non-destructive tools to the build approval.
+   */
+  layout?: AskLayout;
 }) {
   const { action, payload } = ask;
   const queryClient = useQueryClient();
   const [approveBuild, setApproveBuild] = useState(true);
+  const [access, setAccess] = useState<AccessChoice>(DEFAULT_ACCESS_CHOICE);
   const agentName = action.agent?.name ?? "the agent";
   const provider: string = payload.provider ?? KEYRING_PROVIDER;
 
@@ -72,6 +94,57 @@ export function ScopeAskCard({
   });
 
   const open = isOpen(action);
+
+  if (layout === "focused") {
+    const integration = integrationNameFor(payload.vendor, payload.displayName);
+    return (
+      <AskCard
+        action={action}
+        title={null}
+        settled={(recorded) =>
+          recorded?.allow === true
+            ? scopeAllowedSettledSentence({ origin, approveBuild: recorded.approveBuild === true })
+            : "Declined. Nothing changed; the agent is told so."
+        }
+        approveLabel="Allow"
+        pending={answer.isPending}
+        onAnswer={(allow) =>
+          answer.mutate(
+            allow
+              ? {
+                  allow: true,
+                  ...accessChoiceSent(access, { approveBuild: true, allowVendor: true }),
+                }
+              : { allow: false },
+          )
+        }
+        focused={{
+          vendor: payload.vendor,
+          integrationName: integration,
+          question: `Let ${agentName} use your ${payload.displayName} connection?`,
+          lead: "You connected it for another of your agents. Nothing new is made and nothing is entered.",
+          summary: `${payload.hosts.join(", ")}${provider === KEYRING_PROVIDER ? "" : ` · through ${providerName(provider)}`}`,
+          ...(payload.docsUrl
+            ? {
+                details: {
+                  label: "Details",
+                  content: <DocsLink href={payload.docsUrl} origin={origin} />,
+                },
+              }
+            : {}),
+        }}
+      >
+        <ChoiceCards
+          id={`ask-${action.id}-access`}
+          legend={accessLegend(agentName)}
+          options={accessOptions(agentName, integration)}
+          value={access}
+          onValueChange={setAccess}
+          disabled={answer.isPending}
+        />
+      </AskCard>
+    );
+  }
 
   return (
     <AskCard
