@@ -260,6 +260,7 @@ function harness(overrides: { clock?: Date } = {}) {
     }),
     replaceAgentConnections: vi.fn(async () => {}),
     addAgentConnection: vi.fn(async () => {}),
+    removeAgentConnection: vi.fn(async () => {}),
     listAgentConnectionIds: vi.fn(async () => []),
     listScopeConnectionIds: vi.fn(async () => ["conn_1", "conn_2"]),
     findConnectionsByIds: vi.fn(async (_db, _p, ids: readonly string[]) =>

@@ -66,6 +66,23 @@ export async function listAuthoredTools(db: DbOrTx, personId: string): Promise<A
     .orderBy(asc(authoredTool.vendor), asc(authoredTool.name));
 }
 
+/**
+ * The person's tools of one vendor, demoted and versionless ones included: an integration's tools
+ * as the console lists them (GRA-293), where a versionless row is not shown but still hides the
+ * stock tool of its name, as it does in `find_tool`.
+ */
+export async function listAuthoredToolsForVendor(
+  db: DbOrTx,
+  personId: string,
+  vendor: string,
+): Promise<AuthoredToolRow[]> {
+  return db
+    .select()
+    .from(authoredTool)
+    .where(and(eq(authoredTool.personId, personId), eq(authoredTool.vendor, vendor)))
+    .orderBy(asc(authoredTool.name));
+}
+
 /** One tool by the triple that identifies it — (person, vendor, name). */
 export async function findAuthoredTool(
   db: DbOrTx,

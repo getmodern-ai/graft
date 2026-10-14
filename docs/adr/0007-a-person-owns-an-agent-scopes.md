@@ -106,3 +106,26 @@ run only when the row's default is revoked, so a failed job leaves a working too
 an authored tool running for one agent still reaches no connection that agent was never given. The
 approval grain does not move (ADR 0008): the tool re-asks on the connection it now runs against, as
 it did after any reconnection.
+
+## Amendment 2026-10-14: a static token is rotated, not only revoked
+
+Decided by Aleks (GRA-287, item 5; built under GRA-306). The consequence above, "one leak revokes
+one agent", made a leaked or lost static token cost the person the agent: its working set, its
+approvals and its history stayed on a revoked row, and a new agent started empty. ADR 0024's
+amendment of 2026-09-25 eased that only for the agent Setup runs as, until Setup completes, and
+said a lost token is otherwise again a revoke and a new agent. That sentence is overtaken.
+
+**The console rotates the static token of an active agent that has one and that no client holds.**
+A new token is minted and shown once, as at creation, and its hash is written over the hash the
+rotation read, in one guarded statement, so the old token stops resolving the moment the new one
+lands and two rotations racing leave one token working, the other refused. The door reads the token
+on every request, so the old token is refused from the next request on, on an MCP session it opened
+too; the session itself is bound to the agent, not the token, so the agent's software continues on
+that session with the new token. A stream the session already holds open (the standalone `GET`)
+is not cut: it carries notifications until it closes, and every request still needs the new
+token. Nothing else about the agent moves: its scope, working set, approvals and history are the
+agent's, not the token's.
+
+An agent an MCP client holds has no static token to rotate: its client's tokens are refreshed and
+rotated under ADR 0018, and revoking the agent ends them. An agent awaiting its software has no
+token yet and is issued its first (ADR 0024). A revoked agent stays revoked.
