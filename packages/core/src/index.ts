@@ -73,6 +73,7 @@ export {
   listAgents,
   removeConnectionFromAgentScope,
   revokeAgent,
+  rotateAgentToken,
   type SetAgentScopeInput,
   setAgentScope,
   toAgentOutput,
@@ -93,6 +94,7 @@ export {
   type AskedVersion,
   allowVendor,
   allowVendorWhenConnecting,
+  type ConsoleApprovalResult,
   decideToolCall,
   getApproval,
   getBuildApproval,
@@ -102,8 +104,11 @@ export {
   listApprovals,
   listVendorApprovals,
   revokeApproval,
+  SETTING_ANSWER_VIA,
   setApproval,
+  setApprovalFromConsole,
   setAskEveryCall,
+  setVendorApprovalDestructive,
   withdrawVendorApproval,
 } from "./approval/approval.service";
 export {
@@ -310,6 +315,16 @@ export {
   providerListProblem,
   providerNamed,
 } from "./connection/provider";
+export {
+  defaultSuggestedIntegrationDeps,
+  listSuggestedIntegrations,
+  SUGGESTED_INTEGRATIONS_LIMIT,
+  SUGGESTED_LOGO_TIMEOUT_MS,
+  type SuggestedAskState,
+  type SuggestedIntegration,
+  type SuggestedIntegrationDeps,
+  suggestedAskState,
+} from "./connection/suggested.service";
 export type { ServiceContext } from "./context";
 export {
   HTTP_STATUS_BY_CODE,
@@ -558,6 +573,15 @@ export {
   requirePerson,
   type SessionLike,
 } from "./tenancy";
+export {
+  defaultIntegrationToolsDeps,
+  type IntegrationToolsDeps,
+} from "./tool/integration-tools.deps";
+export {
+  type IntegrationTool,
+  type IntegrationToolLastRun,
+  listIntegrationTools,
+} from "./tool/integration-tools.service";
 export { defaultToolDeps, type ToolDeps } from "./tool/tool.deps";
 export {
   activateToolVersion,

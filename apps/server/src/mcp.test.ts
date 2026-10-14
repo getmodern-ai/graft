@@ -1,4 +1,4 @@
-import { hashAgentToken } from "@graft/core";
+import { hashAgentToken, rotateAgentToken } from "@graft/core";
 import type { McpDeps, TransportRefusalEvent } from "@graft/mcp";
 import { createFakeDeps, createFakeStore } from "@graft/mcp/testing/fake-deps";
 import { createFakeSandboxBackend, type FakeSandboxBackend } from "@graft/sandbox";
@@ -196,6 +196,53 @@ describe("the MCP endpoint", () => {
     } finally {
       await client.close();
     }
+  });
+
+  /**
+   * GRA-306 (ADR 0007 as amended 2026-10-14): a rotation writes the new hash over the old, and the
+   * door reads the token on every request, so the old token is refused from the next request on,
+   * on a session it opened too, and the new token is answered on that same session, which is
+   * bound to the agent and not to the token.
+   */
+  it("refuses a rotated-away token at once, on its own open session too, and answers the new one there", async () => {
+    const { app, store } = harness();
+    const deps = createFakeDeps(store);
+    const listTools = JSON.stringify({ jsonrpc: "2.0", id: 2, method: "tools/list", params: {} });
+    const opened = await app.request(MCP_MOUNT_PATH, post({ authorization: `Bearer ${TOKEN_A}` }));
+    expect(opened.status).toBe(200);
+    const sessionId = opened.headers.get("mcp-session-id") ?? "";
+    expect(sessionId).not.toBe("");
+
+    const { token } = await rotateAgentToken(
+      { db: deps.db },
+      { personId: "person_1" },
+      "agent_a",
+      deps.agent,
+    );
+    expect(token).not.toBe(TOKEN_A);
+
+    const oldOnSession = await app.request(
+      MCP_MOUNT_PATH,
+      post({ authorization: `Bearer ${TOKEN_A}`, "mcp-session-id": sessionId }, listTools),
+    );
+    expect(oldOnSession.status).toBe(401);
+    expect(await oldOnSession.json()).toMatchObject({ reason: "token_unknown" });
+    const oldFresh = await app.request(
+      MCP_MOUNT_PATH,
+      post({ authorization: `Bearer ${TOKEN_A}` }),
+    );
+    expect(oldFresh.status).toBe(401);
+
+    const newOnSession = await app.request(
+      MCP_MOUNT_PATH,
+      post({ authorization: `Bearer ${token}`, "mcp-session-id": sessionId }, listTools),
+    );
+    expect(newOnSession.status).toBe(200);
+    const newFresh = await app.request(MCP_MOUNT_PATH, post({ authorization: `Bearer ${token}` }));
+    expect(newFresh.status).toBe(200);
+    // Agent B's token was never touched.
+    const other = await app.request(MCP_MOUNT_PATH, post({ authorization: `Bearer ${TOKEN_B}` }));
+    expect(other.status).toBe(200);
   });
 
   /**

@@ -1195,6 +1195,13 @@ and every row's menu has View agent, revoked rows included; the detail drawer is
 page keeps scope and limit editors, the working set, approvals, history and standalone revocation;
 revoked records are read-only. `GET /api/agents` includes `workingSetCount`, counted against each
 person-scoped agent in the same statement; the table shows count/cap with Cando's status dot.
+**A lost static token is rotated, not a new agent** (GRA-306; ADR 0007 as amended 2026-10-14):
+the page's *Rotate token* (`rotate-token-dialog.tsx`, drawn when `lib/agent-token.ts`'s
+`tokenRotatable` says so) confirms, then calls `POST /api/agents/:id/token/rotate`, `@graft/core`'s
+`rotateAgentToken`, which writes the new hash over the one it read through `issueAgentToken`'s
+`replacing` and answers the token once; an agent a client holds, one awaiting its first token and a
+revoked one are `409 agent_token_not_rotatable`. The door reads the token per request, so the old
+one is refused at once, on its open session too (`mcp.test.ts`), and the new one continues there.
 
 **Setup is one record per person and three routes** (GRA-204; ADR 0024). The `setup` table
 (`packages/db/src/schema/setup.ts`, migration 0012) keys on the person: the step reached, the
@@ -1340,6 +1347,25 @@ the agent's job route. `GET /api/connections/:id/goal-suggestions` (`ConnectionG
 is Setup's proposal keyed by the connection alone (`proposeGoalsForConnection`, the same memo) with
 `build` beside it. Another person's agent or connection is a 404 on all three; Create counts as
 `acquire_started` with `job_id` and `agent_id`.
+
+**A connection can be proposed from an API's docs, for the console's Flow C** (GRA-299). The person
+names an integration and pastes a link to its API docs; `POST /api/connection-proposals`
+(`ConnectionProposalBody`: `{ name, docsUrl }`) starts a short job and answers `{ id }`, `GET
+/api/connection-proposals/:id` answers `ConnectionProposalState` (`status` running, ready or failed;
+`stage` one of `@graft/mcp`'s `DOCS_PROPOSAL_STAGES`, the checklist's four lines; `found` filling in;
+`proposal` in `request_connection`'s shape once ready; `failure` with a reason word once failed), and
+`GET /api/connection-proposals` answers `ConnectionProposalAvailability`, unavailable with the
+variables to set wherever `acquireConfigured` says no. The work is `proposeConnectionFromDocs`
+(`packages/mcp/src/proposal-from-docs.ts`): the pasted page alone through `readWebPage`, bounded in
+windows and characters, then `ModelAdapter.proposeConnection` (`@graft/model`'s
+`propose-connection.ts`: the triage model, strict output, one attempt, a bound, traced as
+`propose_connection` under `connect:<personId>`, routed to the person's own key; the scripted backing
+answers a script's `connectionProposal` or a guess from the docs' host), then `normaliseProposal`, so
+a private host is `host_not_public` as it is for an agent's proposal, then each host resolved once (a
+private answer refused, a name that does not resolve listed in `unresolvedHosts`). The jobs live in
+the process (`apps/server/src/connection-proposals.ts`) for 15 minutes, one in flight per person
+(`proposal_running`); a restart loses one, and another person's id is a 404. The settled job is logged
+as counts and kinds, never the name, the link, the pages or the proposal.
 
 **The result step runs the tool, and the finish step connects the harness** (GRA-208; ADR 0024,
 `apps/server/src/setup-finish.ts` and `tool-run.ts`). `GET /api/setup/tool` answers
@@ -1488,6 +1514,17 @@ Back read it as the *Tool* stage) until its task is chosen, when `POST /api/setu
 vendor, the first host as the primary) through the starter's routing (`connectSetupProposal`). No
 column holds it: a reload on that tool screen returns to the directory.
 
+**The directory answers outside Setup too, beside the person's own suggestions** (ADR 0001 as
+amended 2026-10-14; GRA-305). `GET /api/integrations/directory` and `/search` are Setup's two
+handlers mounted a second time, same answers. `GET /api/integrations/suggested`
+(`IntegrationSuggestions`) is `@graft/core`'s `listSuggestedIntegrations` over
+`repo/pending-action.ts`'s `listSuggestedConnectionAsks`: per vendor, the newest `connection` ask
+of the person's live agents, kept when it was not answered with a connection and the person holds
+no unrevoked connection of that vendor, newest first, at most `SUGGESTED_INTEGRATIONS_LIMIT` (12),
+with the agent, the ask's state (`open`, `declined`, `expired`) and age, and the directory entry's
+`logoUrl` (null under the starters). `directory` and `suggested` are registered before any
+`/integrations/:vendor…` route (`INTEGRATION_RESERVED_SEGMENTS`).
+
 **Setup's words are integration and task** (GRA-216; CONTEXT.md, *Integration*; ADR 0024's
 amendment of 2026-09-24). Person-facing copy says *integration* for the service a person connects
 and *task* for what the first tool should do: Setup's steps (*Choose an integration*, *What should
@@ -1607,7 +1644,11 @@ which removes the session entry and clears the cache before anyone navigates. Th
 written once, with `useScreenTitle` (`shell/screen-title.tsx`), and shown by two bars — the 48px
 `PageNav` strip at `md` and up, which also carries `PageNavCollapsedSidebar`, and `MobileTopBar`
 below it; the strip is mounted once in the shell rather than per screen as in Cando, for the
-reason that file gives. Every screen is a `PageContainer` (`large` for the agents table and the
+reason that file gives. **⌘K (Ctrl+K) opens the command palette** (GRA-289), mounted once in
+the shell beside a Search row under the wordmark (`shell/command-palette.tsx`, over the ported
+`command` primitive and `cmdk`): its rows, their filter and their groups are
+`src/lib/command-palette.ts` (`PaletteItem`, `PALETTE_GROUPS`, `filterPalette`), so a new kind of
+result is rows and a group name there, never a filter in the component. Every screen is a `PageContainer` (`large` for the agents table and the
 agent detail, `medium` for the card stacks and settings) opening with `PageHeader`; a detail screen
 titles the bars with `PageNavBreadcrumb`. The doors share `AuthHeader` and `AuthCard` (`max-w-md`,
 the `xs` container inside); `route-not-found.tsx`, `route-error.tsx` and `loader.tsx` are Cando's.

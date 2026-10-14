@@ -337,7 +337,7 @@ export async function issueAwaitingAgentToken(
   }
   if (row.tokenHash) {
     throw refuse(
-      `${row.name} already has a token, shown once when it was issued; revoke the agent and create another to get a new one`,
+      `${row.name} already has a token, shown once when it was issued; rotate it to get a new one`,
     );
   }
   const minted = mintAgentToken(deps.randomBytes);
@@ -346,6 +346,56 @@ export async function issueAwaitingAgentToken(
     tokenPrefix: minted.tokenPrefix,
   });
   if (!issued) throw refuse(`${row.name} was connected while its token was being issued`);
+  return { agent: toAgentOutput(issued), token: minted.token };
+}
+
+/**
+ * Rotate the static token of an active agent that has one (ADR 0007 as amended 2026-10-14;
+ * GRA-306): a new token minted and shown once, its hash written over the one read here
+ * (`issueAgentToken`'s `replacing`), so the old token is refused from the next request on, an open
+ * MCP session included, since the door checks the token on every request. `NOT_FOUND` for no agent
+ * of the person's; `CONFLICT` with `agent_token_not_rotatable` and a sentence for a revoked agent,
+ * an agent a client connected (its client holds its own tokens) and an agent awaiting its harness
+ * (it has no token yet, and `issueAwaitingAgentToken` issues the first). Two rotations racing both
+ * read one hash and the write admits one of them; the other is refused rather than orphaning a
+ * token nobody would be shown.
+ */
+export async function rotateAgentToken(
+  ctx: ServiceContext,
+  principal: Principal,
+  agentId: string,
+  deps: AgentDeps,
+): Promise<{ agent: AgentOutput; token: string }> {
+  const row = orNotFound(
+    await deps.findAgent(ctx.db, principal.personId, agentId),
+    "Agent not found",
+  );
+  const refuse = (message: string) =>
+    new ServiceError("CONFLICT", message, {
+      details: { reason: "agent_token_not_rotatable", agentId: row.id },
+    });
+  if (row.revokedAt) throw refuse(`${row.name} is revoked, so its token is not rotated`);
+  if (row.connectedViaClientId) {
+    throw refuse(
+      `${row.name} is connected through ${row.connectedViaClientName ?? "an MCP client"}, which holds its own tokens; there is no token to rotate`,
+    );
+  }
+  if (!row.tokenHash) {
+    throw refuse(`${row.name} has no token yet; issue its first token instead`);
+  }
+  const minted = mintAgentToken(deps.randomBytes);
+  const issued = await deps.issueAgentToken(
+    ctx.db,
+    principal.personId,
+    row.id,
+    { tokenHash: minted.tokenHash, tokenPrefix: minted.tokenPrefix },
+    row.tokenHash,
+  );
+  if (!issued) {
+    throw refuse(
+      `${row.name}'s token changed while it was being rotated (rotated again, revoked or connected); nothing was replaced by this request`,
+    );
+  }
   return { agent: toAgentOutput(issued), token: minted.token };
 }
 

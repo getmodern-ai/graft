@@ -1,4 +1,4 @@
-import { and, asc, eq, inArray, isNotNull, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, isNotNull, or, sql } from "drizzle-orm";
 
 import type { DbOrTx } from "../index";
 import { connection, type NewConnection } from "../schema/connection";
@@ -70,6 +70,36 @@ export async function findConnectionForNoKeyUpdate(
     .limit(1)
     .for("no key update");
   return row ?? null;
+}
+
+/**
+ * Every connection of one vendor the person holds, revoked ones included, and the further rows
+ * `alsoIds` names, locked for the transaction in id order (GRA-302). A revoke locks its row and
+ * then sweeps every answer for the vendor's tools (`revokeConnection`), and answering an ask locks
+ * the ask's connection first (`recordApprovalAnswer`); an answer set from the console locks every
+ * row either of those would hold before it, so it serialises with both rather than outliving a
+ * revoke's sweep. The fixed order keeps two such writers from each holding one row and waiting on
+ * the other's. Under the person on both branches.
+ */
+export async function findVendorConnectionsForUpdate(
+  db: DbOrTx,
+  personId: string,
+  vendor: string,
+  alsoIds: readonly string[] = [],
+): Promise<ConnectionRow[]> {
+  return db
+    .select()
+    .from(connection)
+    .where(
+      and(
+        eq(connection.personId, personId),
+        alsoIds.length === 0
+          ? eq(connection.vendor, vendor)
+          : or(eq(connection.vendor, vendor), inArray(connection.id, [...alsoIds])),
+      ),
+    )
+    .orderBy(asc(connection.id))
+    .for("update");
 }
 
 /**
