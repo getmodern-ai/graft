@@ -1,5 +1,5 @@
 {
-  "id": "8cd788ca-690c-4b4d-ad73-5623b294224e",
+  "id": "4d71cfd5-7201-4f4b-8108-ca50e53589b3",
   "prevId": "c47913e1-0dd8-4421-b7b3-7a50395ac988",
   "version": "7",
   "dialect": "postgresql",
@@ -2406,6 +2406,33 @@
           "columns": [
             {
               "expression": "connection_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "pending_action_agent_finished_idx": {
+          "name": "pending_action_agent_finished_idx",
+          "columns": [
+            {
+              "expression": "agent_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "coalesce(\"answered_at\", \"expires_at\")",
+              "asc": true,
+              "isExpression": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "id",
               "isExpression": false,
               "asc": true,
               "nulls": "last"

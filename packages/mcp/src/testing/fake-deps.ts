@@ -436,7 +436,24 @@ export function createFakeDeps(store: FakeStore): FakeDeps {
     // authorization server's own suite in `@graft/core` drives the OAuth path over its own fakes.
     findAgentByMcpAccessTokenHash: async () => null,
     revokeMcpTokensForAgent: async () => 0,
-    closePendingActionsForAgent: async () => [],
+    /** The repo's predicate (GRA-292): the agent's open asks, both clocks and the reason stamped. */
+    closePendingActionsForAgent: async (_db, scope, at) => {
+      const closed: PendingActionRow[] = [];
+      if (store.agents.get(scope.agentId)?.personId !== scope.personId) return closed;
+      for (const [id, row] of store.pendingActions) {
+        if (row.agentId === scope.agentId && row.consumedAt === null && row.expiresAt > at) {
+          const updated = {
+            ...row,
+            expiresAt: at,
+            consumedAt: at,
+            closedReason: "agent_revoked" as const,
+          };
+          store.pendingActions.set(id, updated);
+          closed.push(updated);
+        }
+      }
+      return closed;
+    },
     issueAgentToken: async (_db, personId, agentId, token, replacing = null) => {
       const row = store.agents.get(agentId);
       if (!row || row.personId !== personId) return null;
@@ -693,7 +710,12 @@ export function createFakeDeps(store: FakeStore): FakeDeps {
           row.consumedAt === null &&
           row.expiresAt > at
         ) {
-          const updated = { ...row, expiresAt: at, consumedAt: at };
+          const updated = {
+            ...row,
+            expiresAt: at,
+            consumedAt: at,
+            closedReason: "connection_revoked" as const,
+          };
           store.pendingActions.set(id, updated);
           closed.push(updated);
         }
@@ -1235,7 +1257,16 @@ export function createFakeDeps(store: FakeStore): FakeDeps {
   const ownsAction = (personId: string, row: PendingActionRow | undefined) =>
     row !== undefined && store.agents.get(row.agentId)?.personId === personId;
   const pendingAction: PendingActionDeps = {
-    insertPendingAction: async (_db, input) => {
+    /** The repo's guard (Greptile on #225): only for an active agent of the scope. */
+    insertPendingAction: async (_db, scope, input) => {
+      const holder = store.agents.get(input.agentId);
+      if (
+        input.agentId !== scope.agentId ||
+        holder?.personId !== scope.personId ||
+        holder.revokedAt !== null
+      ) {
+        return null;
+      }
       const row: PendingActionRow = {
         id: input.id,
         agentId: input.agentId,
@@ -1286,7 +1317,8 @@ export function createFakeDeps(store: FakeStore): FakeDeps {
     answerPendingAction: async (_db, personId, id, args) => {
       const row = store.pendingActions.get(id);
       if (!ownsAction(personId, row) || !row) return null;
-      if (row.answeredAt !== null || row.expiresAt <= args.answeredAt) return null;
+      if (row.answeredAt !== null || row.consumedAt !== null) return null;
+      if (row.expiresAt <= args.answeredAt) return null;
       const updated = { ...row, answer: args.answer, answeredAt: args.answeredAt };
       store.pendingActions.set(id, updated);
       return updated;
@@ -1302,7 +1334,9 @@ export function createFakeDeps(store: FakeStore): FakeDeps {
     updatePendingActionPayload: async (_db, personId, id, args) => {
       const row = store.pendingActions.get(id);
       if (!ownsAction(personId, row) || !row) return null;
-      if (row.answeredAt !== null || row.expiresAt <= args.now) return null;
+      if (row.answeredAt !== null || row.consumedAt !== null || row.expiresAt <= args.now) {
+        return null;
+      }
       // The repo's optimistic predicates: still this provider's, and unwritten since the read.
       if (row.updatedAt.getTime() !== args.expect.updatedAt.getTime()) return null;
       if ((row.payload as { provider?: unknown }).provider !== args.expect.provider) return null;

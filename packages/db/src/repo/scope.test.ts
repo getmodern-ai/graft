@@ -63,6 +63,7 @@ import {
   consumePendingAction,
   expirePendingActionsForConnection,
   findPendingAction,
+  insertPendingAction,
   listDonePendingActions,
   listPendingActionsByKind,
   lockPendingActionKey,
@@ -899,6 +900,49 @@ describe("person-scoped statements take the person", () => {
     expect(s.sql).toContain('in (select "id" from "agent" where "agent"."person_id" = $');
     expect(s.sql).toContain('"pending_action"."answered_at" is null');
     expect(s.sql).toContain('"pending_action"."expires_at" > $');
+  });
+
+  /** Greptile on #225: a late answer lands nowhere on an ask a revoke closed, whatever its clock read. */
+  it("answering refuses an ask a revoke closed, by its consumption, in the predicate", async () => {
+    await answerPendingAction(db, "person_1", "pa_1", {
+      answer: { allow: true },
+      answeredAt: new Date("2026-09-09T00:00:00Z"),
+    });
+    const s = only();
+    expect(s.sql).toContain(
+      '"pending_action"."answered_at" is null and "pending_action"."consumed_at" is null and "pending_action"."expires_at" > $',
+    );
+  });
+
+  /** Greptile on #225: the insert reads its agent `FOR SHARE`, so it and an agent revoke serialise. */
+  it("inserting an ask first locks the scope's agent, active, for share, in one transaction", async () => {
+    await insertPendingAction(db, SCOPE, {
+      id: "pa_1",
+      agentId: "agent_1",
+      kind: "tool",
+      payload: {},
+      expiresAt: new Date("2026-09-09T00:00:00Z"),
+    });
+    const sqls = statements.map((s) => s.sql);
+    expect(sqls[0]).toBe("begin");
+    expect(sqls[1]).toBe(
+      'select "id" from "agent" where ("agent"."id" = $1 and "agent"."person_id" = $2 and "agent"."revoked_at" is null) for share',
+    );
+    expect(statements[1]?.params).toEqual(["agent_1", "person_1"]);
+    // The fake answers no row, so the agent reads as revoked and nothing is inserted.
+    expect(sqls.some((sql) => sql.startsWith('insert into "pending_action"'))).toBe(false);
+  });
+
+  it("inserting an ask for another agent than the scope's writes nothing", async () => {
+    const row = await insertPendingAction(db, SCOPE, {
+      id: "pa_1",
+      agentId: "agent_2",
+      kind: "tool",
+      payload: {},
+      expiresAt: new Date("2026-09-09T00:00:00Z"),
+    });
+    expect(row).toBeNull();
+    expect(statements).toHaveLength(0);
   });
 
   /** A revoke's third sweep (GRA-28): by the column, under the person, both clocks stamped, the JSON unread. */

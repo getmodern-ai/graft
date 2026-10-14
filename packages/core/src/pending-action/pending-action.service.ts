@@ -43,7 +43,7 @@ export async function createPendingAction(
     throw new ServiceError("BAD_REQUEST", "A pending action has a kind");
   }
   const now = deps.now();
-  return deps.insertPendingAction(ctx.db, {
+  const row = await deps.insertPendingAction(ctx.db, scope, {
     id: deps.newId(),
     agentId: scope.agentId,
     kind: input.kind,
@@ -52,6 +52,9 @@ export async function createPendingAction(
     expiresAt: new Date(now.getTime() + ttl),
     createdAt: now,
   });
+  // A call that passed the door before its agent was revoked asks nothing after (the repo's lock).
+  if (!row) throw new ServiceError("FORBIDDEN", "This agent has been revoked");
+  return row;
 }
 
 /** The waiting tool's read of its own action. */
@@ -113,9 +116,11 @@ export async function listDonePendingActions(
       `A page of finished asks holds between 1 and ${MAX_DONE_PENDING_ACTIONS_PAGE}`,
     );
   }
-  const after = input.cursor ? decodeDoneCursor(input.cursor) : null;
+  const now = deps.now();
+  // Absent is the first page; present, even empty, must be a cursor (Greptile on #225).
+  const after = input.cursor == null ? null : decodeDoneCursor(input.cursor, now);
   const read = await deps.listDonePendingActions(ctx.db, principal.personId, {
-    now: deps.now(),
+    now,
     limit: limit + 1,
     after,
   });
@@ -136,14 +141,25 @@ export function encodeDoneCursor(cursor: DonePendingActionCursor): string {
   ).toString("base64url");
 }
 
-/** The cursor back; anything that is not one this server wrote is a `BAD_REQUEST`, never a first page. */
-export function decodeDoneCursor(cursor: string): DonePendingActionCursor {
+/**
+ * The cursor back. Anything that is not the shape `encodeDoneCursor` writes, or that names a finish
+ * after `now`, which no answered page can have, is a `BAD_REQUEST` rather than a first page. It is
+ * not signed: it carries no authority, since the statement is under the person whatever it says, so
+ * a hand-built one only positions the person's own list.
+ */
+export function decodeDoneCursor(cursor: string, now: Date): DonePendingActionCursor {
   try {
     const parsed: unknown = JSON.parse(Buffer.from(cursor, "base64url").toString("utf8"));
     if (parsed && typeof parsed === "object") {
       const { t, id } = parsed as Record<string, unknown>;
       const finishedAt = typeof t === "string" ? new Date(t) : null;
-      if (finishedAt && !Number.isNaN(finishedAt.getTime()) && typeof id === "string" && id) {
+      if (
+        finishedAt &&
+        !Number.isNaN(finishedAt.getTime()) &&
+        finishedAt.getTime() <= now.getTime() &&
+        typeof id === "string" &&
+        id
+      ) {
         return { finishedAt, id };
       }
     }

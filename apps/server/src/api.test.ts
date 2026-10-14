@@ -422,7 +422,9 @@ function approvalDeps(): ApprovalDeps {
 
 function pendingActionDeps(): PendingActionDeps {
   return {
-    insertPendingAction: vi.fn(async (_db, input) => ({ ...openAction, ...input }) as never),
+    insertPendingAction: vi.fn(
+      async (_db, _scope, input) => ({ ...openAction, ...input }) as never,
+    ),
     findPendingAction: vi.fn(async () => openAction),
     findPendingActionForPerson: vi.fn(async () => openAction),
     listOpenPendingActions: vi.fn(async () => [openAction, buildAction]),
@@ -1840,7 +1842,12 @@ describe("pending actions", () => {
 
     it("refuses an unknown state, a cursor it did not write and a page out of bounds", async () => {
       const { app } = harness({ user: { id: "person_1" } });
-      for (const query of ["state=all", "state=done&cursor=nope", "state=done&limit=abc"]) {
+      for (const query of [
+        "state=all",
+        "state=done&cursor=nope",
+        "state=done&cursor=",
+        "state=done&limit=abc",
+      ]) {
         const res = await app.request(`/api/pending-actions?${query}`);
         expect(res.status, query).toBe(400);
       }

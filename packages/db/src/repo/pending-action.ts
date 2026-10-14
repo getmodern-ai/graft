@@ -39,13 +39,37 @@ export async function lockPendingActionKey(
   );
 }
 
+/**
+ * A new ask, only for an agent of the scope that is not revoked. The agent's row is read `FOR SHARE`
+ * in the insert's transaction, so an agent revoke (`repo/agent.ts`'s `revokeAgent`, an update of
+ * that row) and this insert serialise: a revoke that commits first leaves this read empty and nothing
+ * is inserted; an insert that commits first is seen by the revoke's close of the agent's open asks
+ * (`closePendingActionsForAgent`), which runs after the revoke's update has waited on it (Greptile
+ * on #225). Null is "no such active agent", which the service refuses.
+ */
 export async function insertPendingAction(
   db: DbOrTx,
+  scope: AgentScope,
   input: NewPendingActionRow,
-): Promise<PendingActionRow> {
-  const [row] = await db.insert(pendingAction).values(input).returning();
-  if (!row) throw new Error("Insert of pending action returned no row");
-  return row;
+): Promise<PendingActionRow | null> {
+  if (input.agentId !== scope.agentId) return null;
+  return db.transaction(async (tx) => {
+    const [active] = await tx
+      .select({ id: agent.id })
+      .from(agent)
+      .where(
+        and(
+          eq(agent.id, scope.agentId),
+          eq(agent.personId, scope.personId),
+          isNull(agent.revokedAt),
+        ),
+      )
+      .for("share");
+    if (!active) return null;
+    const [row] = await tx.insert(pendingAction).values(input).returning();
+    if (!row) throw new Error("Insert of pending action returned no row");
+    return row;
+  });
 }
 
 export async function findPendingAction(
@@ -141,10 +165,14 @@ export async function listDonePendingActions(
 }
 
 /**
- * The person's answer. The statement refuses an action already answered and one past its expiry
- * — both predicates in the SQL, so an answer that arrives late lands nowhere rather than on a call
- * that has already returned its refusal. Null is "nothing to answer": unknown, not theirs,
- * answered, or expired, which the service reports as one refusal.
+ * The person's answer. The statement refuses an action already answered, one past its expiry and
+ * one a revoke closed — all in the SQL, so an answer that arrives late lands nowhere rather than on
+ * a call that has already returned its refusal. `consumed_at IS NULL` is the closed check: an
+ * unanswered ask is only ever stamped consumed by a revoke's close, including one closed before
+ * `closed_reason` existed, and it holds where `expires_at` would not: an answer whose clock was read
+ * before a close that commits ahead of it still compares its earlier moment with the close's later
+ * one (Greptile on #225). Null is "nothing to answer": unknown, not theirs, answered, expired or
+ * closed, which the service reports as one refusal.
  */
 export async function answerPendingAction(
   db: DbOrTx,
@@ -160,6 +188,7 @@ export async function answerPendingAction(
         eq(pendingAction.id, id),
         inArray(pendingAction.agentId, personAgentIds(db, personId)),
         isNull(pendingAction.answeredAt),
+        isNull(pendingAction.consumedAt),
         gt(pendingAction.expiresAt, args.answeredAt),
       ),
     )
@@ -197,6 +226,7 @@ export async function updatePendingActionPayload(
         eq(pendingAction.id, id),
         inArray(pendingAction.agentId, personAgentIds(db, personId)),
         isNull(pendingAction.answeredAt),
+        isNull(pendingAction.consumedAt),
         gt(pendingAction.expiresAt, args.now),
         eq(pendingAction.updatedAt, args.expect.updatedAt),
         sql`${pendingAction.payload} ->> 'provider' = ${args.expect.provider}`,

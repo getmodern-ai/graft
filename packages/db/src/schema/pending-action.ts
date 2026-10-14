@@ -1,4 +1,4 @@
-import { relations } from "drizzle-orm";
+import { relations, sql } from "drizzle-orm";
 import { index, jsonb, pgTable, text, timestamp } from "drizzle-orm/pg-core";
 
 import { agent } from "./agent";
@@ -58,6 +58,13 @@ export const pendingAction = pgTable(
     index("pending_action_agent_id_idx").on(table.agentId),
     // "Every open ask about this connection" — what a revoke closes (ADR 0007).
     index("pending_action_connection_id_idx").on(table.connectionId),
+    // The Done list's order per agent, finish then id (GRA-292; `listDonePendingActions`), so a
+    // page reads the newest finished asks off the index rather than sorting the agent's history.
+    index("pending_action_agent_finished_idx").on(
+      table.agentId,
+      sql`coalesce("answered_at", "expires_at")`,
+      table.id,
+    ),
   ],
 );
 

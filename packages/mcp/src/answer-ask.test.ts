@@ -5,6 +5,7 @@ import {
   type FakeLinkProvider,
   FakeLinkProviderError,
 } from "@graft/core/connection/testing/fake-link-provider";
+import type { PendingActionRow } from "@graft/db/repo/pending-action";
 import { createScriptedModel } from "@graft/model";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
@@ -433,8 +434,21 @@ describe("answer_ask on a tool ask", () => {
     });
   });
 
+  /** Insert an ask as the repo would, for an active agent of the person; the guard is the repo's. */
+  const insertAsk = async (
+    input: Parameters<typeof deps.pendingAction.insertPendingAction>[2],
+  ): Promise<PendingActionRow> => {
+    const row = await deps.pendingAction.insertPendingAction(
+      deps.db,
+      { personId: PERSON, agentId: input.agentId },
+      input,
+    );
+    if (!row) throw new Error(`no active agent ${input.agentId}`);
+    return row;
+  };
+
   const toolAsk = (agentId: string, askEveryCall = false) =>
-    deps.pendingAction.insertPendingAction(deps.db, {
+    insertAsk({
       id: `pa_tool_${store.newId()}`,
       agentId,
       kind: "tool",
@@ -556,7 +570,7 @@ describe("answer_ask on a tool ask", () => {
       includesDestructive: false,
     });
     expect(no.body).toMatchObject({ reason: "input_invalid" });
-    const build = await deps.pendingAction.insertPendingAction(deps.db, {
+    const build = await insertAsk({
       id: "pa_build_vendor",
       agentId: CLAUDE,
       kind: "build",

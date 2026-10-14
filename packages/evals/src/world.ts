@@ -346,8 +346,10 @@ export async function openWorld(options: WorldOptions): Promise<World> {
   };
   const pendingAction: PendingActionDeps = {
     ...fake.pendingAction,
-    insertPendingAction: async (db, input) =>
-      stamp(await fake.pendingAction.insertPendingAction(db, input)),
+    insertPendingAction: async (db, scope, input) => {
+      const row = await fake.pendingAction.insertPendingAction(db, scope, input);
+      return row ? stamp(row) : null;
+    },
   };
   const acquireJob: AcquireJobDeps = {
     ...fake.acquireJob,
