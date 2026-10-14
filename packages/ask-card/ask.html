@@ -9,8 +9,10 @@
     <link rel="stylesheet" href="./src/styles.css" />
   </head>
   <body>
-    <!-- Empty until a tool result that is an ask arrives; a result that is not one leaves it so. -->
-    <div id="ask" hidden></div>
+    <!-- One waiting line until the tool result arrives (GRA-335), so the frame has its height before
+         the script runs; then the card, or nothing for a result that is not an ask. card-view.ts
+         draws the same line. -->
+    <div id="ask"><p class="ask-waiting" role="status">Waiting for Graft…</p></div>
     <script type="module" src="./src/main.ts"></script>
   </body>
 </html>

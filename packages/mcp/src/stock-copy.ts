@@ -28,9 +28,10 @@ import { authoredToolName } from "./tool-names";
  * person's tool of a `<vendor>__<name>`, copying the stock tool of that name in first when the
  * person holds none: `run.ts`'s `runAuthoredTool` goes through it, so `run_tool`, a first-class
  * call and the console's run (`apps/server/src/tool-run.ts`) all copy as one; `promoteToolForAgent`
- * goes through it, so `promote` and Setup's promote before a run do too. A copy is made only once
- * per person (`@graft/publish`'s `copyStockVersion`), and a person's own tool of the name always
- * wins (the shadow rule): it is found first and stock is never asked.
+ * goes through it, so `promote` does too; and Setup's ready-made tool calls it bound to the record's
+ * connection before promoting under the record's lock (`apps/server/src/setup-stock.ts`, GRA-276).
+ * A copy is made only once per person (`@graft/publish`'s `copyStockVersion`), and a person's own
+ * tool of the name always wins (the shadow rule): it is found first and stock is never asked.
  *
  * **A copy needs a connection in the agent's scope that the stock tool runs over** (GRA-241;
  * `stock-match.ts`: every host the manifest declares among the connection's, whatever its
@@ -296,9 +297,8 @@ export type PromotedTool =
 
 /**
  * Promote a tool for an agent, copying a stock tool in first (`ensureToolForAgent`): `promote`'s
- * body, and the call a console route makes to put a stock tool in an agent's working set before
- * running it (Setup v2). A change is announced through `notifier` when one is given; the server's
- * process notifier is `deps.notifier`.
+ * body. A change is announced through `notifier` when one is given; the server's process notifier
+ * is `deps.notifier`.
  */
 export async function promoteToolForAgent(
   deps: McpDeps,
