@@ -42,12 +42,30 @@ export function setupStepProperties(step: string): (answer: unknown) => Analytic
   return (answer) => ({ step, ...setupHarnessProperty(answer) });
 }
 
+/** The console connect's answer (`ConsoleConnectResult`): its kind and access, and whether it made a row. */
+export function connectProperties(answer: unknown): AnalyticsProperties {
+  const said =
+    typeof answer === "object" && answer !== null ? (answer as Record<string, unknown>) : {};
+  return {
+    kind: typeof said.kind === "string" ? said.kind : null,
+    access: typeof said.access === "string" ? said.access : null,
+    created: said.created === true,
+  };
+}
+
 export const TRACKED_ROUTES: ReadonlyArray<TrackedRoute> = [
   { method: "POST", path: /^\/agents$/, event: "agent_created" },
   { method: "POST", path: /^\/agents\/[^/]+\/revoke$/, event: "agent_revoked" },
   { method: "PUT", path: /^\/agents\/[^/]+\/scope$/, event: "scope_changed" },
   { method: "POST", path: /^\/mcp-oauth\/consent$/, event: "mcp_client_consented" },
   { method: "POST", path: /^\/connections$/, event: "connection_created" },
+  // The console connect (GRA-304): what the answer said to do next and the access chosen.
+  {
+    method: "POST",
+    path: /^\/connect$/,
+    event: "connection_started",
+    properties: connectProperties,
+  },
   { method: "POST", path: /^\/connections\/[^/]+\/revoke$/, event: "connection_revoked" },
   { method: "POST", path: /^\/pending-actions\/[^/]+\/connection$/, event: "connection_confirmed" },
   { method: "POST", path: /^\/pending-actions\/[^/]+\/credential$/, event: "credential_entered" },

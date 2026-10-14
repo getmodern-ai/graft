@@ -25,6 +25,22 @@ describe("routeEvent", () => {
     expect(trackedRoute("POST", "/api/agents")?.properties).toBeUndefined();
   });
 
+  it("counts the console connect with its answer's kind, access and whether it made a row (GRA-304)", () => {
+    const connect = trackedRoute("POST", "/api/connect");
+    expect(connect?.event).toBe("connection_started");
+    expect(connect?.properties?.({ kind: "link", access: "full", url: "https://x" })).toEqual({
+      kind: "link",
+      access: "full",
+      created: false,
+    });
+    expect(connect?.properties?.({ kind: "connected", access: "ask", created: true })).toEqual({
+      kind: "connected",
+      access: "ask",
+      created: true,
+    });
+    expect(connect?.properties?.(null)).toEqual({ kind: null, access: null, created: false });
+  });
+
   it("is null for a read, an unlisted mutation and a near miss", () => {
     expect(routeEvent("GET", "/api/agents")).toBeNull();
     expect(routeEvent("PATCH", "/api/agents/ag_1")).toBeNull();

@@ -131,6 +131,7 @@ export {
   CREDENTIAL_ASK_KIND,
   type CredentialAskPayload,
   type CredentialRequestInput,
+  coversProposal,
   describeSchemes,
   normaliseProposal,
   PROPOSAL_PROVENANCE_NOTE,

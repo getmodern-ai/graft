@@ -20,6 +20,7 @@ import {
   providerNamed,
   type ServiceContext,
   ServiceError,
+  verifyConsoleLinkState,
   verifyLinkState,
 } from "@graft/core";
 import type { DbOrTx } from "@graft/db";
@@ -39,6 +40,8 @@ import {
 } from "@graft/mcp";
 import type { Analytics } from "@graft/observability";
 import { Hono } from "hono";
+
+import { completeConsoleLink } from "./console-connect";
 
 /**
  * A provider's **link** — the one-click connect (ADR 0019; GRA-59) — as the server runs it, in two
@@ -165,6 +168,22 @@ export function createProviderLinkRoutes(options: ProviderLinkRouteOptions): Hon
       pendingActionId: string | null = null,
       status: LinkCallbackOutcome["status"] = "failed",
     ) => land({ status, pendingActionId, connectionId: null, message });
+
+    // A link the person started from the console with no agent asking (GRA-304; ADR 0006 as
+    // amended 2026-10-14) carries the console connect's state, which names no ask: only a state
+    // of that domain verifies as one or reads as expired, so every other state goes on below.
+    const connect = verifyConsoleLinkState(query[LINK_STATE_PARAM], options.handoff.secret, now);
+    if (!connect.ok && connect.reason === "expired") return failed(connect.message);
+    if (connect.ok) {
+      const record = connect.payload;
+      const outcome = await completeConsoleLink(ctx, record, query[LINK_OUTCOME_PARAM], options);
+      options.analytics?.capture({
+        distinctId: record.personId,
+        event: "provider_link_returned",
+        properties: { provider: record.provider, outcome: outcome.status, via: "connect" },
+      });
+      return land(outcome);
+    }
 
     const verdict = verifyLinkState(query[LINK_STATE_PARAM], options.handoff.secret, now);
     if (!verdict.ok) return failed(verdict.message);

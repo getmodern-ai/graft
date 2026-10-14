@@ -39,19 +39,56 @@ export type LinkStatePayload = {
   allowVendor?: boolean;
 };
 
-function mark(encodedPayload: string, secret: string): Buffer {
-  return createHmac("sha256", secret).update(`link\n${encodedPayload}`).digest();
+/**
+ * The console's own connect (ADR 0006 as amended 2026-10-14; GRA-304): a link the person started
+ * from the console with no agent asking, so there is no ask to name. **The state is the
+ * short-lived record**: what the return needs to make the connection (the proposal routed, the
+ * person, the provider, the access chosen) travels signed in it, so any replica can finish a link
+ * another started and nothing is written until the provider confirms the account. `connectId` is
+ * the record's id, answered to the console when the link is minted and handed back on the
+ * console's callback, so the page that opened the popup knows the outcome is its own.
+ */
+export type ConsoleLinkStatePayload = {
+  connectId: string;
+  personId: string;
+  provider: string;
+  vendor: string;
+  displayName: string;
+  primaryHost: string;
+  hosts: string[];
+  /** ADR 0008's amendment of 2026-10-14: `full` records the agents' approvals with the row. */
+  access: "full" | "ask";
+  /** Epoch milliseconds. */
+  expiresAt: number;
+};
+
+type StateDomain = "link" | "connect";
+
+function mark(domain: StateDomain, encodedPayload: string, secret: string): Buffer {
+  return createHmac("sha256", secret).update(`${domain}\n${encodedPayload}`).digest();
+}
+
+function sign(domain: StateDomain, payload: object, secret: string): string {
+  const encoded = Buffer.from(JSON.stringify(payload), "utf8").toString("base64url");
+  return `${encoded}.${mark(domain, encoded, secret).toString("base64url")}`;
 }
 
 /** `base64url(payload JSON) + "." + base64url(HMAC)` — one string for the provider to carry back. */
 export function signLinkState(payload: LinkStatePayload, secret: string): string {
-  const encoded = Buffer.from(JSON.stringify(payload), "utf8").toString("base64url");
-  return `${encoded}.${mark(encoded, secret).toString("base64url")}`;
+  return sign("link", payload, secret);
 }
 
-export type LinkStateVerdict =
-  | { ok: true; payload: LinkStatePayload }
+/** The console connect's state, under its own domain so neither state verifies as the other. */
+export function signConsoleLinkState(payload: ConsoleLinkStatePayload, secret: string): string {
+  return sign("connect", payload, secret);
+}
+
+export type StateVerdict<P> =
+  | { ok: true; payload: P }
   | { ok: false; reason: "malformed" | "tampered" | "expired"; message: string };
+
+export type LinkStateVerdict = StateVerdict<LinkStatePayload>;
+export type ConsoleLinkStateVerdict = StateVerdict<ConsoleLinkStatePayload>;
 
 /**
  * Verify a state the provider carried back. The mark is checked first and in constant time, so a
@@ -65,7 +102,30 @@ export function verifyLinkState(
   secret: string,
   now: Date,
 ): LinkStateVerdict {
-  const malformed: LinkStateVerdict = {
+  return verify("link", state, secret, now, isPayload);
+}
+
+/**
+ * Verify a console connect's state (GRA-304). `tampered` is also what a link state of the other
+ * domain reads as here, which is how the return route tells the two apart: only a state this
+ * domain signed answers `ok` or `expired`.
+ */
+export function verifyConsoleLinkState(
+  state: string | null | undefined,
+  secret: string,
+  now: Date,
+): ConsoleLinkStateVerdict {
+  return verify("connect", state, secret, now, isConsolePayload);
+}
+
+function verify<P extends { expiresAt: number }>(
+  domain: StateDomain,
+  state: string | null | undefined,
+  secret: string,
+  now: Date,
+  isShape: (value: unknown) => value is P,
+): StateVerdict<P> {
+  const malformed: StateVerdict<P> = {
     ok: false,
     reason: "malformed",
     message: "The state the provider sent back is not one Graft issued",
@@ -77,7 +137,7 @@ export function verifyLinkState(
   const presented = state.slice(dot + 1);
   if (!/^[A-Za-z0-9_-]+$/.test(encoded) || !/^[A-Za-z0-9_-]+$/.test(presented)) return malformed;
 
-  const expected = mark(encoded, secret);
+  const expected = mark(domain, encoded, secret);
   const given = Buffer.from(presented, "base64url");
   if (given.length !== expected.length || !timingSafeEqual(given, expected)) {
     return {
@@ -93,15 +153,37 @@ export function verifyLinkState(
   } catch {
     return malformed;
   }
-  if (!isPayload(payload)) return malformed;
+  if (!isShape(payload)) return malformed;
   if (payload.expiresAt <= now.getTime()) {
     return {
       ok: false,
       reason: "expired",
-      message: "This link took too long — open the ask in the console and connect again",
+      message:
+        domain === "link"
+          ? "This link took too long — open the ask in the console and connect again"
+          : "This link took too long. Connect the integration again from the console",
     };
   }
   return { ok: true, payload };
+}
+
+function isConsolePayload(value: unknown): value is ConsoleLinkStatePayload {
+  if (typeof value !== "object" || value === null) return false;
+  const p = value as Record<string, unknown>;
+  const text = (key: string) => typeof p[key] === "string" && (p[key] as string).length > 0;
+  return (
+    text("connectId") &&
+    text("personId") &&
+    text("provider") &&
+    text("vendor") &&
+    text("displayName") &&
+    text("primaryHost") &&
+    Array.isArray(p.hosts) &&
+    p.hosts.every((host) => typeof host === "string") &&
+    (p.access === "full" || p.access === "ask") &&
+    typeof p.expiresAt === "number" &&
+    Number.isFinite(p.expiresAt)
+  );
 }
 
 function isPayload(value: unknown): value is LinkStatePayload {

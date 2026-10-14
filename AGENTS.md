@@ -1423,6 +1423,22 @@ Back read it as the *Tool* stage) until its task is chosen, when `POST /api/setu
 vendor, the first host as the primary) through the starter's routing (`connectSetupProposal`). No
 column holds it: a reload on that tool screen returns to the directory.
 
+**The person connects an integration with no agent asking** (GRA-304; ADR 0006 and ADR 0008 as
+amended 2026-10-14; `apps/server/src/console-connect.ts`). `POST /api/connect` (`ConnectBody`:
+`{ slug }`, read again from the directory, a starter's as the starter, or `{ proposal }` in
+`request_connection`'s shape, and `access`, `full` or `ask`) normalises the proposal, routes it by
+`providerFor` and answers `ConsoleConnectResult`, writing no pending action: `connected` (a keyless
+keyring row made at once, or the person's covering one answered or widened; a no-step provider's
+row), `form` (the keyring's, nothing written; the console posts `POST /api/connections` with the
+same `access`; a link provider that cannot start answers it too with `fallback`), or `link` with a
+`connectId`. A link's state is the short-lived record itself, `@graft/core`'s
+`signConsoleLinkState` under its own HMAC domain, so `provider-link.ts`'s return route tells it
+from an ask's, completes through `completeConsoleLink` and lands on `/link/callback` with
+`connectId` and no `pendingActionId`. No scope row is written: the row reaches every `all` agent by
+being the person's. `full` is `recordFullAccess`: each active agent whose scope reaches the row at
+that moment gets `grantBuildApproval` and `allowVendorWhenConnecting`. Counted as
+`connection_started` (`kind`, `access`, `created`).
+
 **Setup's words are integration and task** (GRA-216; CONTEXT.md, *Integration*; ADR 0024's
 amendment of 2026-09-24). Person-facing copy says *integration* for the service a person connects
 and *task* for what the first tool should do: Setup's steps (*Choose an integration*, *What should
