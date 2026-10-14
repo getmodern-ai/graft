@@ -568,9 +568,15 @@ its console redirect; `McpDeps.authUrl` is `GRAFT_AUTH_URL` for it. `ask_status 
 reads where the ask stands off the row — `open`, `answered`, `declined`, `expired` — with the
 console's settled sentence for the kind. The card (`packages/ask-card/src/render.ts`) opens every
 page it sends the person to with `from=card` (`withFromCard`; `ASK_STATUS_POLL_MS` is 3 s) and polls
-`ask_status` until the ask is settled or the render is abandoned: *Connect through <provider>* on a
-link ask, *Enter the secret in Graft* on a scheme with a credential or a credential re-entry, *Open
-in the console* under a `card_not_available` refusal or where the host refused `ui/open-link`. The
+`ask_status` until the ask is settled or the render is abandoned: *Sign in with <integration>* on a
+link ask, *Open in Graft* on a scheme with a credential or a credential re-entry, *Open in the
+console* under a `card_not_available` refusal or where the host refused `ui/open-link`. **The card
+asks the handoff page's questions with its choices** (GRA-316): *Full access / Ask me first* on a
+keyless connection, a link ask and a scope ask (the scope ask's yes is `{ allow, approveBuild,
+allowVendor }` on `answer_ask`, never destructive), and on a tool ask *Every <integration> tool*,
+*Just <tool>* and the destructive line, with no allow for one call. Its words are
+`packages/ask-card/src/copy.ts`, a copy of the console's `access-choice.ts`, `tool-allow-choice.ts`
+and `handoff-copy.ts` helpers, held to them by `apps/web/src/lib/ask-card-copy.test.ts`. The
 console reads the flag through `@graft/core`'s browser-safe `connection/card.rules.ts`
 (`openedFromCard`, `askAnsweredMessage`, `FROM_CARD_CLOSE_MS`): `/pending/:id?from=card` posts
 `graft:ask` to its opener and closes itself 1.5 s after a successful submit (since GRA-144 every
@@ -594,8 +600,8 @@ choice, pre-ticked — and posts the generic `POST /api/pending-actions/:id/answ
 `recordApprovalAnswer` in `ask-answer.ts` grows the scope (`addConnectionToAgentScope`) and grants
 the build approval in the answer's transaction, and leaves the answer for the agent's next call,
 which answers `connected` naming the execute tool, or `scope_declined`. The ask card renders
-`card.kind: "scope"` as answerable, and `answer_ask` admits `{ allow, approveBuild? }` for it under
-the same gate. `SERVER_INSTRUCTIONS` names `scope` in its handoff list, and `session.test.ts`
+`card.kind: "scope"` as answerable, and `answer_ask` admits `{ allow, approveBuild?, allowVendor? }`
+for it under the same gate (`allowVendor` since GRA-316). `SERVER_INSTRUCTIONS` names `scope` in its handoff list, and `session.test.ts`
 pins the word across the description and the Hermes skill.
 
 **A keyless proposal for a vendor the person already holds widens that row** (GRA-167; ADR 0006 as

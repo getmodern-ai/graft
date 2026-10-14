@@ -585,6 +585,15 @@ describe("answer_ask on a tool ask", () => {
       includesDestructive: false,
     });
     expect(onBuild.body).toMatchObject({ reason: "input_invalid" });
+    // The scope ask's Full access shape (GRA-316) answers neither a tool nor a build ask.
+    for (const id of [row.id, build.id]) {
+      const scopeShaped = await answer(claude, id, {
+        allow: true,
+        approveBuild: true,
+        allowVendor: true,
+      });
+      expect(scopeShaped.body).toMatchObject({ reason: "input_invalid" });
+    }
     expect(store.vendorApprovals.size).toBe(0);
   });
 
@@ -864,6 +873,54 @@ describe("answer_ask on a scope ask", () => {
     );
     const job = await claude.call("acquire", { connectionId: DELTA_CONN, goal: "list books" });
     expect(text(job)).toMatchObject({ jobId: expect.any(String) });
+  });
+
+  /** The handoff page's Full access on the card (GRA-314, GRA-316; ADR 0008 as amended 2026-10-14). */
+  it("records Full access as the build approval and the integration's non-destructive tools, and refuses the destructive choice", async () => {
+    const claude = await connect(TOKEN_CLAUDE);
+    const card = cardOf(await claude.call("request_connection", DELTA));
+    expect(card.vendorTools).toMatchObject({ integrationName: "Delta Books" });
+    const destructive = await answer(claude, card.pendingActionId, {
+      allow: true,
+      allowVendor: true,
+      includesDestructive: true,
+    });
+    expect(destructive.body).toMatchObject({ reason: "input_invalid" });
+    expect(store.pendingActions.get(card.pendingActionId)?.answeredAt).toBeNull();
+
+    const { body } = await answer(claude, card.pendingActionId, {
+      allow: true,
+      approveBuild: true,
+      allowVendor: true,
+    });
+    expect(body.sentence).toContain("may build tools against it");
+    expect(body.sentence).toContain("destructive ones still ask");
+    expect(store.pendingActions.get(card.pendingActionId)?.answer).toEqual({
+      allow: true,
+      approveBuild: true,
+      allowVendor: true,
+      via: "card",
+    });
+    expect(store.buildApprovals.get(`${CLAUDE} ${DELTA_CONN}`)).toBeDefined();
+    expect(store.vendorApprovals.get(`${CLAUDE} delta`)).toMatchObject({
+      includesDestructive: false,
+    });
+    expect(store.vendorApprovals.get(`${OTHER} delta`)).toBeUndefined();
+  });
+
+  it("records Ask me first as neither: in scope, no build approval, no integration allow", async () => {
+    const claude = await connect(TOKEN_CLAUDE);
+    const card = cardOf(await claude.call("request_connection", DELTA));
+    const { body } = await answer(claude, card.pendingActionId, {
+      allow: true,
+      approveBuild: false,
+      allowVendor: false,
+    });
+    expect(body.sentence).not.toContain("may build tools");
+    expect(body.sentence).not.toContain("without asking");
+    expect(store.agentConnections.get(CLAUDE)?.has(DELTA_CONN)).toBe(true);
+    expect(store.buildApprovals.get(`${CLAUDE} ${DELTA_CONN}`)).toBeUndefined();
+    expect(store.vendorApprovals.get(`${CLAUDE} delta`)).toBeUndefined();
   });
 
   it("records an Allow with the choice off: in scope, no build approval, and acquire then asks", async () => {

@@ -78,7 +78,7 @@ function refuse(reason: AnswerAskRefusalReason, message: string): CallToolResult
 }
 
 const ANSWER_SHAPES =
-  "answer must be { allow, approveBuild? }, { allow: true, allowVendor: true, includesDestructive }, { connect: true, approveBuild, allowVendor? } or { decline: true }";
+  "answer must be { allow, approveBuild?, allowVendor? }, { allow: true, allowVendor: true, includesDestructive }, { connect: true, approveBuild, allowVendor? } or { decline: true }";
 
 /** The arguments by shape: an id and one of the three answers, nothing else. */
 export function readAnswerAskInput(
@@ -99,6 +99,24 @@ export function readAnswerAskInput(
     typeof answer.approveBuild === "boolean"
   ) {
     return { pendingActionId, answer: { allow: answer.allow, approveBuild: answer.approveBuild } };
+  }
+  // The scope ask's *Full access / Ask me first* (GRA-316, the handoff page's GRA-314): the build
+  // choice and the integration's tools. Never with the destructive choice, which this shape has no
+  // room for: the line leaves destructive tools out (ADR 0008 as amended 2026-10-14).
+  if (
+    keys === "allow,allowVendor,approveBuild" &&
+    typeof answer.allow === "boolean" &&
+    typeof answer.approveBuild === "boolean" &&
+    typeof answer.allowVendor === "boolean"
+  ) {
+    return {
+      pendingActionId,
+      answer: {
+        allow: answer.allow,
+        approveBuild: answer.approveBuild,
+        allowVendor: answer.allowVendor,
+      },
+    };
   }
   // A tool ask's yes for every tool of its integration, with the destructive tick (GRA-237).
   if (
@@ -278,10 +296,10 @@ async function answerScopeAsk(
   answer: AnswerAskAnswer,
   agentName: string,
 ): Promise<CallToolResult> {
-  if (!("allow" in answer) || "allowVendor" in answer) {
+  if (!("allow" in answer) || "includesDestructive" in answer) {
     return refuse(
       "input_invalid",
-      "A scope ask is answered { allow: true, approveBuild? } or { allow: false }",
+      "A scope ask is answered { allow: true, approveBuild?, allowVendor? } or { allow: false }",
     );
   }
   const { ctx, principal, scope, deps, notifier } = session;
@@ -292,6 +310,8 @@ async function answerScopeAsk(
     {
       allow: answer.allow,
       ...(answer.approveBuild === undefined ? {} : { approveBuild: answer.approveBuild }),
+      // Full access (GRA-316): the integration's non-destructive tools, as the console records it.
+      ...("allowVendor" in answer ? { allowVendor: answer.allowVendor } : {}),
       via: "card",
     },
     {
@@ -314,11 +334,19 @@ async function answerScopeAsk(
   }
   // The connection's execute tool is now in this agent's list (ADR 0003).
   notifier.changed(scope.agentId);
+  const tools = recorded.vendorApproval
+    ? ` ${vendorToolsSentence(
+        integrationNameFor(
+          String(row.payload.vendor ?? ""),
+          String(row.payload.displayName ?? "the connection"),
+        ),
+      )}`
+    : "";
   const result: AnswerAskResult = {
     answered: true,
     sentence: `Allowed. ${what} is in ${agentName}'s scope${
       recorded.buildApproval ? ", and it may build tools against it" : ""
-    }; it is the connection you already had, so nothing was entered and no new connection was made.`,
+    }; it is the connection you already had, so nothing was entered and no new connection was made.${tools}`,
   };
   return toolResult(result);
 }
@@ -439,7 +467,7 @@ export const answerAsk: MetaTool = {
         answer: {
           type: "object",
           description:
-            "{ allow: boolean } for a build approval or a tool's; { allow: true, allowVendor: true, includesDestructive: boolean } for a tool's yes to every tool of its integration; { allow: boolean, approveBuild?: boolean } for a scope ask; { connect: true, approveBuild: boolean, allowVendor?: boolean } or { decline: true } for a connection that takes no credential, allowVendor recording the agent's standing approval for the integration's tools, destructive ones left out.",
+            "{ allow: boolean } for a build approval or a tool's; { allow: true, allowVendor: true, includesDestructive: boolean } for a tool's yes to every tool of its integration; { allow: boolean, approveBuild?: boolean, allowVendor?: boolean } for a scope ask; { connect: true, approveBuild: boolean, allowVendor?: boolean } or { decline: true } for a connection that takes no credential, allowVendor recording the agent's standing approval for the integration's tools, destructive ones left out.",
           properties: {
             allow: { type: "boolean" },
             allowVendor: { type: "boolean" },

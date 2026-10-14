@@ -195,15 +195,15 @@ export type CardData = AskCard | SetupCard;
 /**
  * What the card sends `answer_ask`. The build approval's yes or no; the tool ask's yes or no
  * (GRA-116), which never carries the ask-every-call setting — that is the console's — or its yes
- * for every tool of the integration, with the destructive tick (GRA-237); the scope
- * ask's yes or no, carrying the build choice GRA-75 put on the console's page (GRA-104); the
- * keyless connection's confirm, carrying the same choice (on by default there and here) and, from
- * a card that drew it, the line for the integration's tools (GRA-239, on by default too); or a
- * connection's decline — a link provider's included. Nothing else is accepted, and no field is a
- * secret.
+ * for every tool of the integration, with the destructive choice (GRA-237); the scope
+ * ask's yes or no, carrying the build choice GRA-75 put on the console's page (GRA-104) and, since
+ * the handoff page's *Full access* (GRA-314, GRA-316), the integration's non-destructive tools; the
+ * keyless connection's confirm, carrying the same two (GRA-239); or a connection's decline — a link
+ * provider's included. Nothing else is accepted, and no field is a secret.
  */
 export type AnswerAskAnswer =
   | { allow: boolean; approveBuild?: boolean }
+  | { allow: boolean; approveBuild: boolean; allowVendor: boolean }
   | { allow: true; allowVendor: true; includesDestructive: boolean }
   | { connect: true; approveBuild: boolean; allowVendor?: boolean }
   | { decline: true };
