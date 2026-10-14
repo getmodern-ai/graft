@@ -178,6 +178,90 @@ export async function revokeApproval(
   return row;
 }
 
+/** How an ask answered by an answer set outright says so on its `answer` (`setApprovalFromConsole`). */
+export const SETTING_ANSWER_VIA = "setting";
+
+/** What an answer set from the console recorded: the row, and the open asks it answered. */
+export type ConsoleApprovalResult = {
+  approval: ApprovalRow;
+  answeredPendingActionIds: string[];
+};
+
+/**
+ * The person sets a tool's answer outright for one agent, from the console: allow or deny for the
+ * version the tool runs now (ADR 0008 as amended 2026-10-14; GRA-302). It is the person's answer,
+ * given on Graft's page, so it **may create an answer where none stood** as well as replace one;
+ * the ask-every-call setting stays as it stood, since setting it is a separate act. Recorded
+ * through `setApproval` for the tool's current version, read under the tool row's lock, so an
+ * advance in flight either lands first and the answer is for its version, or waits.
+ *
+ * Refused: another person's agent or tool (`NOT_FOUND`), a revoked agent (`CONFLICT`, since this
+ * can write a row a revoked agent's record would then carry), a read-only tool (`BAD_REQUEST`:
+ * reads never ask), and a tool with no current version (`CONFLICT`, `tool_has_no_version`: there
+ * is no version for the answer to be for).
+ *
+ * **The open asks it answers are closed with it.** Every open ask about the tool for this agent,
+ * on a deny, and those naming the current version, on an allow, are answered with the same
+ * decision (`via: "setting"`) and taken at once, as an answer the standing row carries in full is
+ * (`recordApprovalAnswer`): the inbox stops offering an answer already given, and a call waiting
+ * on one judges the rule again. Not on an allow while the tool asks every call: each call's ask is
+ * still the person's to answer. A yes left answered for the agent's next call is spent, as
+ * `setAskEveryCall` spends one, since it was given under the state this replaces.
+ */
+export async function setApprovalFromConsole(
+  ctx: ServiceContext,
+  scope: AgentScope,
+  toolId: string,
+  decision: ApprovalDecision,
+  deps: ApprovalDeps,
+): Promise<ConsoleApprovalResult> {
+  return ctx.db.transaction(async (tx) => {
+    const agent = orNotFound(
+      await deps.findAgent(tx, scope.personId, scope.agentId),
+      "Agent not found",
+    );
+    if (agent.revokedAt !== null) {
+      throw new ServiceError(
+        "CONFLICT",
+        `${agent.name} is revoked, so its answers stay as they are`,
+        {
+          details: { reason: "agent_revoked" },
+        },
+      );
+    }
+    const tool = orNotFound(
+      await deps.findAuthoredToolForUpdate(tx, scope.personId, toolId),
+      "Tool not found",
+    );
+    if (tool.readOnly) {
+      throw new ServiceError("BAD_REQUEST", "A read-only tool never asks, so it takes no answer");
+    }
+    const versionId = tool.currentVersionId;
+    if (versionId === null) {
+      throw new ServiceError(
+        "CONFLICT",
+        "This tool has no version that passed its dry run yet, so there is no version to answer for",
+        { details: { reason: "tool_has_no_version" } },
+      );
+    }
+    const approval = await setApproval({ db: tx }, scope, toolId, decision, deps, {
+      asked: { versionId, annotations: { readOnly: tool.readOnly, destructive: tool.destructive } },
+    });
+    const now = deps.now();
+    await deps.settleAnsweredToolActions(tx, scope, toolId, now);
+    const answered =
+      decision === "allow" && approval.askEveryCall
+        ? []
+        : await deps.answerOpenToolActions(tx, scope, {
+            toolId,
+            versionId: decision === "deny" ? null : versionId,
+            answer: { allow: decision === "allow", via: SETTING_ANSWER_VIA },
+            at: now,
+          });
+    return { approval, answeredPendingActionIds: answered.map((row) => row.id) };
+  });
+}
+
 /**
  * Whether a standing answer was given for this version (ADR 0008: a republished write tool asks
  * again once; GRA-245). Null on either side is no version, which asks.
@@ -312,6 +396,25 @@ export async function withdrawVendorApproval(
   deps: ApprovalDeps,
 ): Promise<VendorApprovalRow | null> {
   return deps.deleteVendorApproval(ctx.db, scope, vendor);
+}
+
+/**
+ * Widen an agent's standing approval for an integration to its destructive tools, or narrow it
+ * back, from the console (ADR 0008 as amended 2026-10-14; GRA-302). Only one that stands: the
+ * console amends an integration's allow, and recording one is an answer's (`allowVendor`). A tool's
+ * own `deny` and ask-every-call setting still win over it (`decideToolCall`). Null when none stood.
+ */
+export async function setVendorApprovalDestructive(
+  ctx: ServiceContext,
+  scope: AgentScope,
+  vendor: string,
+  includesDestructive: boolean,
+  deps: ApprovalDeps,
+): Promise<VendorApprovalRow | null> {
+  return deps.updateVendorApprovalDestructive(ctx.db, scope, vendor, {
+    includesDestructive,
+    grantedAt: deps.now(),
+  });
 }
 
 export async function getBuildApproval(

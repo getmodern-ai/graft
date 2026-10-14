@@ -409,7 +409,13 @@ function approvalDeps(): ApprovalDeps {
     listVendorApprovals: vi.fn(async () => [vendorApprovalRow]),
     upsertVendorApproval: vi.fn(async (_db, _scope, input) => ({ ...vendorApprovalRow, ...input })),
     deleteVendorApproval: vi.fn(async () => vendorApprovalRow),
+    updateVendorApprovalDestructive: vi.fn(async (_db, _scope, _vendor, input) => ({
+      ...vendorApprovalRow,
+      ...input,
+    })),
     settleAnsweredToolActions: vi.fn(async () => []),
+    answerOpenToolActions: vi.fn(async () => []),
+    findAgent: vi.fn(async () => agentRow),
     findAuthoredToolById: vi.fn(async () => destructiveTool),
     findAuthoredToolForUpdate: vi.fn(async () => destructiveTool),
     listToolVersionOrigins: vi.fn(async () => []),
@@ -2295,6 +2301,113 @@ describe("approvals", () => {
     expect(none.status).toBe(404);
   });
 
+  /** ADR 0008 as amended 2026-10-14 (GRA-302): the console sets an answer outright, per agent. */
+  it("sets a tool's answer for one agent at the tool's current version, and answers the asks it closes", async () => {
+    const { app, deps } = harness({ user: { id: "person_1" } });
+    vi.mocked(deps.approval.answerOpenToolActions).mockResolvedValueOnce([openAction]);
+    const res = await app.request(
+      "/api/agents/agent_1/approvals/tool_1",
+      json({ decision: "deny" }, "PUT"),
+    );
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({
+      approval: { toolId: "tool_1", decision: "deny", toolVersionId: "ver_1" },
+      answeredPendingActionIds: ["pa_1"],
+    });
+    expect(deps.approval.findAgent).toHaveBeenCalledWith(fakeDb, "person_1", "agent_1");
+    expect(deps.approval.findAuthoredToolForUpdate).toHaveBeenCalledWith(
+      fakeDb,
+      "person_1",
+      "tool_1",
+    );
+    expect(deps.approval.upsertApproval).toHaveBeenCalledWith(fakeDb, {
+      agentId: "agent_1",
+      toolId: "tool_1",
+      decision: "deny",
+      decidedAt: NOW,
+      toolVersionId: "ver_1",
+    });
+    expect(deps.approval.answerOpenToolActions).toHaveBeenCalledWith(
+      fakeDb,
+      { personId: "person_1", agentId: "agent_1" },
+      { toolId: "tool_1", versionId: null, answer: { allow: false, via: "setting" }, at: NOW },
+    );
+
+    const allow = await app.request(
+      "/api/agents/agent_1/approvals/tool_1",
+      json({ decision: "allow" }, "PUT"),
+    );
+    expect(allow.status).toBe(200);
+    expect(await allow.json()).toMatchObject({ approval: { decision: "allow" } });
+  });
+
+  it("refuses a read-only tool with 400, another person's agent or tool with 404, and a malformed body", async () => {
+    const { app, deps } = harness({ user: { id: "person_1" } });
+    vi.mocked(deps.approval.findAuthoredToolForUpdate).mockResolvedValueOnce({
+      ...destructiveTool,
+      destructive: false,
+      readOnly: true,
+    });
+    const read = await app.request(
+      "/api/agents/agent_1/approvals/tool_1",
+      json({ decision: "allow" }, "PUT"),
+    );
+    expect(read.status).toBe(400);
+
+    vi.mocked(deps.approval.findAgent).mockResolvedValueOnce(null);
+    const agent = await app.request(
+      "/api/agents/agent_x/approvals/tool_1",
+      json({ decision: "allow" }, "PUT"),
+    );
+    expect(agent.status).toBe(404);
+
+    vi.mocked(deps.approval.findAuthoredToolForUpdate).mockResolvedValueOnce(null);
+    const tool = await app.request(
+      "/api/agents/agent_1/approvals/tool_x",
+      json({ decision: "allow" }, "PUT"),
+    );
+    expect(tool.status).toBe(404);
+
+    const malformed = await app.request(
+      "/api/agents/agent_1/approvals/tool_1",
+      json({ decision: "once" }, "PUT"),
+    );
+    expect(malformed.status).toBe(400);
+    expect(deps.approval.upsertApproval).not.toHaveBeenCalled();
+  });
+
+  it("widens or narrows an integration's standing approval, 404 when none stands", async () => {
+    const { app, deps } = harness({ user: { id: "person_1" } });
+    const wide = await app.request(
+      "/api/agents/agent_1/vendor-approvals/demo",
+      json({ includesDestructive: true }, "PATCH"),
+    );
+    expect(wide.status).toBe(200);
+    expect(await wide.json()).toMatchObject({
+      vendorApproval: { vendor: "demo", includesDestructive: true },
+    });
+    expect(deps.approval.updateVendorApprovalDestructive).toHaveBeenCalledWith(
+      fakeDb,
+      { personId: "person_1", agentId: "agent_1" },
+      "demo",
+      { includesDestructive: true, grantedAt: NOW },
+    );
+
+    vi.mocked(deps.approval.updateVendorApprovalDestructive).mockResolvedValueOnce(null);
+    const none = await app.request(
+      "/api/agents/agent_1/vendor-approvals/demo",
+      json({ includesDestructive: false }, "PATCH"),
+    );
+    expect(none.status).toBe(404);
+    expect(deps.approval.upsertVendorApproval).not.toHaveBeenCalled();
+
+    const malformed = await app.request(
+      "/api/agents/agent_1/vendor-approvals/demo",
+      json({ includesDestructive: "yes" }, "PATCH"),
+    );
+    expect(malformed.status).toBe(400);
+  });
+
   it("answers 401 without a session on every new route", async () => {
     const { app } = harness(null);
     for (const [path, init] of [
@@ -2306,6 +2419,8 @@ describe("approvals", () => {
       ["/api/approvals?agentId=agent_1", undefined],
       ["/api/approvals/tool_1/ask-every-call?agentId=agent_1", json({ on: true }, "PUT")],
       ["/api/approvals/tool_1?agentId=agent_1", from("DELETE")],
+      ["/api/agents/agent_1/approvals/tool_1", json({ decision: "deny" }, "PUT")],
+      ["/api/agents/agent_1/vendor-approvals/demo", json({ includesDestructive: true }, "PATCH")],
     ] as const) {
       const res = await app.request(path, init);
       expect(res.status, path).toBe(401);

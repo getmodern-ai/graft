@@ -1223,6 +1223,41 @@ export function createFakeDeps(store: FakeStore): FakeDeps {
       store.vendorApprovals.delete(key(scope.agentId, vendor));
       return row;
     },
+    updateVendorApprovalDestructive: async (_db, scope, vendor, input) => {
+      if (!ownsAgent(scope)) return null;
+      const row = store.vendorApprovals.get(key(scope.agentId, vendor));
+      if (!row) return null;
+      const updated = { ...row, ...input, updatedAt: store.now() };
+      store.vendorApprovals.set(key(scope.agentId, vendor), updated);
+      return updated;
+    },
+    answerOpenToolActions: async (_db, scope, args) => {
+      if (!ownsAgent(scope)) return [];
+      const answered: PendingActionRow[] = [];
+      for (const [k, row] of store.pendingActions) {
+        if (
+          row.agentId === scope.agentId &&
+          row.kind === "tool" &&
+          row.payload.toolId === args.toolId &&
+          (args.versionId === null || row.payload.toolVersionId === args.versionId) &&
+          row.answeredAt === null &&
+          row.consumedAt === null &&
+          row.expiresAt.getTime() > args.at.getTime()
+        ) {
+          const updated = {
+            ...row,
+            answer: args.answer,
+            answeredAt: args.at,
+            consumedAt: args.at,
+            updatedAt: store.now(),
+          };
+          store.pendingActions.set(k, updated);
+          answered.push(updated);
+        }
+      }
+      return answered;
+    },
+    findAgent: agent.findAgent,
     findAuthoredToolById: tool.findAuthoredToolById,
     findAuthoredToolForUpdate: tool.findAuthoredToolForUpdate,
     listToolVersionOrigins: tool.listToolVersionOrigins,

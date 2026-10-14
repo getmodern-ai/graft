@@ -282,3 +282,44 @@ export async function settleAnsweredToolActions(
     )
     .returning();
 }
+
+/**
+ * Answer every open `tool` ask about one tool for one agent with the answer the console just set
+ * outright, and mark each taken (ADR 0008 as amended 2026-10-14; GRA-302). The standing row now
+ * carries the answer in full, so the ask is answered and spent at once, as `recordApprovalAnswer`
+ * spends an answer the row carries: the person's inbox no longer offers an answer already given,
+ * and a call still waiting on the ask reads it as taken and judges the rule again, which is how it
+ * passes on the allow or refuses on the deny. `versionId` narrows to the asks naming that version
+ * (an allow holds for the version it was set for; GRA-245); null takes every version's (a deny
+ * holds across versions). Open and in time in the predicate, as an answer is, so an ask the
+ * person answers in the same instant is answered once. The tool is matched on the payload, as
+ * `settleAnsweredToolActions` matches it.
+ */
+export async function answerOpenToolActions(
+  db: DbOrTx,
+  scope: AgentScope,
+  args: {
+    toolId: string;
+    versionId: string | null;
+    answer: Record<string, unknown>;
+    at: Date;
+  },
+): Promise<PendingActionRow[]> {
+  return db
+    .update(pendingAction)
+    .set({ answer: args.answer, answeredAt: args.at, consumedAt: args.at })
+    .where(
+      and(
+        inArray(pendingAction.agentId, scopedAgentIds(db, scope)),
+        eq(pendingAction.kind, "tool"),
+        sql`${pendingAction.payload} ->> 'toolId' = ${args.toolId}`,
+        args.versionId === null
+          ? undefined
+          : sql`${pendingAction.payload} ->> 'toolVersionId' = ${args.versionId}`,
+        isNull(pendingAction.answeredAt),
+        isNull(pendingAction.consumedAt),
+        gt(pendingAction.expiresAt, args.at),
+      ),
+    )
+    .returning();
+}
