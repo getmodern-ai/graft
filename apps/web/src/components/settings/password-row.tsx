@@ -53,7 +53,7 @@ export function PasswordRow() {
         title={PASSWORD_ROW.title}
         description={PASSWORD_ROW.description}
         action={
-          <Button variant="outline" onClick={() => setOpenMode(mode)}>
+          <Button variant="outline" size="sm" onClick={() => setOpenMode(mode)}>
             {PASSWORD_ROW.action[mode]}
           </Button>
         }
