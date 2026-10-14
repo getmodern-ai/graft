@@ -30,6 +30,14 @@ export {
   TRACE_READ_LIMIT,
   TRACE_TEXT_MAX_LENGTH,
 } from "./acquire-job/acquire-job.service";
+export {
+  CONNECTION_ACQUIRE_JOBS_LIMIT,
+  CONNECTION_ACQUIRE_JOBS_WINDOW_MS,
+  type ConsoleAcquireDeps,
+  listConnectionAcquireJobs,
+  type StartConsoleAcquireInput,
+  startConsoleAcquire,
+} from "./acquire-job/console-acquire.service";
 export { withoutNul } from "./acquire-job/json-safe";
 export {
   GENERIC_SECRET_FIELD_NAMES,
@@ -46,6 +54,7 @@ export {
   AGENT_NAME_MAX_LENGTH,
   type AgentConnectedViaOutput,
   type AgentLimitsPatch,
+  type AgentListAnswer,
   type AgentListOutput,
   type AgentOutput,
   type AgentScopeMode,
@@ -94,6 +103,7 @@ export {
   grantBuildApproval,
   isForVersion,
   listApprovals,
+  listBuildApprovals,
   listVendorApprovals,
   revokeApproval,
   SETTING_ANSWER_VIA,
@@ -101,6 +111,7 @@ export {
   setApprovalFromConsole,
   setAskEveryCall,
   setVendorApprovalDestructive,
+  withdrawBuildApproval,
   withdrawVendorApproval,
 } from "./approval/approval.service";
 export {
@@ -257,10 +268,14 @@ export {
   readLinkCallbackSearch,
 } from "./connection/link.rules";
 export {
+  type ConsoleLinkStatePayload,
+  type ConsoleLinkStateVerdict,
   LINK_STATE_TTL_MS,
   type LinkStatePayload,
   type LinkStateVerdict,
+  signConsoleLinkState,
   signLinkState,
+  verifyConsoleLinkState,
   verifyLinkState,
 } from "./connection/link-state";
 export {
@@ -437,14 +452,27 @@ export {
   type PendingActionDeps,
 } from "./pending-action/pending-action.deps";
 export {
+  type PendingActionDoneState,
+  type PendingActionSubject,
+  pendingActionDoneState,
+  pendingActionFinishedAt,
+  pendingActionSubject,
+} from "./pending-action/pending-action.rules";
+export {
   answerPendingAction,
   type CreatePendingActionInput,
   consumePendingAction,
   createPendingAction,
   DEFAULT_PENDING_ACTION_TTL_MS,
+  DONE_PENDING_ACTIONS_PAGE,
+  type DonePendingActionsPage,
+  decodeDoneCursor,
+  encodeDoneCursor,
   getPendingAction,
   getPendingActionForPerson,
+  listDonePendingActions,
   listOpenPendingActions,
+  MAX_DONE_PENDING_ACTIONS_PAGE,
   MAX_PENDING_ACTION_TTL_MS,
 } from "./pending-action/pending-action.service";
 export {

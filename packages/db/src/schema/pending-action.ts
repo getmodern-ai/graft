@@ -1,9 +1,17 @@
-import { relations } from "drizzle-orm";
+import { relations, sql } from "drizzle-orm";
 import { index, jsonb, pgTable, text, timestamp } from "drizzle-orm/pg-core";
 
 import { agent } from "./agent";
 import { owned } from "./columns";
 import { connection } from "./connection";
+
+/**
+ * Why an ask was closed before anyone answered it (GRA-292): a revoke of the connection it is
+ * about, or of the agent that asked. Null on an ask that ran to its expiry, and on every ask closed
+ * before the column existed, which nobody can now tell apart from an expiry.
+ */
+export const pendingActionClosedReason = ["connection_revoked", "agent_revoked"] as const;
+export type PendingActionClosedReason = (typeof pendingActionClosedReason)[number];
 
 /**
  * A **pending action**: the durable record behind a handoff URL (ADR 0006) — an approval the
@@ -39,12 +47,24 @@ export const pendingAction = pgTable(
     answeredAt: timestamp("answered_at"),
     answer: jsonb("answer").$type<Record<string, unknown>>(),
     consumedAt: timestamp("consumed_at"),
+    /**
+     * Set with the two clocks when a revoke closes the ask (`repo/pending-action.ts`), so the
+     * console's Done list says "closed" rather than "expired". `expires_at` still carries the moment.
+     */
+    closedReason: text("closed_reason", { enum: pendingActionClosedReason }),
     ...owned(),
   },
   (table) => [
     index("pending_action_agent_id_idx").on(table.agentId),
     // "Every open ask about this connection" — what a revoke closes (ADR 0007).
     index("pending_action_connection_id_idx").on(table.connectionId),
+    // The Done list's order per agent, finish then id (GRA-292; `listDonePendingActions`), so a
+    // page reads the newest finished asks off the index rather than sorting the agent's history.
+    index("pending_action_agent_finished_idx").on(
+      table.agentId,
+      sql`coalesce("answered_at", "expires_at")`,
+      table.id,
+    ),
   ],
 );
 

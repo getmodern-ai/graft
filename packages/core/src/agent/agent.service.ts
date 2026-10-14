@@ -56,7 +56,26 @@ export type AgentOutput = {
   updatedAt: Date;
 };
 
-export type AgentListOutput = AgentOutput & { workingSetCount: number };
+/**
+ * An agent as the console's list draws it (GRA-290): `connectionIds` is the scope as it resolves
+ * under `scopeMode`, as `getAgentScope` answers it, and `lastActiveAt` the agent's last call that
+ * was not a dry run, null for none.
+ */
+export type AgentListOutput = AgentOutput & {
+  workingSetCount: number;
+  connectionIds: string[];
+  lastActiveAt: Date | null;
+};
+
+/**
+ * `GET /api/agents`: every agent of the person's, revoked included, and whether any of them has
+ * ever run a tool for real and had it succeed (the empty Home's checklist): a ledger row that is
+ * not a dry run and answered `ok`, where `lastActiveAt` counts a refused or failed call too. It is
+ * read per agent in the list's own statement and folded here rather than read again: the list
+ * holds every agent the person has, and a ledger row cannot outlive its agent
+ * (`usage_ledger.agent_id` cascades), so "some agent has one" is "the person has one".
+ */
+export type AgentListAnswer = { agents: AgentListOutput[]; hasRunTool: boolean };
 
 export function toAgentOutput(row: AgentRow): AgentOutput {
   return {
@@ -308,7 +327,7 @@ export async function createAgentAwaitingHarness(
 
 /**
  * Issue the static token of an agent **awaiting its harness** (ADR 0024; GRA-208): Setup's finish
- * step for a token harness, and *Connect a harness* on such an agent. The token is in the answer
+ * step for a token harness, and *Connect an agent* on such an agent. The token is in the answer
  * and nowhere else, as `createAgent`'s is. Every other agent is refused, since a second token
  * would orphan the first and an OAuth agent's client holds its own: `NOT_FOUND` for no agent of
  * the person's, `CONFLICT` with `agent_not_awaiting_harness` and a sentence naming why for a
@@ -427,9 +446,15 @@ export async function listAgents(
   ctx: ServiceContext,
   principal: Principal,
   deps: AgentDeps,
-): Promise<AgentListOutput[]> {
+): Promise<AgentListAnswer> {
   const rows = await deps.listAgents(ctx.db, principal.personId);
-  return rows.map((row) => ({ ...toAgentOutput(row), workingSetCount: row.workingSetCount }));
+  const agents = rows.map((row) => ({
+    ...toAgentOutput(row),
+    workingSetCount: row.workingSetCount,
+    connectionIds: row.connectionIds,
+    lastActiveAt: row.lastActiveAt,
+  }));
+  return { agents, hasRunTool: rows.some((row) => row.hasRunTool) };
 }
 
 export async function getAgent(
@@ -464,7 +489,8 @@ export async function updateAgentLimits(
  * Revoke: every token stops resolving at once — the static one because `findAgentByTokenHash`
  * filters on `revoked_at` in the statement, an MCP client's because the door's read joins the same
  * column (ADR 0018) — and the client's token rows are stamped in the same transaction so the record
- * says so. The row and its history stay. Null for no such agent, or one already revoked.
+ * says so, as are the asks it left open, closed with the revoke as their reason (GRA-292). The row
+ * and its history stay. Null for no such agent, or one already revoked.
  */
 export async function revokeAgent(
   ctx: ServiceContext,
@@ -476,11 +502,9 @@ export async function revokeAgent(
   const row = await ctx.db.transaction(async (tx) => {
     const revoked = await deps.revokeAgent(tx, principal.personId, agentId, now);
     if (!revoked) return null;
-    await deps.revokeMcpTokensForAgent(
-      tx,
-      { personId: principal.personId, agentId: revoked.id },
-      now,
-    );
+    const scope = { personId: principal.personId, agentId: revoked.id };
+    await deps.revokeMcpTokensForAgent(tx, scope, now);
+    await deps.closePendingActionsForAgent(tx, scope, now);
     return revoked;
   });
   return row ? toAgentOutput(row) : null;

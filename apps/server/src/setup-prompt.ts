@@ -61,7 +61,7 @@ export function createSetupPromptRoutes(options: SetupPromptRouteOptions): Hono 
     if (!isSetupPromptHarness(harness)) {
       throw new ServiceError(
         "BAD_REQUEST",
-        `There is no setup prompt for the harness "${harness}"; the harnesses are ${harnesses
+        `There is no setup prompt for the agent "${harness}"; the agents are ${harnesses
           .map((entry) => entry.id)
           .join(", ")}`,
         { details: { harnesses: harnesses.map((entry) => entry.id) } },

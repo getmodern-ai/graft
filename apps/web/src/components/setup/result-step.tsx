@@ -197,7 +197,7 @@ function ToolRun({
                 code={runResultText(answer.result)}
                 copyLabel="Copy answer"
                 wrap
-                hint="This is what the integration answered, as your harness will see it."
+                hint="This is what the integration answered, as your agent will see it."
               />
             </SetupDisclosure>
           ) : failure?.details ? (
@@ -274,7 +274,7 @@ function ToolRun({
           code={runResultText(answer.result)}
           copyLabel="Copy answer"
           wrap
-          hint="This is what the integration answered, as your harness will see it."
+          hint="This is what the integration answered, as your agent will see it."
         />
       ) : failure ? (
         <FailureNotice
@@ -290,7 +290,7 @@ function ToolRun({
           </Button>
         )}
         <Button type="button" disabled={onward.isPending} onClick={() => onward.mutate(undefined)}>
-          {onward.isPending ? "Continuing…" : "Connect your harness"}
+          {onward.isPending ? "Continuing…" : "Connect your agent"}
         </Button>
       </SetupFooter>
     </form>

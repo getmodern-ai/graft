@@ -55,8 +55,7 @@ function AgentsRoute() {
         <PageHeaderContent>
           <PageHeaderTitle>Agents</PageHeaderTitle>
           <PageHeaderDescription>
-            Each harness that connects to Graft is an agent, with a token, a scope and a working set
-            of its own.
+            Each agent that connects to Graft has a token, a scope and a working set of its own.
           </PageHeaderDescription>
         </PageHeaderContent>
         <PageHeaderActions>

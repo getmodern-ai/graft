@@ -2,6 +2,7 @@ import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { checkModule, type ModuleCheck } from "@graft/check";
+import { listBuildApprovals, withdrawBuildApproval } from "@graft/core";
 import type { AcquireJobRow } from "@graft/db/repo/acquire-job";
 import {
   createScriptedModel,
@@ -592,6 +593,52 @@ describe("the door", () => {
       expect(ask).toMatchObject({ kind: "build", payload: { connectionId: CONN_DEMO } });
     } finally {
       await b.close();
+    }
+  });
+
+  /** ADR 0008 as amended 2026-09-18 (GRA-295): withdrawn on the agent's page, the next acquire asks. */
+  it("a build approval withdrawn on the agent's page makes the next acquire ask again", async () => {
+    deps.model = createScriptedModel([]);
+    const a = await connect(TOKEN_A);
+    const scope = { personId: PERSON, agentId: AGENT_A };
+    const jobsBefore = store.acquireJobs.size;
+    try {
+      const listed = await listBuildApprovals({ db: deps.db }, scope, deps.approval);
+      expect(listed.map((row) => row.connectionId)).toContain(CONN_DEMO_2);
+
+      const withdrawn = await withdrawBuildApproval(
+        { db: deps.db },
+        scope,
+        CONN_DEMO_2,
+        deps.approval,
+      );
+      expect(withdrawn).toMatchObject({ agentId: AGENT_A, connectionId: CONN_DEMO_2 });
+      const after = await listBuildApprovals({ db: deps.db }, scope, deps.approval);
+      expect(after.map((row) => row.connectionId)).not.toContain(CONN_DEMO_2);
+
+      const result = await a.call("acquire", {
+        connectionId: CONN_DEMO_2,
+        goal: "List items",
+        ignoreExisting: true,
+      });
+      expect(body(result)).toMatchObject({
+        error: "awaiting_approval",
+        pendingActionId: expect.any(String),
+      });
+      expect(store.acquireJobs.size).toBe(jobsBefore);
+      const ask = [...store.pendingActions.values()].find(
+        (row) =>
+          row.agentId === AGENT_A &&
+          row.kind === "build" &&
+          row.payload.connectionId === CONN_DEMO_2,
+      );
+      expect(ask).toBeDefined();
+      // Another agent's and another connection's approvals are untouched.
+      expect(store.buildApprovals.has(`${AGENT_A} ${CONN_DEMO}`)).toBe(true);
+      if (ask) store.pendingActions.delete(ask.id);
+    } finally {
+      store.grantBuild(AGENT_A, CONN_DEMO_2);
+      await a.close();
     }
   });
 

@@ -238,7 +238,7 @@ export async function startSetup(
       agentId = named.id;
     } else if (active.length === 0) {
       if (!input.harness) {
-        throw new ServiceError("BAD_REQUEST", "Name the harness this agent is for", {
+        throw new ServiceError("BAD_REQUEST", "Choose the agent this is for", {
           details: { reason: "harness_required" },
         });
       }
@@ -359,7 +359,7 @@ export type SetupMoveResult = { state: SetupState; moved: boolean };
  */
 export function connectingAgentOf(state: SetupState): AgentOutput {
   if (!state.agent || !state.setup) {
-    throw new ServiceError("CONFLICT", "Setup has not started; choose a harness first", {
+    throw new ServiceError("CONFLICT", "Setup has not started; choose your agent first", {
       details: { reason: "setup_not_started" },
     });
   }
@@ -785,7 +785,7 @@ function navigableAgent(record: SetupRow, active: readonly AgentOutput[]): Agent
     ? active.find((candidate) => candidate.id === record.agentId)
     : undefined;
   if (!agent) {
-    throw new ServiceError("CONFLICT", "Setup has not started; choose a harness first", {
+    throw new ServiceError("CONFLICT", "Setup has not started; choose your agent first", {
       details: { reason: "setup_not_started" },
     });
   }
@@ -977,7 +977,7 @@ export async function moveSetupOn(
           if (record.harness === null || next === null || !isAwaitingHarness(agent)) {
             throw new ServiceError(
               "CONFLICT",
-              `${agent.name} already has its harness, so Setup keeps it`,
+              `${agent.name} is connected already, so Setup keeps it`,
               { details: { reason: "harness_fixed" } },
             );
           }
@@ -1107,7 +1107,7 @@ export async function finishSetup(
       ? active.find((candidate) => candidate.id === record.agentId)
       : undefined;
     if (!agent) {
-      throw new ServiceError("CONFLICT", "Setup has no agent to finish with; choose a harness", {
+      throw new ServiceError("CONFLICT", "Setup has no agent to finish with; choose your agent", {
         details: { reason: "setup_not_started" },
       });
     }

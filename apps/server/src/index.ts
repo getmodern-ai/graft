@@ -2,7 +2,7 @@ import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import { createAuth, SOCIAL_PROVIDER_NAMES } from "@graft/auth";
+import { createAuth, SOCIAL_PROVIDER_NAMES, setFirstPassword } from "@graft/auth";
 import {
   createConnectionDeps,
   createModelKeyDeps,
@@ -472,6 +472,7 @@ const app = createServer({
     auth: {
       handler: (request) => auth.handler(request),
       getSession: (headers) => auth.api.getSession({ headers }),
+      setFirstPassword: (headers, newPassword) => setFirstPassword(auth, headers, newPassword),
     },
     deps: {
       db,

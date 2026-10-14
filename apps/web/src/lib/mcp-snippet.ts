@@ -142,7 +142,7 @@ export function harnessSetup(
       label: "Set your token",
       code: exportTokenLine(token ?? "YOUR_AGENT_TOKEN"),
       copyLabel: "Copy command",
-      hint: `${replace}Run this command in the shell that starts your harness.`,
+      hint: `${replace}Run this command in the shell that starts your agent.`,
     },
     config: {
       label: "MCP configuration",

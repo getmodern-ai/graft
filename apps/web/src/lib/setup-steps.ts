@@ -18,7 +18,7 @@ import {
 export type SetupRailStep = Exclude<SetupStep, "completed">;
 
 export const SETUP_STEP_LABEL: Record<SetupRailStep, string> = {
-  harness: "Harness",
+  harness: "Agent",
   vendor: "Integration",
   connect: "Connect",
   goal: "Task",

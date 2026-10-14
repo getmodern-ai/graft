@@ -1195,6 +1195,11 @@ and every row's menu has View agent, revoked rows included; the detail drawer is
 page keeps scope and limit editors, the working set, approvals, history and standalone revocation;
 revoked records are read-only. `GET /api/agents` includes `workingSetCount`, counted against each
 person-scoped agent in the same statement; the table shows count/cap with Cando's status dot.
+Since GRA-290 the same one statement also answers each agent's `connectionIds` (the scope as it
+resolves under its mode, `listScopeConnectionIds`'s rule) and `lastActiveAt` (its last ledger row
+that was not a dry run, any outcome), and the answer is `AgentListAnswer`, `{ agents, hasRunTool }`:
+the flag is a per-agent `exists` over ledger rows that are not dry runs and answered `ok`, in the
+same statement, folded across the person's agents in `@graft/core`'s `listAgents`.
 **A lost static token is rotated, not a new agent** (GRA-306; ADR 0007 as amended 2026-10-14):
 the page's *Rotate token* (`rotate-token-dialog.tsx`, drawn when `lib/agent-token.ts`'s
 `tokenRotatable` says so) confirms, then calls `POST /api/agents/:id/token/rotate`, `@graft/core`'s
@@ -1327,6 +1332,26 @@ on the wide event): an hour for a proposal, two minutes from when it settled for
 or a throw, so a timeout does not hide the chips for the hour. It is its own route so the goal step draws at
 once; `components/setup/goal-suggestions.tsx` asks it after, keyed by the connection outside
 `["setup"]`, and draws outline `Button` chips that fill the field, or nothing.
+
+**An integration's page builds a tool for an agent picked before Create** (GRA-303; ADR 0024 as
+amended 2026-10-14; `apps/server/src/connection-acquire.ts`). `POST /api/connections/:id/acquire`
+(`ConnectionAcquireBody`: `{ agentId, goal }`) is `@graft/core`'s `startConsoleAcquire`, one
+transaction with no Setup record: the connection read locked (`findConnectionForNoKeyUpdate`, so a
+revoke's deletion of build approvals cannot interleave and a scope save's foreign-key check is not blocked), then the agent (`findAgentForUpdate`, the
+order a scope answer takes them; revoked is `agent_revoked`), the connection the person's, not
+revoked, usable and in the agent's scope
+(`connection_revoked`, `connection_unusable`, `connection_not_in_scope`), `grantBuildApproval`
+and `createAcquireJob` with Setup's first line and `setupBuildHints`; then the runner is kicked.
+It answers `ConnectionAcquireJob` (`acquire_status`'s shape plus `connectionId`, `agent`, `goal`,
+`createdAt`), 201, and is refused `acquire_unconfigured` with Setup's sentence. Like Build it skips
+`similar_tools_exist`: the person asked for a new tool on a page that lists the integration's tools.
+`GET /api/connections/:id/acquire-jobs` (`ConnectionAcquireJobs`) is the last day's jobs, at most
+twenty, newest first, across the person's agents (`repo/acquire-job.ts`'s
+`listAcquireJobsForConnection`, person-scoped through the agent join); each is polled after through
+the agent's job route. `GET /api/connections/:id/goal-suggestions` (`ConnectionGoalSuggestions`)
+is Setup's proposal keyed by the connection alone (`proposeGoalsForConnection`, the same memo) with
+`build` beside it. Another person's agent or connection is a 404 on all three; Create counts as
+`acquire_started` with `job_id` and `agent_id`.
 
 **A connection can be proposed from an API's docs, for the console's Flow C** (GRA-299). The person
 names an integration and pastes a link to its API docs; `POST /api/connection-proposals`
@@ -1493,6 +1518,22 @@ Back read it as the *Tool* stage) until its task is chosen, when `POST /api/setu
 `slug` reads the entry from the directory again and proposes it (`directoryProposal`: the slug as the
 vendor, the first host as the primary) through the starter's routing (`connectSetupProposal`). No
 column holds it: a reload on that tool screen returns to the directory.
+
+**The person connects an integration with no agent asking** (GRA-304; ADR 0006 and ADR 0008 as
+amended 2026-10-14; `apps/server/src/console-connect.ts`). `POST /api/connect` (`ConnectBody`:
+`{ slug }`, read again from the directory, a starter's as the starter, or `{ proposal }` in
+`request_connection`'s shape, and `access`, `full` or `ask`) normalises the proposal, routes it by
+`providerFor` and answers `ConsoleConnectResult`, writing no pending action: `connected` (a keyless
+keyring row made at once, or the person's covering one answered or widened; a no-step provider's
+row), `form` (the keyring's, nothing written; the console posts `POST /api/connections` with the
+same `access`; a link provider that cannot start answers it too with `fallback`), or `link` with a
+`connectId`. A link's state is the short-lived record itself, `@graft/core`'s
+`signConsoleLinkState` under its own HMAC domain, so `provider-link.ts`'s return route tells it
+from an ask's, completes through `completeConsoleLink` and lands on `/link/callback` with
+`connectId` and no `pendingActionId`. No scope row is written: the row reaches every `all` agent by
+being the person's. `full` is `recordFullAccess`: each active agent whose scope reaches the row at
+that moment gets `grantBuildApproval` and `allowVendorWhenConnecting`. Counted as
+`connection_started` (`kind`, `access`, `created`).
 
 **The directory answers outside Setup too, beside the person's own suggestions** (ADR 0001 as
 amended 2026-10-14; GRA-305). `GET /api/integrations/directory` and `/search` are Setup's two

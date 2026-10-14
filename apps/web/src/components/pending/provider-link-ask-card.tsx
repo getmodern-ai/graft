@@ -97,6 +97,7 @@ export function ProviderLinkAskCard({
       queryClient.invalidateQueries({ queryKey: connectionKeys.all });
       queryClient.invalidateQueries({ queryKey: agentKeys.all });
       queryClient.invalidateQueries({ queryKey: approvalKeys.vendorsOfAgent(action.agentId) });
+      queryClient.invalidateQueries({ queryKey: approvalKeys.buildsOfAgent(action.agentId) });
       if (outcome === "connected") {
         toast.success(`${payload.displayName} is connected through ${provider}`, {
           description: connectedToastDescription({
