@@ -43,6 +43,37 @@ export function proposalLead(input: {
   return `${agentName} set this up${from}. ${then[finish]}`;
 }
 
+const TOKEN_SCHEMES = new Set<string>(["oauth_authorization_code", "oauth2_client_credentials"]);
+
+/**
+ * The line under a secret's input: where the secret goes. An OAuth scheme's client secret goes to
+ * the token endpoint, never to the API's hosts (ADR 0005; Greptile on #250), so it names that
+ * host, or the integration's sign-in where the page does not hold the endpoint (a re-entry).
+ */
+export function secretHint(input: {
+  scheme: AuthScheme | string;
+  hosts: readonly string[];
+  schemeConfig?: Record<string, unknown> | null;
+  agentName: string;
+  integrationName: string;
+}): string {
+  const never = `${input.agentName} never sees it.`;
+  if (!TOKEN_SCHEMES.has(input.scheme)) return `Only sent to ${input.hosts.join(", ")}. ${never}`;
+  const tokenUrl = input.schemeConfig?.tokenUrl;
+  const tokenHost = typeof tokenUrl === "string" ? hostOrNull(tokenUrl) : null;
+  return tokenHost
+    ? `Only sent to ${tokenHost}, when Graft signs in. ${never}`
+    : `Only sent to ${input.integrationName} when Graft signs in. ${never}`;
+}
+
+function hostOrNull(url: string): string | null {
+  try {
+    return new URL(url).hostname || null;
+  } catch {
+    return null;
+  }
+}
+
 export function proposalSummary(input: {
   primaryHost: string;
   scheme: AuthScheme | string;

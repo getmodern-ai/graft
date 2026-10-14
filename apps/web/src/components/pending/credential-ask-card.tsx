@@ -17,6 +17,7 @@ import {
   validateCredentialDraft,
 } from "@/lib/connection-form";
 import { connectionKeys, submitCredentialRequest } from "@/lib/connection-queries";
+import { secretHint } from "@/lib/handoff-copy";
 import { startOAuthConsent } from "@/lib/oauth-consent";
 import {
   type Ask,
@@ -186,7 +187,14 @@ export function CredentialAskCard({
         {fields ? (
           <div className="flex flex-col gap-1.5">
             {fields}
-            <SecretHint hosts={payload.hosts} agentName={agentName} />
+            <SecretHint>
+              {secretHint({
+                scheme: payload.scheme,
+                hosts: payload.hosts,
+                agentName,
+                integrationName: integration,
+              })}
+            </SecretHint>
           </div>
         ) : null}
         <ConsentStatus state={consent.state} onCancel={consent.cancel} />

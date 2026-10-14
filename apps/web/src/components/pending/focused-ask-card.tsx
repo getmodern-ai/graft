@@ -47,12 +47,15 @@ export type FocusedAsk = {
   secret?: boolean;
 };
 
-/** The line under a secret's input on the focused layout: where it goes, and who never sees it. */
-export function SecretHint({ hosts, agentName }: { hosts: readonly string[]; agentName: string }) {
+/**
+ * The line under a secret's input on the focused layout: where it goes, and who never sees it,
+ * in `lib/handoff-copy.ts`'s `secretHint` words.
+ */
+export function SecretHint({ children }: { children: string }) {
   return (
     <p className="flex items-center gap-1.5 text-muted-foreground text-xs">
       <LockIcon className="size-3.5 shrink-0" />
-      Only sent to {hosts.join(", ")}. {agentName} never sees it.
+      {children}
     </p>
   );
 }

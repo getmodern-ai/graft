@@ -48,7 +48,7 @@ import {
   validateConnectionDraft,
 } from "@/lib/connection-form";
 import { connectionKeys, submitConnectionProposal } from "@/lib/connection-queries";
-import { proposalLead, proposalSummary } from "@/lib/handoff-copy";
+import { proposalLead, proposalSummary, secretHint } from "@/lib/handoff-copy";
 import {
   type Ask,
   isOpen,
@@ -367,7 +367,15 @@ export function ConnectionAskCard({
             {secret ? (
               <FieldSet className="gap-1.5">
                 <FieldGroup>{credentialFields}</FieldGroup>
-                <SecretHint hosts={hosts} agentName={asker} />
+                <SecretHint>
+                  {secretHint({
+                    scheme: draft.scheme,
+                    hosts,
+                    schemeConfig: draft.schemeConfig,
+                    agentName: asker,
+                    integrationName,
+                  })}
+                </SecretHint>
               </FieldSet>
             ) : null}
           </>
