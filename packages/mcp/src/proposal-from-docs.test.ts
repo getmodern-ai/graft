@@ -209,6 +209,24 @@ describe("proposeConnectionFromDocs", () => {
     expect(looked).toEqual([]);
   });
 
+  it("starts no model call once the caller's deadline has passed", async () => {
+    const model = createScriptedModel([], { connectionProposal: UNLEASHED });
+    const abandon = new AbortController();
+    const result = await proposeConnectionFromDocs(
+      { personId: "p", name: "Acme", docsUrl: DOCS_URL, signal: abandon.signal },
+      {
+        model,
+        readWebPage: async (args) => {
+          abandon.abort();
+          return pagedDocs("docs", 100).read(args);
+        },
+        resolveHost: publicDns,
+      },
+    );
+    expect(result).toMatchObject({ ok: false, failure: { reason: "proposal_timeout" } });
+    expect(model.connectionProposals).toEqual([]);
+  });
+
   it("keeps the provider's failure message, bounded, for the log", async () => {
     const failing: ModelAdapter = {
       name: "failing",

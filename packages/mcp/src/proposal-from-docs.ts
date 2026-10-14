@@ -134,7 +134,21 @@ export type DocsProposalDeps = {
   addressCheckTimeoutMs?: number;
 };
 
-export type DocsProposalInput = { personId: string; name: string; docsUrl: string };
+export type DocsProposalInput = {
+  personId: string;
+  name: string;
+  docsUrl: string;
+  /**
+   * The caller's deadline (Greptile on #231): checked after each wait, so a job already failed for
+   * running too long starts no model call and no lookup whose answer nobody reads.
+   */
+  signal?: AbortSignal;
+};
+
+const ABANDONED: DocsProposalFailure = {
+  reason: "proposal_timeout",
+  message: "Graft took too long to read the documentation. Try again, or set it up by hand.",
+};
 
 /**
  * One line per scheme for the model, beside the parameters the scheme table says a proposal
@@ -299,6 +313,7 @@ export async function proposeConnectionFromDocs(
   }
   found.docsHost = hostnameOf(pages[0]?.url ?? input.docsUrl);
 
+  if (input.signal?.aborted) return fail(ABANDONED);
   onStage("finding_sign_in", { ...found });
   const propose = deps.model?.proposeConnection?.bind(deps.model);
   if (!propose) return fail(MODEL_FAILURES.unavailable);
@@ -323,6 +338,7 @@ export async function proposeConnectionFromDocs(
   if (answer.outcome !== "proposed") return fail(MODEL_FAILURES[answer.outcome]);
   if (!raw) return fail(MODEL_FAILURES.unusable);
 
+  if (input.signal?.aborted) return fail(ABANDONED);
   onStage("checking_address", { ...found, primaryHost: hostnameOf(raw.primaryHost) });
   const verdict = normaliseProposal({
     vendor:

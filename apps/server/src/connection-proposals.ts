@@ -239,14 +239,16 @@ export function createConnectionProposalStore(
             )
           : settle("failed", { found: result.found, failure: result.failure }, result.stats);
       let timer: ReturnType<typeof setTimeout> | undefined;
+      // Aborted with the deadline, so the work it overtook stops at its next step.
+      const abandon = new AbortController();
       const deadline = new Promise<"deadline">((resolve) => {
-        timer = setTimeout(
-          () => resolve("deadline"),
-          options.deadlineMs ?? CONNECTION_PROPOSAL_DEADLINE_MS,
-        );
+        timer = setTimeout(() => {
+          abandon.abort();
+          resolve("deadline");
+        }, options.deadlineMs ?? CONNECTION_PROPOSAL_DEADLINE_MS);
       });
       const work = proposeConnectionFromDocs(
-        { personId, name: input.name, docsUrl: input.docsUrl },
+        { personId, name: input.name, docsUrl: input.docsUrl, signal: abandon.signal },
         deps,
         (stage, found) => {
           if (state.status !== "running") return;
