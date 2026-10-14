@@ -18,8 +18,8 @@ import { readScopeMode, SCOPE_MODE_DESCRIPTION, SCOPE_MODE_ITEMS } from "@/lib/s
  * The scope as a form field (CONTEXT.md, *Scope*; ADR 0007 as amended 2026-09-19): the mode as
  * the `Select` primitive with `items` on the root, as every fixed choice in the console is
  * (AGENTS.md), and under `Selected connections` the picker the scope always was. The create dialog and
- * the consent card mount it inside their own `FieldGroup`; the agent page's Scope section draws
- * the same choice inside its card (`scope-editor.tsx`) with its own save.
+ * the consent card mount it inside their own `FieldGroup`; the agent page draws the same scope as
+ * switches (`agent-integrations-panel.tsx`, GRA-326).
  *
  * The connections arrive from a read the parent started without awaiting, so the field can show
  * before they have: `connections` is `undefined` until then, and under `listed` the picker's place
