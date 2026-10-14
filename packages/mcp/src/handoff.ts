@@ -1,5 +1,7 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 
+import type { PendingActionClosedReason } from "@graft/db/schema/pending-action";
+
 /**
  * The **handoff** URL for a pending action (CONTEXT.md, *Handoff*; ADR 0006): what a tool returns
  * when the harness cannot ask the person in place, and what the person opens in the console to
@@ -40,6 +42,9 @@ export type HandoffSubject = {
   agentId: string;
   expiresAt: Date;
   consumedAt?: Date | null;
+  answeredAt?: Date | null;
+  /** Set when a revoke closed the ask unanswered (migration 0019, GRA-292). */
+  closedReason?: PendingActionClosedReason | null;
 };
 
 function mark(subject: Pick<HandoffSubject, "id" | "agentId" | "expiresAt">, secret: string) {
@@ -63,14 +68,27 @@ export function handoffUrl(consoleUrl: string, pendingActionId: string, token: s
   return `${base}${HANDOFF_PATH}/${encodeURIComponent(pendingActionId)}?${query}`;
 }
 
+export type HandoffRefusalReason = "tampered" | "expired" | "consumed" | "closed";
+
 export type HandoffVerdict =
   | { ok: true }
-  | { ok: false; reason: "tampered" | "expired" | "consumed"; message: string };
+  | {
+      ok: false;
+      reason: HandoffRefusalReason;
+      message: string;
+      closedReason?: PendingActionClosedReason;
+    };
 
 /**
  * Verify a link against its row. Tampering is checked first and in constant time, so a forged token
  * learns nothing about the action's state; then reuse, then expiry — a consumed link is "already
  * used" even once it has also expired, which is the more useful sentence.
+ *
+ * **Except an ask a revoke closed unanswered**, which is `closed` before anything else (GRA-314):
+ * the revoke stamps `expires_at` to its own moment, and the mark is computed over it, so the link
+ * no longer verifies and would read as one Graft never issued. Call this only on a row read under
+ * the owning person, as the console's read does: the owner sees the same close on the Done list,
+ * so saying it to them reveals nothing.
  */
 export function verifyHandoff(args: {
   token: string | null | undefined;
@@ -78,6 +96,27 @@ export function verifyHandoff(args: {
   secret: string;
   now: Date;
 }): HandoffVerdict {
+  const closedReason = args.subject.closedReason;
+  // An answer given before the revoke (a scope ask's, a tool's set to ask every call, waiting for
+  // the agent to take it) is closed with the same stamp: it reads as answered (Greptile on #250).
+  if (closedReason && args.subject.answeredAt) {
+    return {
+      ok: false,
+      reason: "consumed",
+      message: "This handoff link was already used; the agent has taken the answer",
+    };
+  }
+  if (closedReason) {
+    return {
+      ok: false,
+      reason: "closed",
+      closedReason,
+      message:
+        closedReason === "agent_revoked"
+          ? "This ask was closed when its agent was revoked"
+          : "This ask was closed when its connection was revoked",
+    };
+  }
   const expected = mark(args.subject, args.secret);
   const presented = decodeToken(args.token);
   if (!presented || presented.length !== expected.length || !timingSafeEqual(presented, expected)) {

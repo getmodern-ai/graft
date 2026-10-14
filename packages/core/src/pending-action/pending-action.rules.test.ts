@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   pendingActionDoneState,
   pendingActionFinishedAt,
+  pendingActionIntegrationName,
   pendingActionSubject,
 } from "./pending-action.rules";
 
@@ -85,5 +86,25 @@ describe("pendingActionSubject", () => {
         answer: { allow: false },
       }).connectionId,
     ).toBeNull();
+  });
+});
+
+describe("pendingActionIntegrationName (GRA-314)", () => {
+  it("reads the integration as the person does, off whichever field the kind carries", () => {
+    expect(pendingActionIntegrationName({ vendor: "gmail", connectionName: "Gmail (work)" })).toBe(
+      "Gmail",
+    );
+    expect(
+      pendingActionIntegrationName({
+        vendor: "demo",
+        connectionName: "Demo",
+        integrationName: "Demo Orders",
+      }),
+    ).toBe("Demo Orders");
+    expect(
+      pendingActionIntegrationName({ vendor: "unleashed", displayName: "Acme Unleashed" }),
+    ).toBe("Acme Unleashed");
+    expect(pendingActionIntegrationName({ vendor: "unleashed" })).toBe("unleashed");
+    expect(pendingActionIntegrationName({ toolName: "x" })).toBeNull();
   });
 });

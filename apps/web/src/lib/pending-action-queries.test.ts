@@ -8,13 +8,14 @@ import {
   pendingActionQuery,
   pendingActionsQuery,
   settleAnsweredAsk,
+  settleConnectedAsk,
 } from "./pending-action-queries";
 
 function card(id: string): PendingAction {
   return {
     id,
     agentId: "agt_1",
-    agent: { id: "agt_1", name: "laptop Hermes" },
+    agent: { id: "agt_1", name: "laptop Hermes", clientName: null },
     kind: "tool",
     payload: { toolId: "tool_1" },
     expiresAt: "2026-10-15T00:00:00.000Z",
@@ -91,5 +92,22 @@ describe("settleAnsweredAsk (GRA-334)", () => {
       pendingAction: { answeredAt: ANSWERED_AT, answer: null, consumedAt: null },
     });
     expect(client.getQueryData(pendingActionQuery("pa_1", "h_token").queryKey)).toBeUndefined();
+  });
+});
+
+describe("settleConnectedAsk (Greptile on #250)", () => {
+  it("records the connection on the cached link read, and leaves an ask already answered alone", () => {
+    const client = new QueryClient();
+    const link = pendingActionQuery("pa_1", "h_token");
+    client.setQueryData(link.queryKey, { pendingAction: card("pa_1") });
+    settleConnectedAsk(client, "pa_1", "conn_1", new Date(ANSWERED_AT));
+    expect(client.getQueryData(link.queryKey)?.pendingAction).toMatchObject({
+      answeredAt: ANSWERED_AT,
+      answer: { connectionId: "conn_1" },
+    });
+    settleConnectedAsk(client, "pa_1", "conn_2");
+    expect(client.getQueryData(link.queryKey)?.pendingAction.answer).toEqual({
+      connectionId: "conn_1",
+    });
   });
 });
