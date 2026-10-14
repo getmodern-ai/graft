@@ -72,6 +72,12 @@ export const setup = pgTable(
     starterId: text("starter_id"),
     /** The task chosen before connecting (Setup v2), built the moment the connection lands. */
     goal: text("goal"),
+    /**
+     * The ready-made tool chosen instead of a task (GRA-276), by its wire name
+     * (`<vendor>__<name>`): copied into the toolbox, rather than built, the moment the connection
+     * lands. Null when the person chose a task to build; `goal` then carries the task.
+     */
+    stockTool: text("stock_tool"),
     /** The open connection ask the connect step made (GRA-206). */
     pendingActionId: text("pending_action_id").references(() => pendingAction.id, {
       onDelete: "set null",

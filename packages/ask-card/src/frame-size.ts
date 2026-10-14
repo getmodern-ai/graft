@@ -1,8 +1,8 @@
 /**
  * The card's frame height, reported by the card itself (GRA-275). A host mounts `ui://graft/ask`
- * for every result of a tool that names it, an ask or not (GRA-116, GRA-210), so the card has to
- * say both "I am this tall" and "I am nothing" — and say it only once there is something to
- * measure.
+ * for every result of a tool that names it, an ask or not (GRA-116, GRA-210), and mounts it while
+ * the call is still in flight, so the card has to say "I am this tall", "I am nothing" and, before
+ * any result, "I am one line".
  *
  * Two hosts, two readings, so every report is written twice:
  * - `ui/notifications/size-changed`, the spec's (MCP Apps 2026-01-26), which ChatGPT and the
@@ -11,12 +11,14 @@
  * - `<html>`'s inline height, because Claude.ai reads the frame document's height off the DOM
  *   rather than acting on the notification (anthropics/claude-ai-mcp#69).
  *
- * Why not ext-apps' `autoResize`: it starts measuring at `connect()`, before any tool result has
- * arrived, and that issue reports Claude locking the frame at a measurement taken before the
- * content rendered — the 150 px first render with the buttons below an inner scrollbar. So
- * nothing is reported until the first result, the first report is taken synchronously after the
- * render (layout is forced by the measurement), and a `ResizeObserver` on the mount reports every
- * change after that: fonts landing, a sentence replacing the buttons, the host's width changing.
+ * Why not ext-apps' `autoResize`: it starts measuring at `connect()`, whatever the page holds, and
+ * that issue reports Claude locking the frame at a measurement taken before the content rendered.
+ * So the card decides what is measured: before the first result the mount holds one waiting line
+ * (`card-view.ts`, GRA-335) and that line's height is reported, since a page that reported nothing
+ * was drawn at Claude's 150 px default for the whole of a call that waits on an approval; a result
+ * is measured synchronously after its render (layout is forced by the measurement); and a
+ * `ResizeObserver` on the mount reports every change after that: fonts landing, a sentence
+ * replacing the buttons, the host's width changing.
  *
  * The height is the mount's, not the document's: the document's would be circular once `<html>`
  * carries an explicit height.
@@ -32,8 +34,11 @@ type ObserverConstructor = new (
 };
 
 export type FrameSizer = {
-  /** Measure the mount now and report its height if it changed; starts observing on first call. */
-  report(): void;
+  /**
+   * Measure the mount now and report its height if it changed, or regardless under `force`, for a
+   * notification an earlier report could not deliver; starts observing on the first call.
+   */
+  report(force?: boolean): void;
   /** Stop observing. */
   dispose(): void;
 };
@@ -53,21 +58,21 @@ export function createFrameSizer(
   let last: number | null = null;
   let observer: InstanceType<ObserverConstructor> | null = null;
 
-  const report = (): void => {
+  const report = (force = false): void => {
     const height = contentHeightOf(mount);
-    if (height === last) return;
+    if (height === last && !force) return;
     last = height;
     doc.documentElement.style.height = `${height}px`;
     send({ height });
   };
 
   return {
-    report() {
+    report(force = false) {
       if (!observer && Observer) {
-        observer = new Observer(report);
+        observer = new Observer(() => report());
         observer.observe(mount);
       }
-      report();
+      report(force);
     },
     dispose() {
       observer?.disconnect();
