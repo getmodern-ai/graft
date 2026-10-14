@@ -98,9 +98,11 @@ describe("the handoff URL", () => {
         ),
       });
     }
-    // An answer given before the revoke is the answer, not a close.
+    // An answer given before the revoke is the answer, not a close, though the revoke moved the
+    // expiry its token was signed over (Greptile on #250).
     const answered = {
       ...subject,
+      expiresAt: NOW,
       consumedAt: NOW,
       answeredAt: NOW,
       closedReason: "agent_revoked" as const,

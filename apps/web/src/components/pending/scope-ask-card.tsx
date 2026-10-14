@@ -79,6 +79,8 @@ export function ScopeAskCard({
       queryClient.invalidateQueries({ queryKey: agentKeys.all });
       queryClient.invalidateQueries({ queryKey: approvalKeys.ofAgent(action.agentId) });
       queryClient.invalidateQueries({ queryKey: approvalKeys.buildsOfAgent(action.agentId) });
+      // Full access records the integration's allow too (GRA-314).
+      queryClient.invalidateQueries({ queryKey: approvalKeys.vendorsOfAgent(action.agentId) });
       if (submitted.allow) {
         toast.success(`${payload.displayName} is in ${agentName}'s scope`, {
           description: scopeAllowedToastDescription({

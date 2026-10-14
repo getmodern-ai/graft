@@ -42,6 +42,7 @@ import {
   isOpen,
   type PendingAction,
   pendingKeys,
+  settleConnectedAsk,
 } from "@/lib/pending-action-queries";
 import {
   awaitLink,
@@ -116,6 +117,7 @@ export function ProviderLinkAskCard({
       queryClient.invalidateQueries({ queryKey: approvalKeys.vendorsOfAgent(action.agentId) });
       queryClient.invalidateQueries({ queryKey: approvalKeys.buildsOfAgent(action.agentId) });
       if (outcome === "connected") {
+        if (connectionId) settleConnectedAsk(queryClient, action.id, connectionId);
         toast.success(`${payload.displayName} is connected through ${provider}`, {
           description: connectedToastDescription({
             origin,
@@ -131,6 +133,7 @@ export function ProviderLinkAskCard({
     },
     [
       queryClient,
+      action.id,
       action.agentId,
       payload.displayName,
       provider,

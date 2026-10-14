@@ -18,7 +18,13 @@ import {
 } from "@/lib/connection-form";
 import { connectionKeys, submitCredentialRequest } from "@/lib/connection-queries";
 import { startOAuthConsent } from "@/lib/oauth-consent";
-import { type Ask, isOpen, pendingKeys } from "@/lib/pending-action-queries";
+import {
+  type Ask,
+  isOpen,
+  pendingKeys,
+  settleAnsweredAsk,
+  settleConnectedAsk,
+} from "@/lib/pending-action-queries";
 
 /**
  * An agent's ask to re-enter a connection's credential (GRA-28) — after a vendor 401 or 403, or
@@ -52,7 +58,8 @@ export function CredentialAskCard({
   // The client secret survives a refused refresh and goes with a revoke (ADR 0007).
   const needsSecret = !oauth || payload.revoked;
   const consent = useOAuthConsent({
-    onConnected: () => {
+    onConnected: (connectionId) => {
+      settleConnectedAsk(queryClient, action.id, connectionId);
       toast.success(`${payload.connectionName} is connected`, {
         description: "The consent completed; the agent's waiting call answers connected.",
       });
@@ -62,7 +69,7 @@ export function CredentialAskCard({
 
   const save = useMutation({
     mutationFn: (value: Record<string, string>) => submitCredentialRequest(action.id, value),
-    onSuccess: ({ connection, authorizeUrl }) => {
+    onSuccess: ({ connection, authorizeUrl, pendingAction }) => {
       queryClient.invalidateQueries({ queryKey: pendingKeys.all });
       queryClient.invalidateQueries({ queryKey: connectionKeys.all });
       if (authorizeUrl) {
@@ -73,6 +80,7 @@ export function CredentialAskCard({
         void consent.run(authorizeUrl, connection);
         return;
       }
+      settleAnsweredAsk(queryClient, action.id, { pendingAction });
       toast.success(`${connection.displayName}'s credential is set`, {
         description: payload.revoked
           ? "Reconnected. Its tools ask again on their own terms; the agent's waiting call answers connected."

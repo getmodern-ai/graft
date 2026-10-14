@@ -97,7 +97,16 @@ export function verifyHandoff(args: {
   now: Date;
 }): HandoffVerdict {
   const closedReason = args.subject.closedReason;
-  if (closedReason && !args.subject.answeredAt) {
+  // An answer given before the revoke (a scope ask's, a tool's set to ask every call, waiting for
+  // the agent to take it) is closed with the same stamp: it reads as answered (Greptile on #250).
+  if (closedReason && args.subject.answeredAt) {
+    return {
+      ok: false,
+      reason: "consumed",
+      message: "This handoff link was already used; the agent has taken the answer",
+    };
+  }
+  if (closedReason) {
     return {
       ok: false,
       reason: "closed",

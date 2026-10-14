@@ -49,7 +49,13 @@ import {
 } from "@/lib/connection-form";
 import { connectionKeys, submitConnectionProposal } from "@/lib/connection-queries";
 import { proposalLead, proposalSummary } from "@/lib/handoff-copy";
-import { type Ask, isOpen, pendingKeys } from "@/lib/pending-action-queries";
+import {
+  type Ask,
+  isOpen,
+  pendingKeys,
+  settleAnsweredAsk,
+  settleConnectedAsk,
+} from "@/lib/pending-action-queries";
 import { providerLabel as providerName } from "@/lib/provider-name";
 
 /**
@@ -124,7 +130,8 @@ export function ConnectionAskCard({
       : connectionChoicesSent(shown, { approveBuild, allowVendor });
   const decline = useAnswerAsk(action, onAnswered, origin);
   const consent = useOAuthConsent({
-    onConnected: () => {
+    onConnected: (connectionId) => {
+      settleConnectedAsk(queryClient, action.id, connectionId);
       toast.success(`${draft.displayName} is connected`, {
         description: connectedToastDescription({
           origin,
@@ -139,7 +146,7 @@ export function ConnectionAskCard({
 
   const connect = useMutation({
     mutationFn: (value: ConnectionSubmitBody) => submitConnectionProposal(action.id, value),
-    onSuccess: ({ connection, authorizeUrl }, submitted) => {
+    onSuccess: ({ connection, authorizeUrl, pendingAction }, submitted) => {
       queryClient.invalidateQueries({ queryKey: pendingKeys.all });
       queryClient.invalidateQueries({ queryKey: connectionKeys.all });
       queryClient.invalidateQueries({ queryKey: agentKeys.all });
@@ -153,6 +160,8 @@ export function ConnectionAskCard({
         void consent.run(authorizeUrl, connection);
         return;
       }
+      // The answer the submit recorded, kept for the handoff page once the agent takes it.
+      settleAnsweredAsk(queryClient, action.id, { pendingAction });
       toast.success(`${connection.displayName} is connected`, {
         description: connectedToastDescription({
           origin,
