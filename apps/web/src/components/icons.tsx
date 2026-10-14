@@ -58,6 +58,16 @@ export function ArrowBackIcon(props: IconProps) {
   );
 }
 
+/** Material Symbols `arrow_forward`, filled. */
+export function ArrowForwardIcon(props: IconProps) {
+  return (
+    <MaterialSymbol
+      d="M686-450H160v-60h526L438-758l42-42 320 320-320 320-42-42 248-248Z"
+      {...props}
+    />
+  );
+}
+
 /** Material Symbols `bolt`, filled. */
 export function BoltIcon(props: IconProps) {
   return <MaterialSymbol d="m320-80 40-280H160l360-520h80l-40 320h240L400-80h-80Z" {...props} />;
@@ -183,6 +193,16 @@ export function ExtensionIcon(props: IconProps) {
   return (
     <MaterialSymbol
       d="M191-120q-29 0-50-21t-21-51v-139q52-3 88-39t36-88q0-52-36-88.5T121-585v-144q0-30 20.5-50.5T192-800h136q7-49 44-82t87-33q49 0 86 33t45 82h139q30 0 50.5 20.5T800-729v147q38 18 60.5 49.5T883-458q0 43-22.5 75T800-334v142q0 30-20.5 51T729-120H191Z"
+      {...props}
+    />
+  );
+}
+
+/** Material Symbols `filter_list`, filled. */
+export function FilterListIcon(props: IconProps) {
+  return (
+    <MaterialSymbol
+      d="M400-240v-60h160v60H400ZM240-450v-60h480v60H240ZM120-660v-60h720v60H120Z"
       {...props}
     />
   );
