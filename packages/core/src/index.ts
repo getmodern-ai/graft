@@ -86,6 +86,7 @@ export {
   type AskedVersion,
   allowVendor,
   allowVendorWhenConnecting,
+  type ConsoleApprovalResult,
   decideToolCall,
   getApproval,
   getBuildApproval,
@@ -95,8 +96,11 @@ export {
   listApprovals,
   listVendorApprovals,
   revokeApproval,
+  SETTING_ANSWER_VIA,
   setApproval,
+  setApprovalFromConsole,
   setAskEveryCall,
+  setVendorApprovalDestructive,
   withdrawVendorApproval,
 } from "./approval/approval.service";
 export {
