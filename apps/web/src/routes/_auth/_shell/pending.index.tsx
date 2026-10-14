@@ -71,7 +71,7 @@ function RequestsRoute() {
         <TabsList variant="line" className="w-full justify-start border-border border-b">
           <TabsTrigger value="open">
             Open
-            {requests.data ? (
+            {requests.data || signIns.length > 0 ? (
               <Badge variant="secondary">{rows.length + signIns.length}</Badge>
             ) : null}
           </TabsTrigger>
@@ -82,8 +82,13 @@ function RequestsRoute() {
 
         <TabsContent value="open" className="flex flex-col gap-4 text-sm">
           <RequestList aria-label="Open requests" aria-busy={requests.isPending}>
+            {/* Drawn whatever the asks' read is doing: the badge counts them, so a pending or
+                failed asks read must not hide their Sign in. */}
+            {signIns.map((request) => (
+              <SignInRequestRow key={request.key} request={request} />
+            ))}
             {requests.isPending ? (
-              <RequestListLoading />
+              <RequestListLoading rows={signIns.length > 0 ? 1 : 3} />
             ) : requests.isError && !requests.data ? (
               // Only a first read that failed replaces the rows: a failed background refetch keeps
               // them, and any dialog open on one with what the person typed (the toast says it).
@@ -100,18 +105,13 @@ function RequestsRoute() {
                 Nothing is waiting on you. When an agent needs an answer, it appears here.
               </RequestListNote>
             ) : (
-              <>
-                {signIns.map((request) => (
-                  <SignInRequestRow key={request.key} request={request} />
-                ))}
-                {rows.map((action) => (
-                  <RequestRow
-                    key={action.id}
-                    action={action}
-                    harness={harnessOf.get(action.agentId) ?? "generic"}
-                  />
-                ))}
-              </>
+              rows.map((action) => (
+                <RequestRow
+                  key={action.id}
+                  action={action}
+                  harness={harnessOf.get(action.agentId) ?? "generic"}
+                />
+              ))
             )}
           </RequestList>
 
