@@ -191,6 +191,11 @@ describe("what the card may answer", () => {
       url,
       answerable: true,
       provider: "Broker",
+      vendorTools: {
+        integrationName: "Gmail",
+        label: expect.stringContaining("Gmail"),
+        description: expect.any(String),
+      },
     });
     expect(
       scopeAskCard({

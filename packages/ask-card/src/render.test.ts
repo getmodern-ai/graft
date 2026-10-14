@@ -2,7 +2,6 @@
 import { describe, expect, it, vi } from "vitest";
 
 import {
-  buildChoiceLabel,
   type CardHandlers,
   factsOf,
   MODEL_WORDS_NOTE,
@@ -198,19 +197,34 @@ async function until(predicate: () => boolean, ticks = 200) {
 
 const status = (root: HTMLElement) => root.querySelector("[role=status]") as HTMLElement | null;
 
+const click = (root: HTMLElement, label: string) =>
+  [...root.querySelectorAll("button")].find((b) => b.textContent === label)?.click();
+
+/** The radios of a choice, by value, and which one is checked. */
+const radios = (root: HTMLElement) =>
+  [...root.querySelectorAll<HTMLInputElement>("input[type=radio]")].map((node) => node.value);
+const checked = (root: HTMLElement) =>
+  root.querySelector<HTMLInputElement>("input[type=radio]:checked")?.value;
+const pick = (root: HTMLElement, value: string) => {
+  const node = root.querySelector<HTMLInputElement>(`input[type=radio][value="${value}"]`);
+  if (node) node.checked = true;
+};
+const optionTitles = (root: HTMLElement) =>
+  [...root.querySelectorAll(".ask-option-title")].map((node) => node.textContent);
+
 describe("a build approval", () => {
-  it("draws the agent, the connection and its hosts, the reads-only sentence, and Allow and Decline", () => {
+  it("asks the handoff page's question, says reads only, offers Decline and Allow, and keeps the facts behind Details", () => {
     const root = renderAsk(BUILD, handlers(), document);
     expect(root.dataset).toMatchObject({ kind: "build", answerable: "true" });
-    expect(root.querySelector("h1")?.textContent).toBe(titleOf(BUILD));
-    expect(root.textContent).toContain("Claude");
-    expect(root.textContent).toContain("Demo Orders");
-    expect(root.textContent).toContain("api.demo.example");
-    expect(root.textContent).toContain(
-      "Reads only, every write previewed, until the first real use, which asks you once.",
+    expect(root.querySelector("h1")?.textContent).toBe("Allow Claude to build its own demo tools?");
+    expect(root.querySelector(".ask-description")?.textContent).toBe(
+      "Graft's model reads from Demo Orders while it writes a tool: reads only, with every write previewed and never sent.",
     );
+    expect(root.querySelector(".ask-summary")?.textContent).toBe("api.demo.example");
+    expect(root.querySelector("details > summary")?.textContent).toBe("Details");
+    expect(root.querySelector("details .ask-facts")?.textContent).toContain("Demo Orders");
     expect(buttons(root)).toEqual(["Decline", "Allow"]);
-    expect(root.querySelector("input[type=checkbox]")).toBeNull();
+    expect(root.querySelector("input")).toBeNull();
   });
 
   it("sends { allow: true } on Allow, disables both buttons, and shows the sentence the server answered", async () => {
@@ -218,8 +232,7 @@ describe("a build approval", () => {
       answer: { ok: true, sentence: "Allowed. Claude may build tools against Demo Orders." },
     });
     const root = renderAsk(BUILD, h, document);
-    const allow = [...root.querySelectorAll("button")].find((b) => b.textContent === "Allow");
-    allow?.click();
+    click(root, "Allow");
     expect([...root.querySelectorAll("button")].every((b) => b.disabled)).toBe(true);
     await flush();
     expect(h.answer).toHaveBeenCalledWith({ allow: true });
@@ -232,7 +245,7 @@ describe("a build approval", () => {
   it("sends { allow: false } on Decline", async () => {
     const h = handlers();
     const root = renderAsk(BUILD, h, document);
-    [...root.querySelectorAll("button")].find((b) => b.textContent === "Decline")?.click();
+    click(root, "Decline");
     await flush();
     expect(h.answer).toHaveBeenCalledWith({ allow: false });
   });
@@ -242,7 +255,7 @@ describe("a build approval", () => {
       answer: { ok: false, reason: "answered", message: "This action has already been answered" },
     });
     const root = renderAsk(BUILD, h, document);
-    [...root.querySelectorAll("button")].find((b) => b.textContent === "Allow")?.click();
+    click(root, "Allow");
     await flush();
     expect(status(root)?.textContent).toBe("This action has already been answered");
     expect(status(root)?.dataset.tone).toBe("refused");
@@ -258,7 +271,7 @@ describe("a build approval", () => {
       },
     });
     const root = renderAsk(BUILD, h, document);
-    [...root.querySelectorAll("button")].find((b) => b.textContent === "Allow")?.click();
+    click(root, "Allow");
     await flush();
     expect(status(root)?.dataset.tone).toBe("refused");
     expect(buttons(root)).toEqual(["Open in the console"]);
@@ -276,7 +289,7 @@ describe("a build approval", () => {
       answer: vi.fn(async () => Promise.reject(new Error("bridge closed"))),
     };
     const root = renderAsk(BUILD, h, document);
-    [...root.querySelectorAll("button")].find((b) => b.textContent === "Allow")?.click();
+    click(root, "Allow");
     await flush();
     expect(status(root)?.textContent).toContain("bridge closed");
     expect(status(root)?.textContent).toContain("console");
@@ -284,19 +297,25 @@ describe("a build approval", () => {
 });
 
 describe("a tool's first-use approval (GRA-116)", () => {
-  it("asks to allow the run, quotes the description as the model's words, names the tool and what it does, and offers Decline and Allow", () => {
+  it("asks to run the tool in the integration, draws the provenance line, keeps the description behind Details, and offers Deny and Allow", () => {
     const root = renderAsk(TOOL, handlers(), document);
     expect(root.dataset).toMatchObject({ kind: "tool", answerable: "true" });
-    expect(root.querySelector("h1")?.textContent).toBe("Allow Claude to run demo__create-order?");
-    expect(root.textContent).toContain("changes data in Demo Orders");
-    expect(root.textContent).toContain("Your answer holds for this agent's next calls");
-    expect(root.querySelector(".ask-quote blockquote")?.textContent).toBe(TOOL.tool?.description);
-    expect(root.querySelector(".ask-badge")?.textContent).toBe(MODEL_WORDS_NOTE);
+    expect(root.querySelector("h1")?.textContent).toBe("Allow Claude to run Create order in demo?");
+    expect(root.querySelector(".ask-description")?.textContent).toBe(
+      "Through your Demo Orders connection, at api.demo.example.",
+    );
+    expect(root.querySelector(".ask-summary")?.textContent).toBe(
+      `${MODEL_WORDS_NOTE} · sends data to api.demo.example`,
+    );
+    expect(root.querySelector("details .ask-quote blockquote")?.textContent).toBe(
+      TOOL.tool?.description,
+    );
+    expect(root.querySelector("details .ask-badge")?.textContent).toBe(MODEL_WORDS_NOTE);
     expect(root.textContent).toContain("Changes data");
-    expect(root.textContent).toContain("Demo Orders");
-    expect(root.textContent).toContain("api.demo.example");
-    expect(root.querySelector("input[type=checkbox]")).toBeNull();
-    expect(buttons(root)).toEqual(["Decline", "Allow"]);
+    expect(root.textContent).toContain("demo__create-order");
+    // No integration-wide offer from the server: no choice to draw.
+    expect(root.querySelector("input")).toBeNull();
+    expect(buttons(root)).toEqual(["Deny", "Allow"]);
   });
 
   it("marks the description with where the tool came from, as the server wrote it (GRA-245)", () => {
@@ -313,6 +332,9 @@ describe("a tool's first-use approval (GRA-116)", () => {
       },
       handlers(),
       document,
+    );
+    expect(stock.querySelector(".ask-summary")?.textContent).toBe(
+      "Ready-made by Graft · sends data to api.demo.example",
     );
     expect(stock.querySelector(".ask-badge")?.textContent).toBe("Ready-made by Graft");
     expect(stock.querySelector(".ask-quote figcaption")?.textContent).toContain(
@@ -334,27 +356,29 @@ describe("a tool's first-use approval (GRA-116)", () => {
       handlers(),
       document,
     );
-    expect(destructive.textContent).toContain("can delete or overwrite data");
     expect(destructive.textContent).toContain("Destructive: can delete or overwrite data");
     const everyCall = renderAsk(
       { ...TOOL, tool: { ...(TOOL.tool as NonNullable<AskCard["tool"]>), askEveryCall: true } },
       handlers(),
       document,
     );
-    expect(everyCall.textContent).toContain("ask every time, so a yes is for this call alone");
+    expect(everyCall.querySelector(".ask-note")?.textContent).toBe(
+      "You set Create order to ask every time it runs, so Claude asks again next call. Change that on the agent's page in Graft.",
+    );
+    expect(renderAsk(TOOL, handlers(), document).querySelector(".ask-note")).toBeNull();
   });
 
-  it("sends { allow: true } on Allow and { allow: false } on Decline, never the setting", async () => {
+  it("sends { allow: true } on Allow and { allow: false } on Deny, never the setting", async () => {
     const h = handlers({ answer: { ok: true, sentence: "Allowed. Claude may run it." } });
     const root = renderAsk(TOOL, h, document);
-    [...root.querySelectorAll("button")].find((b) => b.textContent === "Allow")?.click();
+    click(root, "Allow");
     await flush();
     expect(h.answer).toHaveBeenCalledWith({ allow: true });
     expect(status(root)?.textContent).toBe("Allowed. Claude may run it.");
 
     const again = handlers();
     const second = renderAsk(TOOL, again, document);
-    [...second.querySelectorAll("button")].find((b) => b.textContent === "Decline")?.click();
+    click(second, "Deny");
     await flush();
     expect(again.answer).toHaveBeenCalledWith({ allow: false });
   });
@@ -366,29 +390,44 @@ describe("a tool's first-use approval (GRA-116)", () => {
   });
 });
 
-/** ADR 0008 as amended 2026-10-09 (GRA-237): every tool of the integration, allowed at once. */
+/**
+ * ADR 0008 as amended 2026-10-09 (GRA-237) and 2026-10-14 (GRA-283): how much a tool's yes allows,
+ * as the handoff page's radio offers it; no allow for one call.
+ */
 describe("a tool's ask offering the whole integration", () => {
-  it("draws the server's offer beside Allow and the destructive tick, off by default", () => {
+  it("pre-selects Every <integration> tool on a tool that cannot delete, beside Just <tool> and the destructive line", () => {
     const root = renderAsk(TOOL_OFFER, handlers(), document);
-    expect(buttons(root)).toEqual([
-      "Decline",
-      "Allow every Demo Orders tool for this agent",
-      "Allow",
-    ]);
-    const tick = root.querySelector<HTMLInputElement>("input[name=includesDestructive]");
-    expect(tick?.checked).toBe(false);
-    expect(root.textContent).toContain("Include destructive tools");
-    expect(root.textContent).toContain(
-      "Off, a Demo Orders tool that can delete or overwrite data still asks you first.",
+    expect(root.querySelector(".ask-choices legend")?.textContent).toBe(
+      "How much should Claude get?",
     );
+    expect(radios(root)).toEqual(["integration", "tool", "integration-destructive"]);
+    expect(checked(root)).toBe("integration");
+    expect(optionTitles(root)).toEqual([
+      "Every Demo Orders toolRecommended",
+      "Just Create order",
+      "Every Demo Orders tool, including ones that delete",
+    ]);
+    expect(root.textContent).not.toContain("this once");
+    expect(buttons(root)).toEqual(["Deny", "Allow"]);
   });
 
-  it("sends the integration's yes with the tick as it stands, and Allow alone without it", async () => {
+  it("pre-selects Just <tool> on a destructive tool, and never offers the narrower integration line", () => {
+    const root = renderAsk(
+      {
+        ...TOOL_OFFER,
+        tool: { ...(TOOL_OFFER.tool as NonNullable<AskCard["tool"]>), destructive: true },
+      },
+      handlers(),
+      document,
+    );
+    expect(radios(root)).toEqual(["tool", "integration-destructive"]);
+    expect(checked(root)).toBe("tool");
+  });
+
+  it("sends the integration's yes without destructive tools by default, the tool alone, or the full request", async () => {
     const h = handlers({ answer: { ok: true, sentence: "Allowed. Every Demo Orders tool." } });
     const root = renderAsk(TOOL_OFFER, h, document);
-    [...root.querySelectorAll("button")]
-      .find((b) => b.textContent === "Allow every Demo Orders tool for this agent")
-      ?.click();
+    click(root, "Allow");
     await flush();
     expect(h.answer).toHaveBeenCalledWith({
       allow: true,
@@ -396,25 +435,33 @@ describe("a tool's ask offering the whole integration", () => {
       includesDestructive: false,
     });
     expect(status(root)?.textContent).toBe("Allowed. Every Demo Orders tool.");
+    expect(
+      [...root.querySelectorAll<HTMLInputElement>("input[type=radio]")].every((r) => r.disabled),
+    ).toBe(true);
 
-    const ticked = handlers();
-    const second = renderAsk(TOOL_OFFER, ticked, document);
-    second.querySelector<HTMLInputElement>("input[name=includesDestructive]")?.click();
-    [...second.querySelectorAll("button")]
-      .find((b) => b.textContent === "Allow every Demo Orders tool for this agent")
-      ?.click();
+    const just = handlers();
+    const second = renderAsk(TOOL_OFFER, just, document);
+    pick(second, "tool");
+    click(second, "Allow");
     await flush();
-    expect(ticked.answer).toHaveBeenCalledWith({
+    expect(just.answer).toHaveBeenCalledWith({ allow: true });
+
+    const all = handlers();
+    const third = renderAsk(TOOL_OFFER, all, document);
+    pick(third, "integration-destructive");
+    click(third, "Allow");
+    await flush();
+    expect(all.answer).toHaveBeenCalledWith({
       allow: true,
       allowVendor: true,
       includesDestructive: true,
     });
 
-    const plain = handlers();
-    const third = renderAsk(TOOL_OFFER, plain, document);
-    [...third.querySelectorAll("button")].find((b) => b.textContent === "Allow")?.click();
+    const no = handlers();
+    const fourth = renderAsk(TOOL_OFFER, no, document);
+    click(fourth, "Deny");
     await flush();
-    expect(plain.answer).toHaveBeenCalledWith({ allow: true });
+    expect(no.answer).toHaveBeenCalledWith({ allow: false });
   });
 
   it("reads the offer off the wire, and drops one of the wrong shape", () => {
@@ -424,32 +471,38 @@ describe("a tool's ask offering the whole integration", () => {
 });
 
 describe("a connection confirmation for a scheme that takes no credential", () => {
-  it("draws the proposal, the scheme label, the documentation URL as text, and a checked build choice", () => {
+  it("asks to connect for the agent, says it needs no key, draws the summary and Full access / Ask me first", () => {
     const root = renderAsk(KEYLESS, handlers(), document);
     expect(root.dataset).toMatchObject({ kind: "connection", answerable: "true" });
-    expect(root.textContent).toContain("No credential (public API)");
-    expect(root.textContent).toContain("https://api.open-meteo.com/v1");
+    expect(root.querySelector("h1")?.textContent).toBe("Connect Open-Meteo for Claude?");
+    expect(root.querySelector(".ask-description")?.textContent).toBe(
+      "Claude set this up from open-meteo's docs. It needs no key.",
+    );
+    expect(root.querySelector(".ask-summary")?.textContent).toBe(
+      "api.open-meteo.com · No credential (public API) · from open-meteo's docs",
+    );
     expect(root.textContent).toContain("https://open-meteo.com/en/docs");
     expect(root.querySelector("a")).toBeNull();
-    const box = root.querySelector("input[type=checkbox]") as HTMLInputElement;
-    expect(box.checked).toBe(true);
-    expect(root.textContent).toContain(buildChoiceLabel(KEYLESS));
+    expect(root.querySelector(".ask-choices legend")?.textContent).toBe(
+      "What can Claude do with it?",
+    );
+    expect(radios(root)).toEqual(["full", "ask"]);
+    expect(checked(root)).toBe("full");
+    expect(root.querySelector("input[type=checkbox]")).toBeNull();
     expect(buttons(root)).toEqual(["Decline", "Connect"]);
   });
 
-  it("sends { connect: true, approveBuild } with the box as the person left it", async () => {
+  it("sends { connect: true, approveBuild } with the choice as the person left it", async () => {
     const h = handlers();
     const root = renderAsk(KEYLESS, h, document);
-    const box = root.querySelector("input[type=checkbox]") as HTMLInputElement;
-    box.checked = false;
-    [...root.querySelectorAll("button")].find((b) => b.textContent === "Connect")?.click();
+    pick(root, "ask");
+    click(root, "Connect");
     await flush();
     expect(h.answer).toHaveBeenCalledWith({ connect: true, approveBuild: false });
-    expect(box.disabled).toBe(true);
 
     const again = handlers();
     const second = renderAsk(KEYLESS, again, document);
-    [...second.querySelectorAll("button")].find((b) => b.textContent === "Connect")?.click();
+    click(second, "Connect");
     await flush();
     expect(again.answer).toHaveBeenCalledWith({ connect: true, approveBuild: true });
   });
@@ -457,7 +510,7 @@ describe("a connection confirmation for a scheme that takes no credential", () =
   it("sends { decline: true } on Decline", async () => {
     const h = handlers();
     const root = renderAsk(KEYLESS, h, document);
-    [...root.querySelectorAll("button")].find((b) => b.textContent === "Decline")?.click();
+    click(root, "Decline");
     await flush();
     expect(h.answer).toHaveBeenCalledWith({ decline: true });
   });
@@ -471,19 +524,16 @@ describe("a widening: a keyless connection the person holds, asked to reach anot
     widens: { connectionId: "conn_om", addedHosts: ["customer-api.open-meteo.com"] },
   };
 
-  it("asks to also reach the added host, says no new connection is made, lists what is added, and offers the checked build choice", () => {
+  it("asks to let the connection reach more, names the added host, lists it in the facts, and offers the access choice", () => {
     const root = renderAsk(WIDEN, handlers(), document);
     expect(root.dataset).toMatchObject({ kind: "connection", answerable: "true" });
-    expect(root.querySelector("h1")?.textContent).toBe(
-      "Also reach customer-api.open-meteo.com with Open-Meteo?",
-    );
-    expect(root.querySelector(".ask-description")?.textContent).toContain(
-      "no new connection is made",
+    expect(root.querySelector("h1")?.textContent).toBe("Let Open-Meteo reach more for Claude?");
+    expect(root.querySelector(".ask-description")?.textContent).toBe(
+      "Claude needs open-meteo to reach customer-api.open-meteo.com as well. No key is involved.",
     );
     const facts = [...root.querySelectorAll(".ask-facts dt")].map((node) => node.textContent);
     expect(facts).toContain("Adds");
-    expect(root.textContent).toContain("customer-api.open-meteo.com");
-    expect(root.querySelector<HTMLInputElement>("input[type=checkbox]")?.checked).toBe(true);
+    expect(checked(root)).toBe("full");
   });
 
   it("reads off the wire with the widening, and drops one of the wrong shape", () => {
@@ -494,45 +544,73 @@ describe("a widening: a keyless connection the person holds, asked to reach anot
 });
 
 describe("a scope ask: a connection the person holds that this agent was not given", () => {
-  it("asks to let the agent use the connection, names the provider and hosts, says nothing is entered, and offers a checked build choice with Decline and Allow", () => {
+  it("asks to let the agent use the connection, says nothing is entered, names the provider and hosts, and offers the access choice with Decline and Allow", () => {
     const root = renderAsk(SCOPE, handlers(), document);
     expect(root.dataset).toMatchObject({ kind: "scope", answerable: "true" });
-    expect(root.querySelector("h1")?.textContent).toBe("Let Claude use Gmail?");
-    expect(root.textContent).toContain("via broker");
-    expect(root.textContent).toContain("made for another of your agents");
-    expect(root.textContent).toContain("nothing entered");
-    expect(root.textContent).toContain("gmail.googleapis.com, www.googleapis.com");
+    expect(root.querySelector("h1")?.textContent).toBe("Let Claude use your Gmail connection?");
+    expect(root.querySelector(".ask-description")?.textContent).toBe(
+      "You connected it for another of your agents. Nothing new is made and nothing is entered.",
+    );
+    expect(root.querySelector(".ask-summary")?.textContent).toBe(
+      "gmail.googleapis.com, www.googleapis.com · through broker",
+    );
     expect(root.textContent).toContain("https://developers.google.com/gmail/api");
     // No provenance note: nothing here was proposed by the model, the row is the person's.
     expect(root.querySelector(".ask-note")).toBeNull();
-    const box = root.querySelector("input[type=checkbox]") as HTMLInputElement;
-    expect(box.checked).toBe(true);
-    expect(root.textContent).toContain(buildChoiceLabel(SCOPE));
+    expect(radios(root)).toEqual(["full", "ask"]);
+    expect(checked(root)).toBe("full");
     expect(buttons(root)).toEqual(["Decline", "Allow"]);
   });
 
-  it("sends { allow: true, approveBuild } with the box as the person left it, and freezes the box", async () => {
+  it("sends { allow: true, approveBuild } with the choice as the person left it, and freezes it", async () => {
     const h = handlers();
     const root = renderAsk(SCOPE, h, document);
-    const box = root.querySelector("input[type=checkbox]") as HTMLInputElement;
-    box.checked = false;
-    [...root.querySelectorAll("button")].find((b) => b.textContent === "Allow")?.click();
+    pick(root, "ask");
+    click(root, "Allow");
     await flush();
     expect(h.answer).toHaveBeenCalledWith({ allow: true, approveBuild: false });
-    expect(box.disabled).toBe(true);
+    expect(
+      [...root.querySelectorAll<HTMLInputElement>("input[type=radio]")].every((r) => r.disabled),
+    ).toBe(true);
     expect(root.querySelector(".ask-outcome")?.textContent).toBe("Done.");
 
     const again = handlers();
     const second = renderAsk(SCOPE, again, document);
-    [...second.querySelectorAll("button")].find((b) => b.textContent === "Allow")?.click();
+    click(second, "Allow");
     await flush();
     expect(again.answer).toHaveBeenCalledWith({ allow: true, approveBuild: true });
+  });
+
+  it("sends Full access as the build approval and the integration's tools where the server offers the line", async () => {
+    const offered: AskCard = {
+      ...SCOPE,
+      vendorTools: {
+        integrationName: "Gmail",
+        label: "Use Gmail's tools without asking each time",
+        description: "A tool that can delete or overwrite data still asks you first.",
+      },
+    };
+    const h = handlers();
+    click(renderAsk(offered, h, document), "Allow");
+    await flush();
+    expect(h.answer).toHaveBeenCalledWith({ allow: true, approveBuild: true, allowVendor: true });
+
+    const ask = handlers();
+    const second = renderAsk(offered, ask, document);
+    pick(second, "ask");
+    click(second, "Allow");
+    await flush();
+    expect(ask.answer).toHaveBeenCalledWith({
+      allow: true,
+      approveBuild: false,
+      allowVendor: false,
+    });
   });
 
   it("sends { allow: false } on Decline, never the connection ask's decline shape", async () => {
     const h = handlers();
     const root = renderAsk(SCOPE, h, document);
-    [...root.querySelectorAll("button")].find((b) => b.textContent === "Decline")?.click();
+    click(root, "Decline");
     await flush();
     expect(h.answer).toHaveBeenCalledWith({ allow: false });
   });
@@ -547,8 +625,21 @@ describe("a scope ask: a connection the person holds that this agent was not giv
  * opens that page with `from=card` and waits on `ask_status` until the page has stored it.
  */
 describe("an ask with a secret in it", () => {
+  it("asks the handoff page's question: a key to add, a key to replace, a sign-in to redo", () => {
+    expect(titleOf(SECRET)).toBe("Connect Acme Orders for Claude?");
+    expect(
+      renderAsk(SECRET, handlers(), document).querySelector(".ask-description")?.textContent,
+    ).toBe("Claude set this up from acme's docs. Add your acme key to finish.");
+    expect(titleOf(CREDENTIAL)).toBe("Enter a new key for Acme Orders?");
+    const oauth: AskCard = { ...CREDENTIAL, scheme: "oauth_authorization_code" };
+    expect(titleOf(oauth)).toBe("Reconnect Acme Orders for Claude?");
+    expect(
+      renderAsk(oauth, handlers(), document).querySelector(".ask-description")?.textContent,
+    ).toBe("acme refused the key Claude was using. Sign in again to carry on.");
+  });
+
   for (const card of CONSOLE_ONLY) {
-    it(`${card.kind}: the proposal as text and one button, Enter the secret in Graft, which opens the handoff URL with from=card and polls until answered`, async () => {
+    it(`${card.kind}: the proposal as text and one button, Open in Graft, which opens the handoff URL with from=card and polls until answered`, async () => {
       const h = handlers({
         status: [
           { ok: true, state: "open", sentence: "Still waiting." },
@@ -561,10 +652,9 @@ describe("an ask with a secret in it", () => {
       });
       const root = renderAsk(card, h, document);
       expect(root.dataset.answerable).toBe("false");
-      expect(buttons(root)).toEqual(["Enter the secret in Graft"]);
+      expect(buttons(root)).toEqual(["Open in Graft"]);
       expect(root.querySelector("input")).toBeNull();
       expect(root.textContent).toContain(card.displayName);
-      expect(root.textContent).toContain("console");
       root.querySelector("button")?.click();
       await flush();
       expect(h.openLink).toHaveBeenCalledWith(withFromCard(card.url));
@@ -633,7 +723,7 @@ describe("an ask with a secret in it", () => {
 
 /**
  * A link provider's ask (GRA-117): the card mints the provider's sign-in through `start_link`
- * with the build choice, opens it, and polls until the link's return has answered the ask.
+ * with the access choice, opens it, and polls until the link's return has answered the ask.
  */
 describe("a connection a link provider covers", () => {
   /** GRA-128: the proposal's scheme is the keyring path the model read; this ask registers nothing. */
@@ -652,19 +742,21 @@ describe("a connection a link provider covers", () => {
     expect(schemeLabel("relay")).toBe("Relayed through the provider (no credential in Graft)");
   });
 
-  it("asks to connect through the provider, names it, offers a checked build choice, Decline and Connect through broker", () => {
+  it("asks to connect for the agent, says the sign-in goes through the provider, offers the access choice, Decline and Sign in with Gmail", () => {
     const root = renderAsk(LINK, handlers(), document);
     expect(root.dataset).toMatchObject({ kind: "connection", answerable: "false" });
-    expect(root.querySelector("h1")?.textContent).toBe("Connect Gmail through broker?");
-    expect(root.textContent).toContain("sign in to Gmail on broker's page");
-    expect(root.textContent).toContain("nothing is typed here");
-    const box = root.querySelector("input[type=checkbox]") as HTMLInputElement;
-    expect(box.checked).toBe(true);
-    expect(root.textContent).toContain(buildChoiceLabel(LINK));
-    expect(buttons(root)).toEqual(["Decline", "Connect through broker"]);
+    expect(root.querySelector("h1")?.textContent).toBe("Connect Gmail for Claude?");
+    expect(root.querySelector(".ask-description")?.textContent).toBe(
+      "Claude set this up from gmail's docs. Sign in to gmail through broker to finish.",
+    );
+    expect(root.querySelector(".ask-summary")?.textContent).toBe(
+      "gmail.googleapis.com · signs in through broker · from gmail's docs",
+    );
+    expect(checked(root)).toBe("full");
+    expect(buttons(root)).toEqual(["Decline", "Sign in with Gmail"]);
   });
 
-  it("mints the link with the box as the person left it, opens it, and settles on the return's sentence", async () => {
+  it("mints the link with the choice as the person left it, opens it, and settles on the return's sentence", async () => {
     const h = handlers({
       status: [
         { ok: true, state: "open", sentence: "Still waiting." },
@@ -676,16 +768,15 @@ describe("a connection a link provider covers", () => {
       ],
     });
     const root = renderAsk(LINK, h, document);
-    const box = root.querySelector("input[type=checkbox]") as HTMLInputElement;
-    box.checked = false;
-    [...root.querySelectorAll("button")]
-      .find((b) => b.textContent === "Connect through broker")
-      ?.click();
+    pick(root, "ask");
+    click(root, "Sign in with Gmail");
     await flush();
     expect(h.startLink).toHaveBeenCalledWith({ pendingActionId: "pa_4", approveBuild: false });
     expect(h.openLink).toHaveBeenCalledWith(withFromCard("https://broker.fake/connect/ltok_1"));
     expect(h.answer).not.toHaveBeenCalled();
-    expect(box.disabled).toBe(true);
+    expect(
+      [...root.querySelectorAll<HTMLInputElement>("input[type=radio]")].every((r) => r.disabled),
+    ).toBe(true);
     await until(() => status(root)?.dataset.tone === "answered");
     expect(status(root)?.textContent).toBe(
       "Connected through broker. Gmail (gmail) is in Claude's scope.",
@@ -697,7 +788,7 @@ describe("a connection a link provider covers", () => {
   it("sends { decline: true } on Decline", async () => {
     const h = handlers({ answer: { ok: true, sentence: "Declined. Nothing was connected." } });
     const root = renderAsk(LINK, h, document);
-    [...root.querySelectorAll("button")].find((b) => b.textContent === "Decline")?.click();
+    click(root, "Decline");
     await flush();
     expect(h.answer).toHaveBeenCalledWith({ decline: true });
     expect(h.startLink).not.toHaveBeenCalled();
@@ -710,9 +801,7 @@ describe("a connection a link provider covers", () => {
       openLink: vi.fn(async () => Promise.reject(new Error("no open-link"))),
     };
     const root = renderAsk(LINK, refusedOpen, document);
-    [...root.querySelectorAll("button")]
-      .find((b) => b.textContent === "Connect through broker")
-      ?.click();
+    click(root, "Sign in with Gmail");
     await flush();
     expect(buttons(root)).toEqual(["Decline", "Open in the console"]);
     expect(status(root)?.dataset.tone).toBe("refused");
@@ -726,9 +815,7 @@ describe("a connection a link provider covers", () => {
       },
     });
     const second = renderAsk(LINK, notAvailable, document);
-    [...second.querySelectorAll("button")]
-      .find((b) => b.textContent === "Connect through broker")
-      ?.click();
+    click(second, "Sign in with Gmail");
     await flush();
     expect(status(second)?.dataset.tone).toBe("refused");
     expect(buttons(second)).toEqual(["Open in the console"]);
@@ -740,9 +827,7 @@ describe("a connection a link provider covers", () => {
       startLink: { ok: false, reason: "expired", message: "This action has expired" },
     });
     const root = renderAsk(LINK, h, document);
-    [...root.querySelectorAll("button")]
-      .find((b) => b.textContent === "Connect through broker")
-      ?.click();
+    click(root, "Sign in with Gmail");
     await flush();
     expect(status(root)?.textContent).toBe("This action has expired");
     expect(root.querySelectorAll("button")).toHaveLength(0);
@@ -758,18 +843,14 @@ describe("the integration's name (GRA-273)", () => {
     displayName: "Linear",
   };
 
-  it("draws the integration's name, never the slug, and names it once where the two agree", () => {
+  it("draws the integration's name, never the slug", () => {
     const facts = factsOf(LINEAR);
     expect(facts.find((fact) => fact.label === "Integration")?.value).toBe("Linear");
     expect(facts.find((fact) => fact.label === "Connection")?.value).toBe("Linear");
-    expect(titleOf(LINEAR)).toBe("Connect Linear?");
-    expect(renderAsk(LINEAR, handlers(), document).textContent).not.toContain("linear");
-  });
-
-  it("puts the integration beside a connection named otherwise", () => {
-    expect(titleOf({ ...LINEAR, displayName: "Work tracker" })).toBe(
-      "Connect Work tracker (Linear)?",
+    expect(titleOf({ ...TOOL, integrationName: "Demo" })).toBe(
+      "Allow Claude to run Create order in Demo?",
     );
+    expect(renderAsk(LINEAR, handlers(), document).textContent).not.toContain("linear");
   });
 
   it("falls back to the slug on a card written before the name rode on it", () => {
@@ -967,11 +1048,12 @@ describe("the Setup offer", () => {
 });
 
 /**
- * GRA-239 (ADR 0008 as amended 2026-10-09): a connection's card from a server that offers the
- * line for the integration's tools draws it under the build choice, ticked, and sends it with the
- * confirm or the link's start; a card without it draws and sends what it always did.
+ * GRA-239 (ADR 0008 as amended 2026-10-09) under GRA-316's *Full access / Ask me first* (the
+ * amendment of 2026-10-14): a connection's card from a server that offers the line for the
+ * integration's tools sends it with Full access, beside the build approval, on the confirm or the
+ * link's start; a card without it sends the build approval alone.
  */
-describe("the line for the integration's tools on a connection's card", () => {
+describe("Full access on a connection's card that offers the integration's tools", () => {
   const USE_TOOLS = {
     integrationName: "Open-Meteo",
     label: "Use Open-Meteo's tools without asking each time",
@@ -986,72 +1068,68 @@ describe("the line for the integration's tools on a connection's card", () => {
       label: "Use Gmail's tools without asking each time",
     },
   };
-  const box = (root: HTMLElement, name: string) =>
-    root.querySelector(`input[name=${name}]`) as HTMLInputElement | null;
 
   it("is read off the result with the rest of the card", () => {
     expect(readAskCard({ card: KEYLESS_LINE })).toEqual(KEYLESS_LINE);
   });
 
-  it("draws the line ticked under the build choice, in the server's words", () => {
+  it("draws the two choices in the handoff page's words, Full access recommended and pre-selected", () => {
     const root = renderAsk(KEYLESS_LINE, handlers(), document);
-    expect(box(root, "approveBuild")?.checked).toBe(true);
-    expect(box(root, "allowVendor")?.checked).toBe(true);
-    expect(root.textContent).toContain(USE_TOOLS.label);
-    expect(root.textContent).toContain(USE_TOOLS.description);
-    const ticks = [...root.querySelectorAll("input[type=checkbox]")].map(
-      (node) => (node as HTMLInputElement).name,
+    expect(optionTitles(root)).toEqual(["Full accessRecommended", "Ask me first"]);
+    expect(root.textContent).toContain(
+      "Claude can build open-meteo tools and run them without asking. Tools that can delete still ask.",
     );
-    expect(ticks).toEqual(["approveBuild", "allowVendor"]);
+    expect(checked(root)).toBe("full");
+    expect(root.querySelector("input[type=checkbox]")).toBeNull();
   });
 
-  it("sends the line with the keyless confirm as the person left it, and freezes it", async () => {
+  it("sends Full access as both, Ask me first as neither, and freezes the choice", async () => {
     const h = handlers();
     const root = renderAsk(KEYLESS_LINE, h, document);
-    const line = box(root, "allowVendor") as HTMLInputElement;
-    line.checked = false;
-    [...root.querySelectorAll("button")].find((b) => b.textContent === "Connect")?.click();
+    click(root, "Connect");
     await flush();
     expect(h.answer).toHaveBeenCalledWith({
       connect: true,
       approveBuild: true,
-      allowVendor: false,
-    });
-    expect(line.disabled).toBe(true);
-
-    const again = handlers();
-    const second = renderAsk(KEYLESS_LINE, again, document);
-    [...second.querySelectorAll("button")].find((b) => b.textContent === "Connect")?.click();
-    await flush();
-    expect(again.answer).toHaveBeenCalledWith({
-      connect: true,
-      approveBuild: true,
       allowVendor: true,
+    });
+    expect(
+      [...root.querySelectorAll<HTMLInputElement>("input[type=radio]")].every((r) => r.disabled),
+    ).toBe(true);
+
+    const ask = handlers();
+    const second = renderAsk(KEYLESS_LINE, ask, document);
+    pick(second, "ask");
+    click(second, "Connect");
+    await flush();
+    expect(ask.answer).toHaveBeenCalledWith({
+      connect: true,
+      approveBuild: false,
+      allowVendor: false,
     });
   });
 
   it("sends the line with the link's start", async () => {
     const h = handlers();
     const root = renderAsk(LINK_LINE, h, document);
-    expect(box(root, "allowVendor")?.checked).toBe(true);
-    [...root.querySelectorAll("button")]
-      .find((b) => b.textContent === "Connect through broker")
-      ?.click();
+    click(root, "Sign in with Gmail");
     await flush();
     expect(h.startLink).toHaveBeenCalledWith({
       pendingActionId: "pa_4",
       approveBuild: true,
       allowVendor: true,
     });
-    expect(box(root, "allowVendor")?.disabled).toBe(true);
     h.stop();
   });
 
-  it("is absent from a card the server wrote without it, which sends what it always sent", async () => {
+  it("never sends the line from a card the server wrote without it, and promises the build approval alone there", async () => {
     const h = handlers();
     const root = renderAsk(KEYLESS, h, document);
-    expect(box(root, "allowVendor")).toBeNull();
-    [...root.querySelectorAll("button")].find((b) => b.textContent === "Connect")?.click();
+    expect(root.textContent).toContain(
+      "Claude can build open-meteo tools without asking. A tool that changes data still asks the first time it runs.",
+    );
+    expect(root.textContent).not.toContain("run them without asking");
+    click(root, "Connect");
     await flush();
     expect(h.answer).toHaveBeenCalledWith({ connect: true, approveBuild: true });
   });
