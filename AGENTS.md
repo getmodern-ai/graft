@@ -1228,8 +1228,10 @@ and needs `agentId` among several; `POST /api/setup/skip` sets `skipped_at`. Bot
 redirects to it on `show`, except `/consent` and `/pending` (`lib/setup-intercept.ts`); one
 component per step under `components/setup/`, wired in `setup-step.tsx`'s map, each moving the
 record through `useSetupMutation`, which writes the answered state into the one `["setup"]` entry.
-The agents table draws *Awaiting harness* (`AGENT_STATUS_CHIP.awaiting_harness`, outline) and
-offers *Set up Graft* in its empty body to a person who skipped.
+The agents table draws *Awaiting harness* (`AGENT_STATUS_CHIP.awaiting_harness`, outline). A
+person who skipped meets Home's *Get started* checklist instead (GRA-328, `lib/home-checklist.ts`):
+three steps (an agent whose software is connected, any connection, `hasRunTool`), in place of the
+panels with none done and above them with some, offering *Resume Setup* while the skip stands.
 
 **The integration and connect steps are the agent's own connection ask** (GRA-206). The starters
 are `@graft/core/setup/starter-vendors.ts`, browser-safe, one entry each (vendor slug, hosts, docs,

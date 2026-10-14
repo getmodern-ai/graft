@@ -9,3 +9,12 @@ export function homeGreeting(now: Date, name: string | null | undefined): string
   const first = name?.trim().split(/\s+/)[0];
   return first ? `Good ${part}, ${first}` : `Good ${part}`;
 }
+
+/**
+ * The empty Home's title (GRA-328, Figma 2099:10107): "Welcome to Graft, Seb", by the same first
+ * name, for a person with none of *Get started* done.
+ */
+export function welcomeGreeting(name: string | null | undefined): string {
+  const first = name?.trim().split(/\s+/)[0];
+  return first ? `Welcome to Graft, ${first}` : "Welcome to Graft";
+}

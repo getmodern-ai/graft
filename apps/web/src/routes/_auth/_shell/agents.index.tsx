@@ -46,7 +46,7 @@ function AgentsRoute() {
   const agents = useQuery(agentsQuery);
   const connections = useQuery(connectionsQuery);
   const pending = useQuery(pendingActionsQuery);
-  // The shell's intercept read it already; a person who skipped is offered Setup again.
+  // The shell's intercept read it already; the cards read which agent Setup runs as.
   const setup = useQuery(setupQuery);
   const [creating, setCreating] = useState(false);
   const rows = agents.data?.agents ?? [];
@@ -83,7 +83,6 @@ function AgentsRoute() {
         retrying={agents.isFetching}
         onRetry={() => void agents.refetch()}
         onAdd={() => setCreating(true)}
-        offerSetup={Boolean(setup.data?.setup?.skippedAt && !setup.data.setup.completedAt)}
       />
 
       <CreateAgentDialog
