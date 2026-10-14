@@ -47,21 +47,6 @@ export function withdrawVendorApproval(agentId: string, vendor: string) {
 }
 
 /**
- * Widen an integration's standing approval to its destructive tools, or narrow it back (ADR 0008
- * as amended 2026-10-14; GRA-302). Only one that stands: recording one is an answer's.
- */
-export function setVendorApprovalDestructive(
-  agentId: string,
-  vendor: string,
-  includesDestructive: VendorApprovalPatchBody["includesDestructive"],
-) {
-  return api<{ vendorApproval: VendorApproval }>(
-    `/agents/${encodeURIComponent(agentId)}/vendor-approvals/${encodeURIComponent(vendor)}`,
-    { method: "PATCH", body: { includesDestructive } satisfies VendorApprovalPatchBody },
-  );
-}
-
-/**
  * An agent's build approval for one connection (ADR 0008 as amended 2026-09-18; GRA-295): `acquire`
  * works against it without asking. Withdrawing makes the next `acquire` ask again.
  */
@@ -129,20 +114,5 @@ export function withdrawApproval(agentId: string, toolId: string) {
   return api<{ approval: Approval }>(
     `/approvals/${encodeURIComponent(toolId)}?agentId=${encodeURIComponent(agentId)}`,
     { method: "DELETE" },
-  );
-}
-
-/**
- * Set one agent's answer for one tool outright, for the version it runs now (ADR 0008 as amended
- * 2026-10-14; GRA-302), answering the open asks it settles. Refused for a read-only tool.
- */
-export function setApprovalDecision(
-  agentId: string,
-  toolId: string,
-  decision: ApprovalDecisionBody["decision"],
-) {
-  return api<Jsonified<ConsoleApprovalResult>>(
-    `/agents/${encodeURIComponent(agentId)}/approvals/${encodeURIComponent(toolId)}`,
-    { method: "PUT", body: { decision } satisfies ApprovalDecisionBody },
   );
 }
