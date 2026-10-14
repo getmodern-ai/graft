@@ -77,6 +77,22 @@ export function integrationMarkKey(slug: string): string {
 }
 
 /**
+ * The image an integration mark draws: the directory's `logoUrl` first, then the bundled file,
+ * skipping any that failed to load; null means initials. `failed` is what the component's
+ * `onError` collected, keyed by the source itself, so a new `logoUrl` is tried afresh.
+ */
+export function integrationMarkSource(
+  logoUrl: string | null | undefined,
+  bundled: string | null | undefined,
+  failed: readonly string[] = [],
+): string | null {
+  for (const candidate of [logoUrl, bundled]) {
+    if (candidate && !failed.includes(candidate)) return candidate;
+  }
+  return null;
+}
+
+/**
  * The letters an integration with no artwork is drawn with: the first letters of the first two
  * words of its name, or of its slug's parts when it has no name; one letter for a one-word name.
  */

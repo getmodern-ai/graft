@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 
-import { harnessMark, harnessMarkOfSetup, integrationMarkKey, markInitials } from "./marks";
+import {
+  harnessMark,
+  harnessMarkOfSetup,
+  integrationMarkKey,
+  integrationMarkSource,
+  markInitials,
+} from "./marks";
 
 describe("harnessMark", () => {
   it("reads the harness off the name the client registered", () => {
@@ -50,6 +56,28 @@ describe("integrationMarkKey", () => {
     expect(integrationMarkKey("google_drive")).toBe("google-drive");
     expect(integrationMarkKey("google-drive")).toBe("google-drive");
     expect(integrationMarkKey(" HubSpot ")).toBe("hubspot");
+  });
+});
+
+describe("integrationMarkSource", () => {
+  it("prefers the directory's logo over the bundled file", () => {
+    expect(integrationMarkSource("https://logo/gmail", "/gmail.png")).toBe("https://logo/gmail");
+    expect(integrationMarkSource(null, "/gmail.png")).toBe("/gmail.png");
+    expect(integrationMarkSource(undefined, undefined)).toBeNull();
+  });
+
+  it("steps down past a logo that failed to load, then to initials", () => {
+    expect(integrationMarkSource("https://logo/x", "/x.png", ["https://logo/x"])).toBe("/x.png");
+    expect(
+      integrationMarkSource("https://logo/x", "/x.png", ["https://logo/x", "/x.png"]),
+    ).toBeNull();
+    expect(integrationMarkSource("https://logo/x", null, ["https://logo/x"])).toBeNull();
+  });
+
+  it("tries a new logo afresh when the props change", () => {
+    expect(integrationMarkSource("https://logo/y", "/x.png", ["https://logo/x"])).toBe(
+      "https://logo/y",
+    );
   });
 });
 

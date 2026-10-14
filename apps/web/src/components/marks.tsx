@@ -13,7 +13,12 @@ import hermesMark from "@/assets/marks/harness-hermes.svg";
 import openaiMark from "@/assets/marks/harness-openai.svg";
 import openclawMark from "@/assets/marks/harness-openclaw.svg";
 import { ExtensionIcon } from "@/components/icons";
-import { type HarnessMarkId, integrationMarkKey, markInitials } from "@/lib/marks";
+import {
+  type HarnessMarkId,
+  integrationMarkKey,
+  integrationMarkSource,
+  markInitials,
+} from "@/lib/marks";
 import { cn } from "@/lib/utils";
 
 /**
@@ -126,9 +131,7 @@ export function IntegrationMark({
 }) {
   const [failed, setFailed] = useState<readonly string[]>([]);
   const bundled = slug ? INTEGRATION_LOGOS[integrationMarkKey(slug)] : undefined;
-  const src = [logoUrl, bundled].find(
-    (candidate): candidate is string => !!candidate && !failed.includes(candidate),
-  );
+  const src = integrationMarkSource(logoUrl, bundled, failed);
   return (
     <Framed {...sizing}>
       {(markClass) =>
