@@ -26,4 +26,8 @@ export const integrationKeys = {
 export const integrationsQuery = queryOptions({
   queryKey: integrationKeys.all,
   queryFn: () => api<{ integrations: Integration[] }>("/integrations"),
+  // A row also counts the agents that can use it, which agent writes (a new agent, a revoke, a
+  // scope change) move without touching the connections key; stale at once, so every mount
+  // refetches rather than drawing a count from before such a write.
+  staleTime: 0,
 });

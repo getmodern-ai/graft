@@ -87,29 +87,37 @@ export function integrationPageOf(
     .map((connection): PageConnection => ({ ...connection, state: "revoked" }));
   // The two reads refresh apart: a row the connections read already calls revoked is revoked, so
   // a revoke never draws one connection twice while the integrations read catches up.
+  // The other way round, a row the integrations read has already dropped is drawn from the
+  // connections read as it stands until that read catches up, so the page never reads "missing".
   const revokedIds = new Set(revoked.map((connection) => connection.id));
-  const live: PageConnection[] = (row?.connections ?? []).filter(
-    (connection) => !revokedIds.has(connection.id),
-  );
+  const live: PageConnection[] = row
+    ? row.connections.filter((connection) => !revokedIds.has(connection.id))
+    : connections
+        .filter((connection) => connection.vendor === vendor && connection.revokedAt === null)
+        .map((connection) => ({ ...connection, state: connectionStatus(connection) }));
   const newestRevoked = revoked[0];
   const oldestLive = live[0];
+  const toolCount =
+    row?.toolCount ??
+    tools.filter((tool) => tool.vendor === vendor && tool.currentVersionId !== null).length;
 
-  if (oldestLive && row) {
-    const attention = row.needsAttention
-      ? live.find((connection) => connection.id === row.needsAttention?.connectionId)
-      : undefined;
+  if (oldestLive) {
+    const attentionId =
+      row?.needsAttention?.connectionId ??
+      live.find((connection) => connection.state !== "connected")?.id;
+    const attention = live.find((connection) => connection.id === attentionId);
     return {
       kind: "integration",
       vendor,
-      displayName: row.displayName,
+      displayName: row?.displayName ?? oldestLive.displayName,
       connections: [...live, ...revoked],
       live: true,
       chip: attention
         ? connectionStateChip(attention, attention.state)
         : CONNECTION_STATUS_CHIP.connected,
       since: { verb: "connected", at: oldestLive.createdAt },
-      toolCount: row.toolCount,
-      agentCount: row.agents.length,
+      toolCount,
+      agentCount: row?.agents.length ?? 0,
     };
   }
   if (!newestRevoked) return { kind: "missing" };
@@ -121,8 +129,7 @@ export function integrationPageOf(
     live: false,
     chip: CONNECTION_STATUS_CHIP.revoked,
     since: { verb: "revoked", at: newestRevoked.revokedAt ?? newestRevoked.updatedAt },
-    toolCount: tools.filter((tool) => tool.vendor === vendor && tool.currentVersionId !== null)
-      .length,
+    toolCount,
     agentCount: 0,
   };
 }

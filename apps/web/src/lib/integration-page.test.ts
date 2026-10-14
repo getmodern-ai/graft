@@ -187,6 +187,26 @@ describe("the page for a vendor", () => {
     expect(page.connections.map((connection) => connection.state)).toEqual(["revoked"]);
   });
 
+  it("draws the connections read's live rows when the integrations read dropped the row first", () => {
+    const page = integrationPageOf(
+      "gmail",
+      [],
+      [base],
+      [{ vendor: "gmail", currentVersionId: "v1" }],
+    );
+    expect(page).toMatchObject({
+      kind: "integration",
+      live: true,
+      chip: { label: "Connected" },
+      toolCount: 1,
+      agentCount: 0,
+    });
+    if (page.kind !== "integration") throw new Error("expected the page");
+    expect(page.connections.map((connection) => [connection.id, connection.state])).toEqual([
+      ["conn_1", "connected"],
+    ]);
+  });
+
   it("is missing for a vendor the person never connected", () => {
     expect(integrationPageOf("notion", [row()], [base], [])).toEqual({ kind: "missing" });
   });
