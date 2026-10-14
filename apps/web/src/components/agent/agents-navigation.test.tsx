@@ -261,7 +261,9 @@ describe("standalone agent management", () => {
     await waitFor(() => expect((control("Withdraw") as HTMLButtonElement).disabled).toBe(false));
     await click("Withdraw");
     await waitFor(() => expect(document.body.textContent).toContain("Nothing answered yet."));
-    await click("Revoke token");
+    // Revoke sits in the header's ⋯ menu (GRA-325).
+    await click("Actions for Laptop");
+    await click("Revoke");
     const confirmation = document.querySelector("[role=alertdialog]");
     if (!confirmation) throw new Error("Missing revocation confirmation");
     await click("Revoke token", confirmation);
