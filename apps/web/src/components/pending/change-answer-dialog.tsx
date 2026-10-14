@@ -38,6 +38,7 @@ import { pendingKeys } from "@/lib/pending-action-queries";
 import {
   buildApprovalSentence,
   type ChangeTargets,
+  decisionToast,
   standingBuild,
   standingTool,
   standingVendor,
@@ -100,13 +101,10 @@ export function ChangeAnswerDialog({
   const decide = useMutation({
     mutationFn: ({ toolId, decision }: { toolId: string; decision: "allow" | "deny" }) =>
       setApprovalDecision(agentId, toolId, decision),
-    onSuccess: (_result, { decision }) =>
-      settled(
-        decision === "allow" ? "Allowed" : "Denied",
-        decision === "allow"
-          ? `${agentName} runs it without asking.`
-          : `${agentName}'s calls to it are refused.`,
-      ),
+    onSuccess: (result, { decision }) => {
+      const said = decisionToast(decision, result.approval.askEveryCall, agentName);
+      settled(said.title, said.description);
+    },
   });
   const everyCall = useMutation({
     mutationFn: ({ toolId, on }: { toolId: string; on: boolean }) =>

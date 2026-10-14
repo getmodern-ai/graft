@@ -4,6 +4,7 @@ import {
   buildApprovalSentence,
   changeDialogTitle,
   type DoneRequest,
+  decisionToast,
   doneRowCopy,
   doneRowWhen,
   standingBuild,
@@ -71,7 +72,10 @@ const build = { connectionId: "con_1", vendor: "gmail", connectionName: "Gmail",
 
 describe("doneRowCopy: tool asks", () => {
   it("says an allow holds, and offers the tool's and the integration's answers", () => {
-    const copy = doneRowCopy(card("tool", tool()), true);
+    const copy = doneRowCopy(
+      card("tool", tool(), { answer: { allow: true, askEveryCall: false } }),
+      true,
+    );
     expect(copy.title).toBe("Codex can always send email in Gmail");
     expect(copy.detail).toBeNull();
     expect(copy.change).toEqual({
@@ -79,6 +83,14 @@ describe("doneRowCopy: tool asks", () => {
       vendor: { slug: "gmail", integrationName: "Gmail" },
       buildConnectionId: null,
     });
+  });
+
+  it("words an allow that left ask-every-call as it stood without claiming it never asks", () => {
+    // A Hermes button's answer carries no `askEveryCall`; the server kept the tool's setting.
+    const copy = doneRowCopy(card("tool", tool(), { answer: { allow: true } }), true);
+    expect(copy.title).toBe("Codex can send email in Gmail");
+    expect(copy.detail).toBe("You allowed it");
+    expect(copy.change).not.toBeNull();
   });
 
   it("says a deny", () => {
@@ -374,6 +386,21 @@ describe("what stands now", () => {
     expect(buildApprovalSentence(null, { includesDestructive: true })).toBe(
       "Anything it builds still asks before changing data",
     );
+  });
+
+  it("words Change's toast by the ask-every-call setting the route returned", () => {
+    expect(decisionToast("allow", false, "Codex")).toEqual({
+      title: "Allowed",
+      description: "Codex runs it without asking.",
+    });
+    expect(decisionToast("allow", true, "Codex")).toEqual({
+      title: "Allowed",
+      description: "It still asks you before every call, as you set it to.",
+    });
+    expect(decisionToast("deny", true, "Codex")).toEqual({
+      title: "Denied",
+      description: "Codex's calls to it are refused.",
+    });
   });
 
   it("titles the dialog by what stands, not the row's past", () => {

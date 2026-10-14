@@ -155,10 +155,15 @@ export function doneRowCopy(card: DoneRequest, agentActive: boolean): DoneRowCop
           change,
         };
       }
+      // "Always" only where the answer turned ask-every-call off. An answer without the field (a
+      // Hermes button) left the tool's setting as it stood, which the row cannot see; Change reads it.
       return {
         ...base,
-        title: `${agent} can always ${words} in ${integration}`,
-        detail: null,
+        title:
+          answer.askEveryCall === false
+            ? `${agent} can always ${words} in ${integration}`
+            : `${agent} can ${words} in ${integration}`,
+        detail: answer.askEveryCall === false ? null : "You allowed it",
         change,
       };
     }
@@ -253,6 +258,27 @@ export function doneRowCopy(card: DoneRequest, agentActive: boolean): DoneRowCop
         change: null,
       };
   }
+}
+
+/**
+ * The toast after Change sets a tool's answer. The route keeps the ask-every-call setting as it
+ * stood (`setApprovalFromConsole`), so an allow says it runs without asking only where the
+ * answer the route returns has that setting off.
+ */
+export function decisionToast(
+  decision: "allow" | "deny",
+  askEveryCall: boolean,
+  agentName: string,
+): { title: string; description: string } {
+  if (decision === "deny") {
+    return { title: "Denied", description: `${agentName}'s calls to it are refused.` };
+  }
+  return {
+    title: "Allowed",
+    description: askEveryCall
+      ? "It still asks you before every call, as you set it to."
+      : `${agentName} runs it without asking.`,
+  };
 }
 
 /** Change's dialog title: about what stands now, so it never repeats the row's past sentence. */
