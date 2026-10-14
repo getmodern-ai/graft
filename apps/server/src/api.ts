@@ -9,6 +9,7 @@ import {
   createAgent,
   defaultAcquireJobDeps,
   defaultSetupDeps,
+  defaultStockDeps,
   deletePersonModelKey,
   GOAL_MAX_LENGTH,
   getAgent,
@@ -16,6 +17,7 @@ import {
   getConnection,
   getPendingActionForPerson,
   getPersonModelKey,
+  getSetupState,
   type IntegrationDirectory,
   isOAuthAuthorizationCode,
   issueConsoleAgentToken,
@@ -52,6 +54,7 @@ import {
   type SetupDeps,
   type SetupState,
   STARTER_VENDOR_IDS,
+  type StockDeps,
   type StockLineage,
   setAgentScope,
   setAskEveryCall,
@@ -107,6 +110,7 @@ import {
   withStarter,
 } from "./directory";
 import { createMcpConsentRoutes, type McpOAuthServerOptions } from "./mcp-oauth";
+import { type ModelDeployment, NO_MODEL_DEPLOYMENT } from "./model";
 import { beginConsent, createOAuthRoutes, type OAuthOptions } from "./oauth";
 import { createOriginGuard } from "./origin-guard";
 import {
@@ -149,6 +153,12 @@ import {
   SETUP_PROMPT_PATH,
   setupPromptCors,
 } from "./setup-prompt";
+import {
+  readyMadeChoice,
+  type SetupStockRouteDeps,
+  setupReadyMadeTools,
+  takePlannedStock,
+} from "./setup-stock";
 import { runAgentTool } from "./tool-run";
 
 export type {
@@ -162,7 +172,14 @@ export type {
   SetupGoalSuggestions,
 } from "./setup-build";
 export type { SetupFinishOutput, SetupToolContext } from "./setup-finish";
+export type { SetupReadyMade } from "./setup-stock";
 export type { AgentToolRunOutput } from "./tool-run";
+
+/**
+ * `GET /me/model` (GRA-297): the deployment's model as `model.ts` chose it at boot, and whether
+ * this person has a key of their own. The console's Model row reads it.
+ */
+export type ModelOutput = ModelDeployment & { personKey: boolean };
 
 /**
  * The person's JSON API — the routes the console (GRA-26) will call, a plain Hono app for now (GRA-1
@@ -239,6 +256,12 @@ export type ApiDeps = {
    * so a harness that never reaches `/setup` binds nothing; a suite that does passes fakes.
    */
   setup?: SetupDeps;
+  /**
+   * The stock catalogue's reads (ADR 0025), for Setup's ready-made tools (GRA-276). Optional, and
+   * `defaultStockDeps` when absent, as `setup` is; a suite that offers ready-made tools passes the
+   * fake catalogue its tool source copies from.
+   */
+  stock?: StockDeps;
 };
 
 export type ApiOptions = {
@@ -305,6 +328,12 @@ export type ApiOptions = {
    * database's jobs (`defaultAcquireJobDeps`).
    */
   acquire?: SetupAcquireDeps;
+  /**
+   * This deployment's model as a person may read it (GRA-297; `model.ts`'s `ModelDeployment`),
+   * which `GET /me/model` answers. `index.ts` binds `createModel`'s; absent, no fixed model and no
+   * router, as a laptop that configured none.
+   */
+  model?: ModelDeployment;
   /**
    * The MCP endpoint's deps, for the console's run of an authored tool (GRA-208; ADR 0024;
    * `tool-run.ts`), which runs exactly what a first-class call over `/mcp` runs. `index.ts` binds
@@ -449,6 +478,17 @@ const setupTaskBody = z.strictObject({
 export type SetupTaskBody = z.input<typeof setupTaskBody>;
 
 /**
+ * `POST /setup/stock` (GRA-276): a ready-made tool, by its wire name, chosen instead of a task to
+ * build, on the tool screen (saved, and the starter connected, as `/setup/task` does) or the task
+ * step (taken at once). `discardJob` as the task route's.
+ */
+const setupStockBody = z.strictObject({
+  tool: z.string().trim().min(1).max(200),
+  discardJob: z.boolean().optional(),
+});
+export type SetupStockBody = z.input<typeof setupStockBody>;
+
+/**
  * `POST /setup/back` (GRA-215): the step to return the record to, from the rail or the footer's
  * *Back*; `moveSetupBack` admits only a step the record completed and holds what for.
  */
@@ -473,7 +513,15 @@ export type SetupNextBody = z.input<typeof setupNextBody>;
  * `POST /agents/:id/tools/:vendor/:name/run` (GRA-208): the tool's input, which the run holds to
  * the tool's own schema; absent, an empty object, for a tool that takes none.
  */
-const toolRunBody = z.strictObject({ input: z.unknown().optional() });
+const toolRunBody = z.strictObject({
+  input: z.unknown().optional(),
+  /**
+   * The connection to run over (GRA-276, Greptile on #218): Setup's result step names the record's,
+   * so a tool the person already held bound to another account runs over the one just connected.
+   * Held to the agent's scope, and for a stock copy to its hosts, as `run_tool`'s is.
+   */
+  connectionId: z.string().min(1).max(200).optional(),
+});
 /** The run's wire shape, as the console posts it. */
 export type ToolRunBody = z.input<typeof toolRunBody>;
 
@@ -991,6 +1039,23 @@ export function createApi(options: ApiOptions): Hono {
     return c.json({ modelKey: await getPersonModelKey(ctx, principal, modelKeyDeps) });
   });
 
+  /**
+   * What answers this person's `acquire` jobs (GRA-297): the deployment's fixed model, whether a
+   * key of their own would be used (ADR 0014; `model.ts`), and whether they have one. A route of
+   * its own rather than a field on `/me/model-key`, whose three verbs are one row's: the
+   * deployment's half is boot configuration, not the person's row, and the key routes keep
+   * answering the row alone. Neither half carries a key or the operator's model ids.
+   */
+  api.get("/me/model", async (c) => {
+    const principal = await principalOf(c.req.raw.headers);
+    const key = await getPersonModelKey(ctx, principal, modelKeyDeps);
+    const model: ModelOutput = {
+      ...(options.model ?? NO_MODEL_DEPLOYMENT),
+      personKey: key !== null,
+    };
+    return c.json({ model });
+  });
+
   api.put("/me/model-key", async (c) => {
     const principal = await principalOf(c.req.raw.headers);
     const body = await parseBody(c.req.raw, modelKeyBody);
@@ -1057,6 +1122,22 @@ export function createApi(options: ApiOptions): Hono {
     },
     get acquireRunner() {
       return options.acquire?.acquireRunner;
+    },
+    get stock() {
+      return setupStockDeps;
+    },
+  };
+  /** Setup's ready-made tools (GRA-276; `setup-stock.ts`): the catalogue's reads and the copy. */
+  const setupStockDeps: SetupStockRouteDeps = {
+    setup: setupDeps,
+    agent: agentDeps,
+    connection: connectionDeps,
+    acquireJob: acquireJobDeps,
+    workingSet: workingSetDeps,
+    stock: options.deps.stock ?? defaultStockDeps,
+    // Read at call time, as the model is.
+    get mcp() {
+      return options.run;
     },
   };
   const countStep = (principal: Principal, state: SetupState, step: "connect" | "building") =>
@@ -1289,6 +1370,67 @@ export function createApi(options: ApiOptions): Hono {
     );
   });
 
+  /** The ready-made tools the tool step offers for a starter (`SetupReadyMade`); none for another. */
+  api.get("/setup/stock", async (c) => {
+    await principalOf(c.req.raw.headers);
+    const starterId = (c.req.query("starterId") ?? "").slice(0, 100);
+    return c.json(await setupReadyMadeTools(ctx, starterId, setupStockDeps));
+  });
+
+  /**
+   * A ready-made tool chosen instead of a task to build (GRA-276): judged against the offer, saved
+   * beside the task it does, the starter connected as the task route connects it, and taken at once
+   * when the record stands on the task step with its connection; otherwise when the connection
+   * lands (`buildPlannedSetup`). A row in the mutation table as the goal step, with `readyMade`.
+   */
+  api.post("/setup/stock", async (c) => {
+    const principal = await principalOf(c.req.raw.headers);
+    const body = await parseBody(c.req.raw, setupStockBody);
+    useLogger().set({ setup: { stockTool: body.tool } });
+    const before = await getSetupState(ctx, principal, setupDeps, agentDeps);
+    const entry = await readyMadeChoice(ctx, principal, before, body.tool, setupStockDeps);
+    // Saved only onto the record the choice was judged against (Greptile on #218).
+    let state = await planSetup(
+      ctx,
+      principal,
+      {
+        goal: entry.goal,
+        stockTool: entry.tool,
+        expected: {
+          step: before.step,
+          starterId: before.setup?.starterId ?? null,
+          connectionId: before.setup?.connectionId ?? null,
+        },
+      },
+      setupDeps,
+      agentDeps,
+    );
+    const starterId = state.setup?.starterId;
+    if (state.step === "vendor" && starterId && state.setup) {
+      const connecting = await connectSetupVendor(
+        ctx,
+        principal,
+        {
+          starterId,
+          ...(body.discardJob ? { discardJob: true } : {}),
+          plannedAt: state.setup.updatedAt,
+        },
+        setupConnectDeps(),
+      );
+      if (connecting.connected) countStep(principal, connecting.state, "connect");
+      state = connecting.state;
+    }
+    if (state.step !== "goal") return c.json(state);
+    return c.json(
+      await takePlannedStock(
+        ctx,
+        principal,
+        { discardJob: body.discardJob, stockTool: entry.tool },
+        setupStockDeps,
+      ),
+    );
+  });
+
   api.post("/setup/connect", async (c) => {
     const principal = await principalOf(c.req.raw.headers);
     const body = await parseBody(c.req.raw, setupConnectBody);
@@ -1411,6 +1553,7 @@ export function createApi(options: ApiOptions): Hono {
         { agentId: c.req.param("id"), vendor: c.req.param("vendor"), name: c.req.param("name") },
         body.input ?? {},
         { agent: agentDeps, tool: toolDeps, workingSet: workingSetDeps, mcp: options.run },
+        body.connectionId ? { connectionId: body.connectionId } : {},
       ),
     );
   });

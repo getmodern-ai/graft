@@ -83,16 +83,23 @@ function ToolRun({
       return;
     }
     setInputProblem(null);
-    run.mutate({ agentId, vendor: tool.vendor, name: tool.name, body: { input: input.input } });
+    // Over the connection Setup made, never another account the tool was bound to before (GRA-276).
+    const connectionId = context.connection?.id;
+    run.mutate({
+      agentId,
+      vendor: tool.vendor,
+      name: tool.name,
+      body: { input: input.input, ...(connectionId ? { connectionId } : {}) },
+    });
   };
 
-  // Run once on arrival only for a tool that takes no input (`runsOnArrival`); a tool with inputs
-  // waits for Run, so its first answer is for the values the person chose.
+  // Run once on arrival when the drawn form already holds everything the run needs
+  // (`runsOnArrival`); a required field nothing fills, or a JSON input, waits for Run.
   const started = useRef(false);
   useEffect(() => {
     if (started.current) return;
     started.current = true;
-    if (runsOnArrival(view)) start();
+    if (runsOnArrival(view, tool)) start();
   });
 
   const answer = run.data;

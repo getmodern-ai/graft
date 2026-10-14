@@ -98,6 +98,14 @@ export const TRACKED_ROUTES: ReadonlyArray<TrackedRoute> = [
     event: "setup_step_completed",
     properties: setupStepProperties("goal"),
   },
+  {
+    // A ready-made tool chosen instead of a task to build (GRA-276): the same step, told apart by
+    // `readyMade`.
+    method: "POST",
+    path: /^\/setup\/stock$/,
+    event: "setup_step_completed",
+    properties: (answer) => ({ ...setupStepProperties("goal")(answer), readyMade: true }),
+  },
   // The result step completes on its Continue; the finish completes Setup (GRA-208).
   {
     method: "POST",

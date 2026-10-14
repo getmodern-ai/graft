@@ -10,7 +10,9 @@ import { cn } from "@/lib/utils";
  * person describes in the row under them. Single-select across both (the 2026-09-29 decision 1):
  * picking a card clears nothing the person typed, but the card is the task; typing makes the
  * described task the choice. `tasks` empty is the frames' Airtable state: no ready-made tasks, and
- * the described row is the whole input, with the empty sentence under it.
+ * the described row is the whole input, with the empty sentence under it. Beside ready-made tools
+ * (GRA-276) the step passes its own `heading` and `emptyNote` false, since the ready-made cards
+ * above are then what there is.
  */
 export function TaskPicker({
   tasks,
@@ -19,6 +21,8 @@ export function TaskPicker({
   integrationName,
   disabled,
   onPickCard,
+  heading,
+  emptyNote = true,
 }: {
   tasks: readonly string[];
   value: string;
@@ -27,6 +31,10 @@ export function TaskPicker({
   disabled?: boolean;
   /** A card tapped, beside `onChange`: the step's way on where a tap is the choice (a phone). */
   onPickCard?: (task: string) => void;
+  /** The line over the cards, in place of *What Graft can build for …*. */
+  heading?: string;
+  /** Whether no tasks shows the empty sentence; off beside ready-made tools. */
+  emptyNote?: boolean;
 }) {
   const fromCards = tasks.includes(value);
   const [described, setDescribed] = useState(fromCards ? "" : value);
@@ -64,18 +72,22 @@ export function TaskPicker({
   if (tasks.length === 0) {
     return (
       <div className="flex flex-col gap-4">
-        <p className="font-medium text-muted-foreground text-sm">Describe the tool</p>
+        <p className="font-medium text-muted-foreground text-sm">
+          {heading ?? "Describe the tool"}
+        </p>
         {describeRow}
-        <div className="flex flex-col items-center gap-2 rounded-lg border border-dashed px-6 py-12 text-center">
-          <span className="flex size-8 items-center justify-center rounded-md bg-secondary">
-            <StarsIcon className="size-4" />
-          </span>
-          <p className="font-medium">No ready-made tools for {integrationName} yet</p>
-          <p className="max-w-sm text-muted-foreground text-sm">
-            Say what you need above, in a sentence. Graft reads the documentation and builds one
-            read-only tool for it.
-          </p>
-        </div>
+        {emptyNote ? (
+          <div className="flex flex-col items-center gap-2 rounded-lg border border-dashed px-6 py-12 text-center">
+            <span className="flex size-8 items-center justify-center rounded-md bg-secondary">
+              <StarsIcon className="size-4" />
+            </span>
+            <p className="font-medium">No ready-made tools for {integrationName} yet</p>
+            <p className="max-w-sm text-muted-foreground text-sm">
+              Say what you need above, in a sentence. Graft reads the documentation and builds one
+              read-only tool for it.
+            </p>
+          </div>
+        ) : null}
       </div>
     );
   }
@@ -83,7 +95,9 @@ export function TaskPicker({
   return (
     <div className="flex flex-col gap-4">
       <div className="flex items-baseline justify-between gap-2 text-muted-foreground">
-        <p className="font-medium text-sm">What Graft can build for {integrationName}</p>
+        <p className="font-medium text-sm">
+          {heading ?? `What Graft can build for ${integrationName}`}
+        </p>
         <p className="text-xs">All read-only</p>
       </div>
       <SetupChoice

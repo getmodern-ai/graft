@@ -8,6 +8,7 @@ import {
   type ServiceContext,
 } from "@graft/core";
 import type { DbOrTx } from "@graft/db";
+import type { ModelKeyProvider } from "@graft/db/schema/person-model-key";
 import type { ServerEnv } from "@graft/env/server";
 import {
   createProviderModel,
@@ -59,11 +60,37 @@ export type ModelEnv = Pick<
   | "GRAFT_MODEL_BASE_URL"
 >;
 
+/**
+ * What a person may be told about this deployment's model (GRA-297; `GET /api/me/model`): whether
+ * a fixed model answers their jobs, its provider when the operator named one, and whether a key of
+ * their own would be used at all. Never the operator's key or model ids.
+ */
+export type ModelDeployment = {
+  /** A fixed model exists: `GRAFT_MODEL_BACKEND` is `provider` or `scripted`. */
+  fixed: boolean;
+  /** The fixed model's provider under `provider`; null under `scripted` or with none. */
+  provider: ModelKeyProvider | null;
+  /**
+   * The router is in front, so a person's own key answers their jobs. False only under the open
+   * form with no fixed model, where `acquire` refuses at the door and a key would change nothing.
+   */
+  personKeyAccepted: boolean;
+};
+
+/** What a harness that bound no model describes: no fixed model, and no router to take a key. */
+export const NO_MODEL_DEPLOYMENT: ModelDeployment = {
+  fixed: false,
+  provider: null,
+  personKeyAccepted: false,
+};
+
 export type ModelSetup = {
   /** What `McpDeps.model` is handed; null means `acquire` refuses `acquire_unconfigured`. */
   model: ModelAdapter | null;
   /** The deployment's own model, before routing; null when none is configured. */
   fixed: ModelAdapter | null;
+  /** The same choice as a person may read it (`GET /api/me/model`). */
+  deployment: ModelDeployment;
   /** One clause for the boot line. */
   summary: string;
 };
@@ -160,5 +187,10 @@ export async function createModel(input: CreateModelInput): Promise<ModelSetup> 
     : null;
 
   const summary = `model ${fixedSummary}${routing ? ", a person's own key routes their jobs" : ""}`;
-  return { model, fixed, summary };
+  const deployment: ModelDeployment = {
+    fixed: fixed !== null,
+    provider: env.GRAFT_MODEL_BACKEND === "provider" ? (env.GRAFT_MODEL_PROVIDER ?? null) : null,
+    personKeyAccepted: routing,
+  };
+  return { model, fixed, deployment, summary };
 }
