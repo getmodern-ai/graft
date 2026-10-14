@@ -1,6 +1,7 @@
 import type { SetFirstPasswordOutcome, SocialProviderName } from "@graft/auth";
 import { MAX_PASSWORD_LENGTH, MIN_PASSWORD_LENGTH } from "@graft/auth/password.rules";
 import {
+  type ActivityDeps,
   type AgentDeps,
   type AgentScopeToggleOutput,
   type ApprovalDeps,
@@ -12,6 +13,7 @@ import {
   createAgent,
   createIntegrationDeps,
   defaultAcquireJobDeps,
+  defaultActivityDeps,
   defaultConnectionAccessDeps,
   defaultIntegrationToolsDeps,
   defaultSetupDeps,
@@ -20,6 +22,7 @@ import {
   deletePersonModelKey,
   GOAL_MAX_LENGTH,
   getAgent,
+  getAgentActivityStats,
   getAgentScope,
   getConnection,
   getConnectionAccess,
@@ -33,6 +36,7 @@ import {
   isOAuthAuthorizationCode,
   issueConsoleAgentToken,
   type LedgerDeps,
+  listActivity,
   listAgents,
   listApprovals,
   listBuildApprovals,
@@ -98,9 +102,11 @@ import {
   withdrawVendorApproval,
 } from "@graft/core";
 import type { DbOrTx } from "@graft/db";
+import type { ActivityApprovalSource, ActivityTool } from "@graft/db/repo/activity";
 import type { PendingActionRow } from "@graft/db/repo/pending-action";
 import type { AuthoredToolRow } from "@graft/db/repo/tool";
 import { agentScopeMode } from "@graft/db/schema/agent";
+import type { ApprovalDecision } from "@graft/db/schema/approval";
 import type { PendingActionClosedReason } from "@graft/db/schema/pending-action";
 import { setupHarness } from "@graft/db/schema/setup";
 import type { UsageOutcome } from "@graft/db/schema/usage";
@@ -125,7 +131,7 @@ import {
   type ToolListChangedNotifier,
   verifyHandoff,
 } from "@graft/mcp";
-import { executeToolName } from "@graft/mcp/tool-names";
+import { authoredToolName, executeToolName } from "@graft/mcp/tool-names";
 import { type Analytics, NO_ANALYTICS } from "@graft/observability";
 import { AUTH_SCHEMES } from "@graft/proxy";
 import { log } from "evlog";
@@ -360,6 +366,11 @@ export type ApiDeps = {
    * `defaultSuggestedIntegrationDeps` when absent, as `setup` is.
    */
   suggested?: SuggestedIntegrationDeps;
+  /**
+   * The console's activity and the agent page's figures (GRA-308). Optional, and
+   * `defaultActivityDeps` when absent, as `setup` is.
+   */
+  activity?: ActivityDeps;
 };
 
 export type ApiOptions = {
@@ -925,6 +936,100 @@ export type WorkingSetEntryOutput = {
   tool: ToolOutput;
 };
 
+/** The tool an activity row names: its wire name, and its description while the tool's row stands. */
+export type ActivityToolOutput = {
+  /** Null for a meta-tool, an `execute__<id>` tool or a tool whose row is gone. */
+  id: string | null;
+  wireName: string;
+  description: string | null;
+};
+
+type ActivityRowOutputBase = {
+  /** Unique across the stream's kinds; stable for a row, so a list keys on it. */
+  key: string;
+  at: Date;
+  agent: { id: string; name: string };
+  /** The integration's slug; null where nothing recorded it (a line before GRA-301). */
+  vendor: string | null;
+  connectionId: string | null;
+};
+
+/**
+ * One call in the person's activity (GRA-308), from the usage ledger: how it ended in the
+ * ledger's words (`reason`, `asked`; their meanings are `@graft/db`'s `schema/usage.ts`).
+ */
+export type ActivityRunOutput = ActivityRowOutputBase & {
+  kind: "run";
+  id: string;
+  tool: ActivityToolOutput;
+  outcome: UsageOutcome;
+  reason: string | null;
+  asked: boolean | null;
+  latencyMs: number;
+  dryRun: boolean;
+};
+
+/**
+ * One answer in the person's activity (GRA-308): a tool's standing answer (`source: "tool"`), an
+ * integration's standing approval (`vendor`), or an answered ask of any kind but a tool's (`ask`),
+ * whose answer is its standing row (`@graft/db`'s `repo/activity.ts` says why).
+ */
+export type ActivityApprovalOutput = ActivityRowOutputBase & {
+  kind: "approval";
+  source: ActivityApprovalSource;
+  pendingActionId: string | null;
+  tool: ActivityToolOutput | null;
+  decision: ApprovalDecision | null;
+  includesDestructive: boolean | null;
+  askKind: string | null;
+  answer: Record<string, unknown> | null;
+};
+
+export type ActivityRowOutput = ActivityRunOutput | ActivityApprovalOutput;
+
+/** `GET /activity`'s answer: a page, newest first, and where the next starts (null on the last). */
+export type ActivityOutput = {
+  rows: ActivityRowOutput[];
+  nextCursor: string | null;
+};
+
+/** `GET /agents/:id/stats`' answer: the last seven days' runs, and the last run with its tool. */
+export type AgentStatsOutput = {
+  since: Date;
+  runs: number;
+  ranWithoutAsking: number;
+  approved: number;
+  lastRun: { at: Date; tool: ActivityToolOutput; outcome: UsageOutcome } | null;
+};
+
+/**
+ * A row's tool as the console names it: the wire name the ledger stored for a run, or the tool's
+ * own for an approval, which records none; the description while the tool's row stands.
+ */
+function activityToolOutput(
+  wireName: string | null,
+  tool: ActivityTool | null,
+): ActivityToolOutput {
+  return {
+    id: tool?.id ?? null,
+    wireName: wireName ?? (tool ? authoredToolName(tool.vendor, tool.name) : ""),
+    description: tool?.description ?? null,
+  };
+}
+
+/** `GET /activity`'s query. Booleans are the strings `true` and `false`, as a URL carries them. */
+const activityQuery = z.object({
+  agentId: z.string().max(200).optional(),
+  vendor: z.string().max(200).optional(),
+  connectionId: z.string().max(200).optional(),
+  outcome: z.string().max(50).optional(),
+  kind: z.string().max(50).optional(),
+  includeMetaTools: z.enum(["true", "false"]).optional(),
+  includeDryRuns: z.enum(["true", "false"]).optional(),
+  cursor: z.string().max(1000).optional(),
+  limit: z.coerce.number().optional(),
+});
+
 /**
  * One recent call against a connection's vendor, from the ledger (GRA-26). The proxy's wide events
  * are not persisted, so this is the invocation the MCP server recorded rather than the HTTP exchange
@@ -1024,6 +1129,7 @@ export function createApi(options: ApiOptions): Hono {
     tool: toolDeps,
     ledger: ledgerDeps,
   } = options.deps;
+  const activityDeps = options.deps.activity ?? defaultActivityDeps;
 
   /**
    * The setup prompt is read from other origins with no credentials (`setup-prompt.ts`), so its path
@@ -1979,6 +2085,38 @@ export function createApi(options: ApiOptions): Hono {
   });
 
   /**
+   * The agent page's figures (GRA-308): its runs over the last seven days, how many ran without
+   * asking and how many were approved, and its last run with the tool (`AgentStatsOutput`). A
+   * revoked agent's still answer, as its history does; another person's agent is a 404.
+   */
+  api.get("/agents/:id/stats", async (c) => {
+    const principal = await principalOf(c.req.raw.headers);
+    const agent = orNotFound(
+      await getAgent(ctx, principal, c.req.param("id"), agentDeps),
+      "Agent not found",
+    );
+    const stats = await getAgentActivityStats(
+      ctx,
+      { personId: principal.personId, agentId: agent.id },
+      activityDeps,
+    );
+    const output: AgentStatsOutput = {
+      since: stats.since,
+      runs: stats.runs,
+      ranWithoutAsking: stats.ranWithoutAsking,
+      approved: stats.approved,
+      lastRun: stats.lastRun
+        ? {
+            at: stats.lastRun.at,
+            tool: activityToolOutput(stats.lastRun.toolName, stats.lastRun.tool),
+            outcome: stats.lastRun.outcome,
+          }
+        : null,
+    };
+    return c.json(output);
+  });
+
+  /**
    * The agent's build approvals, one per connection, for the agent's page to list and withdraw
    * (ADR 0008 as amended 2026-09-18). Granted only from an answer (the build ask, a connection's
    * `approveBuild`, Setup's Build), never here. A revoked agent's still answer, as its history does.
@@ -2486,6 +2624,75 @@ export function createApi(options: ApiOptions): Hono {
     const result = await retryProviderRelease(ctx, principal, connectionId, connectionDeps);
     useLogger().set({ providerRelease: { connectionId, ...result.providerRelease } });
     return c.json(result);
+  });
+
+  /**
+   * The person's activity (GRA-308): runs and answers across every agent of theirs, newest first,
+   * `limit` at a time from `cursor` (`ActivityOutput`). Home, an agent's page, an integration's
+   * Activity tab and the Activity screen are this one read with `agentId`, `vendor`,
+   * `connectionId`, `outcome` or `kind`; meta-tool calls and dry runs come back only with
+   * `includeMetaTools=true` and `includeDryRuns=true`. A filter naming another person's agent,
+   * vendor or connection matches nothing rather than refusing, since the statement is under the
+   * person whatever it names. `GET /connections/:id/usage` stays until its screen moves.
+   */
+  api.get("/activity", async (c) => {
+    const principal = await principalOf(c.req.raw.headers);
+    const query = activityQuery.safeParse(c.req.query());
+    if (!query.success) {
+      throw new ServiceError("BAD_REQUEST", "The activity query does not match its shape", {
+        details: { issues: query.error.issues },
+      });
+    }
+    const { includeMetaTools, includeDryRuns, cursor, limit, ...filters } = query.data;
+    const page = await listActivity(
+      ctx,
+      principal,
+      {
+        ...filters,
+        includeMetaTools: includeMetaTools === "true",
+        includeDryRuns: includeDryRuns === "true",
+        cursor: cursor ?? null,
+        limit: limit ?? null,
+      },
+      activityDeps,
+    );
+    const output: ActivityOutput = {
+      rows: page.rows.map((row): ActivityRowOutput => {
+        const base = {
+          key: row.position.key,
+          at: row.at,
+          agent: { id: row.agentId, name: row.agentName },
+          vendor: row.vendor,
+          connectionId: row.connectionId,
+        };
+        if (row.kind === "run") {
+          return {
+            ...base,
+            kind: "run",
+            id: row.id,
+            tool: activityToolOutput(row.toolName, row.tool),
+            outcome: row.outcome,
+            reason: row.reason,
+            asked: row.asked,
+            latencyMs: row.latencyMs,
+            dryRun: row.dryRun,
+          };
+        }
+        return {
+          ...base,
+          kind: "approval",
+          source: row.source,
+          pendingActionId: row.pendingActionId,
+          tool: row.tool ? activityToolOutput(null, row.tool) : null,
+          decision: row.decision,
+          includesDestructive: row.includesDestructive,
+          askKind: row.askKind,
+          answer: row.answer,
+        };
+      }),
+      nextCursor: page.nextCursor,
+    };
+    return c.json(output);
   });
 
   /**
