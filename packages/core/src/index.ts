@@ -48,6 +48,19 @@ export {
   redactValue,
   secretFieldNamesFor,
 } from "./acquire-job/redaction";
+export { type ActivityDeps, defaultActivityDeps } from "./activity/activity.deps";
+export {
+  ACTIVITY_PAGE,
+  type ActivityInput,
+  type ActivityPage,
+  AGENT_STATS_WINDOW_DAYS,
+  type AgentActivityStats,
+  decodeActivityCursor,
+  encodeActivityCursor,
+  getAgentActivityStats,
+  listActivity,
+  MAX_ACTIVITY_PAGE,
+} from "./activity/activity.service";
 export { type AgentDeps, defaultAgentDeps } from "./agent/agent.deps";
 export {
   type ActiveAgentScope,

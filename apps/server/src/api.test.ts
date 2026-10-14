@@ -1,4 +1,5 @@
 import {
+  type ActivityDeps,
   type AgentDeps,
   type ApprovalDeps,
   type ConnectionAccessDeps,
@@ -14,6 +15,7 @@ import {
 } from "@graft/core";
 import { SITE_SETUP_PROMPTS } from "@graft/core/setup/setup-prompt.site-fixture";
 import type { DbOrTx } from "@graft/db";
+import type { ActivityRow } from "@graft/db/repo/activity";
 import type { AgentRow } from "@graft/db/repo/agent";
 import type { ApprovalRow, BuildApprovalRow, VendorApprovalRow } from "@graft/db/repo/approval";
 import type { ConnectionRow } from "@graft/db/repo/connection";
@@ -472,6 +474,76 @@ function approvalDeps(): ApprovalDeps {
 }
 
 /**
+ * The activity reads (GRA-308): one run of a tool whose row stands, one answered connection ask,
+ * and one tool's standing answer, newest first, plus the agent page's figures.
+ */
+const activityRows: ActivityRow[] = [
+  {
+    kind: "run",
+    position: { at: "2026-09-09 09:00:00.5", key: "run:usage_1" },
+    at: new Date("2026-09-09T09:00:00.500Z"),
+    agentId: "agent_1",
+    agentName: "laptop Hermes",
+    vendor: "demo",
+    connectionId: "conn_1",
+    id: "usage_1",
+    toolName: "demo__list-orders",
+    tool: { id: "tool_1", vendor: "demo", name: "list-orders", description: "Lists orders" },
+    outcome: "refused",
+    reason: "tool_denied",
+    asked: false,
+    latencyMs: 12,
+    dryRun: false,
+  },
+  {
+    kind: "approval",
+    position: { at: "2026-09-09 08:00:00", key: "ask:pa_1" },
+    at: new Date("2026-09-09T08:00:00.000Z"),
+    agentId: "agent_1",
+    agentName: "laptop Hermes",
+    vendor: "demo",
+    connectionId: "conn_1",
+    source: "ask",
+    pendingActionId: "pa_1",
+    tool: null,
+    decision: null,
+    includesDestructive: null,
+    askKind: "connection",
+    answer: { connectionId: "conn_1" },
+  },
+  {
+    kind: "approval",
+    position: { at: "2026-09-09 07:00:00", key: "tool_approval:agent_1:tool_2" },
+    at: new Date("2026-09-09T07:00:00.000Z"),
+    agentId: "agent_1",
+    agentName: "laptop Hermes",
+    vendor: "demo",
+    connectionId: null,
+    source: "tool",
+    pendingActionId: null,
+    tool: { id: "tool_2", vendor: "demo", name: "draft-reply", description: "Drafts a reply" },
+    decision: "allow",
+    includesDestructive: null,
+    askKind: null,
+    answer: null,
+  },
+];
+
+function activityDeps(): ActivityDeps {
+  return {
+    listActivity: vi.fn(async () => activityRows),
+    countAgentActivity: vi.fn(async () => ({ runs: 86, ranWithoutAsking: 84, approved: 2 })),
+    findAgentLastRun: vi.fn(async () => ({
+      at: NOW,
+      toolName: "execute__conn_1",
+      tool: null,
+      outcome: "ok" as const,
+    })),
+    now: () => NOW,
+  };
+}
+
+/**
  * The access view's reads (GRA-296): two active agents, one on `all` holding a standing approval,
  * a build approval and a tool's answer, one on `listed` without the connection.
  */
@@ -559,6 +631,7 @@ function harness(
     modelKey: fakeModelKeyDeps({ now: () => NOW }),
     connectionAccess: connectionAccessDeps(),
     integration: integrationDeps(),
+    activity: activityDeps(),
   };
   // The process's `tools/list_changed` notifier as the API sees it (GRA-69): what a revoke tells.
   const notifier = { changed: vi.fn() };
@@ -3296,5 +3369,112 @@ describe("setting a first password", () => {
     });
     expect(foreign.status).toBe(403);
     expect(setFirstPassword).not.toHaveBeenCalled();
+  });
+});
+
+describe("the console's activity (GRA-308)", () => {
+  it("answers a page under the person, every filter handed to the statement, the tool named by wire name", async () => {
+    const { app, deps } = harness({ user: { id: "person_1" } });
+    const res = await app.request(
+      "/api/activity?agentId=agent_1&vendor=demo&connectionId=conn_1&includeDryRuns=true&limit=2",
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { rows: unknown[]; nextCursor: string | null };
+    expect(deps.activity.listActivity).toHaveBeenCalledWith(fakeDb, "person_1", {
+      filter: {
+        agentId: "agent_1",
+        vendor: "demo",
+        connectionId: "conn_1",
+        outcome: null,
+        kind: null,
+        includeMetaTools: false,
+        includeDryRuns: true,
+      },
+      limit: 3,
+      after: null,
+    });
+    expect(body.rows).toEqual([
+      {
+        key: "run:usage_1",
+        at: "2026-09-09T09:00:00.500Z",
+        agent: { id: "agent_1", name: "laptop Hermes" },
+        vendor: "demo",
+        connectionId: "conn_1",
+        kind: "run",
+        id: "usage_1",
+        tool: { id: "tool_1", wireName: "demo__list-orders", description: "Lists orders" },
+        outcome: "refused",
+        reason: "tool_denied",
+        asked: false,
+        latencyMs: 12,
+        dryRun: false,
+      },
+      expect.objectContaining({
+        key: "ask:pa_1",
+        kind: "approval",
+        source: "ask",
+        pendingActionId: "pa_1",
+        askKind: "connection",
+        tool: null,
+      }),
+    ]);
+    // Three rows read for a page of two: there is another page, starting after the second.
+    expect(body.nextCursor).toEqual(expect.any(String));
+
+    vi.mocked(deps.activity.listActivity).mockResolvedValueOnce(activityRows.slice(2));
+    const next = await app.request(`/api/activity?cursor=${body.nextCursor}&limit=2`);
+    expect(await next.json()).toMatchObject({
+      rows: [
+        {
+          key: "tool_approval:agent_1:tool_2",
+          source: "tool",
+          decision: "allow",
+          tool: { id: "tool_2", wireName: "demo__draft-reply", description: "Drafts a reply" },
+        },
+      ],
+      nextCursor: null,
+    });
+    expect(vi.mocked(deps.activity.listActivity).mock.calls[1]?.[2]).toMatchObject({
+      after: { at: "2026-09-09 08:00:00", key: "ask:pa_1" },
+    });
+  });
+
+  it("refuses an outcome, a kind or a cursor it does not know, before any read", async () => {
+    const { app, deps } = harness({ user: { id: "person_1" } });
+    for (const query of [
+      "outcome=approved",
+      "kind=everything",
+      "cursor=nope",
+      "includeDryRuns=yes",
+    ]) {
+      expect((await app.request(`/api/activity?${query}`)).status).toBe(400);
+    }
+    expect(deps.activity.listActivity).not.toHaveBeenCalled();
+    expect((await harness(null).app.request("/api/activity")).status).toBe(401);
+  });
+
+  it("answers an agent's figures and its last run, and 404 for an agent that is not the person's", async () => {
+    const { app, deps } = harness({ user: { id: "person_1" } });
+    const res = await app.request("/api/agents/agent_1/stats");
+    expect(await res.json()).toEqual({
+      since: new Date(NOW.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString(),
+      runs: 86,
+      ranWithoutAsking: 84,
+      approved: 2,
+      lastRun: {
+        at: NOW.toISOString(),
+        tool: { id: null, wireName: "execute__conn_1", description: null },
+        outcome: "ok",
+      },
+    });
+    expect(deps.activity.countAgentActivity).toHaveBeenCalledWith(
+      fakeDb,
+      { personId: "person_1", agentId: "agent_1" },
+      { since: new Date(NOW.getTime() - 7 * 24 * 60 * 60 * 1000) },
+    );
+
+    deps.agent.findAgent = vi.fn(async () => null);
+    expect((await app.request("/api/agents/agent_other/stats")).status).toBe(404);
+    expect(deps.activity.countAgentActivity).toHaveBeenCalledTimes(1);
   });
 });
