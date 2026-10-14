@@ -63,3 +63,14 @@ integrations only. Choosing one still connects it through the ordinary routing a
 through `acquire` (or, where it has them, from Graft's own stock, ADR 0025), so every tool a person
 runs is still code Graft wrote and verified, run in the sandbox through the proxy. The number on
 the screen is the backing's count of what it can connect, never a vendor's headline.
+
+## Amendment 2026-10-14: the directory outside Setup, and suggestions from the person's own asks
+
+Decided by Aleks (GRA-285). The integration directory of the amendment above may be searched from
+the console's Integrations screen, its search and its home page, not only Setup's integration step;
+the rules are the same: it lists integrations, never tools, and connecting one goes through the
+ordinary routing. **Suggestions come only from the person's own asks**: an integration one of their
+agents asked to connect (an open, declined or expired connection ask) that they have not
+connected. Graft does not suggest from what an agent was asked in a chat, which it never sees, nor
+from what other people connect: the directory's "popular" is the backing's order and is not called
+anything else.

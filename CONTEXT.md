@@ -20,14 +20,18 @@ harness carries, or the OAuth tokens an MCP client holds for it. An agent holds 
 working set and nothing else of its own. A person with OpenClaw on a server and Hermes on a laptop
 has two agents and one toolbox; a person who connects Claude has a third. An agent Setup mints for a
 harness the person has not yet connected is **awaiting its harness** until that harness's consent
-names it or its token is first used.
-_Avoid_: harness (that is the software), client, bot, session, assistant
+names it or its token is first used. Person-facing copy says *agent* for the software too ("Claude",
+"Codex"): a person adds an agent, connects an agent and revokes an agent, and never reads *harness*.
+Ending an agent is a revoke, and the copy says so; the record and its history stay.
+_Avoid_: harness (in person-facing copy), client, bot, session, assistant, remove (for a revoke),
+install (Graft is not installed in an agent)
 
 **Harness**:
 The agent software a person runs, OpenClaw or Hermes today, or a chat product such as Claude or
 ChatGPT, that Graft extends. Graft is a server the harness connects to over MCP, never a component
-inside it.
-_Avoid_: framework, runtime, client app, host
+inside it. The word is kept for code and for these docs, where the record and the software must be
+told apart; person-facing copy says *agent* for both (2026-10-14).
+_Avoid_: harness in person-facing copy (say agent), framework, runtime, client app, host
 
 **MCP client**:
 A harness in its OAuth role: the software that registers itself with Graft's authorization server,
@@ -210,7 +214,7 @@ _Avoid_: allowlist (one part of it), whitelist, dependency check
 **Console**:
 The web app where a person enters a secret, completes an OAuth consent — a vendor's, or an MCP
 client's, which mints the agent the client will be — answers an approval, and sees each agent's
-working set. The one channel to a human that works for every harness.
+working set. The one channel to a human that works for every agent.
 _Avoid_: dashboard, admin, portal, UI
 
 **Handoff**:
@@ -218,19 +222,27 @@ A URL a meta-tool returns so the person does the next step in the console, pre-f
 everything that is not secret. The agent relays it; the tool waits or polls.
 _Avoid_: link, redirect, elicitation (which is a different mechanism, used only for approvals)
 
+**Request**:
+The person-facing word for what is waiting on the person: an open ask or handoff (in code, a
+pending action), and a connection that needs the person to sign in again. The console's list of
+them is *Requests*; answered and expired ones are its *Done* tab. Kept to person-facing copy: in
+code and model-facing text a request is a vendor request, the thing the proxy carries.
+_Avoid_: request in code for a pending action, task, notification, inbox (in copy)
+
 **Approval**:
 A person's answer to a tool's ask. Reads never ask. Any other tool, destructive included, asks once
 and the answer holds; the person may set a tool to ask every time, and back. The person may also
 allow every tool of an integration for an agent at once, destructive ones only if they say so. The
 answer is for the version it was given for: a new version of a write asks again once, except a
 ready-made tool's update that does not widen what it may do. `acquire` asks once per agent per
-connection. Answerable later through the console.
+connection. Answerable later through the console, and changeable there per agent; never set for a
+tool across every agent at once.
 _Avoid_: grant, permission, consent (fine in prose, not as the noun for the record)
 
 **Setup**:
-The console's guided first run: a person names the harness they run, connects a first
+The console's guided first run: a person names the agent they run, connects a first
 integration, names the task for a first tool, has Graft acquire it and run it, and leaves with the
-prompt that connects that harness.
+prompt that connects that agent.
 It runs as the person's first agent, and every step is one the console offers on its own.
 _Avoid_: onboarding (the word for the effort, in tickets), wizard, tour, getting started
 
