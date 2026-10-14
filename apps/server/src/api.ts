@@ -1,7 +1,9 @@
 import type { SocialProviderName } from "@graft/auth";
 import {
   type AgentDeps,
+  type AgentScopeToggleOutput,
   type ApprovalDeps,
+  addConnectionToAgentScope,
   answerPendingAction,
   type ConnectionDeps,
   createAgent,
@@ -40,6 +42,7 @@ import {
   reconnectConnection,
   registerConnection,
   registerConnectionWithCredential,
+  removeConnectionFromAgentScope,
   requirePerson,
   retryProviderRelease,
   revokeAgent,
@@ -1643,7 +1646,10 @@ export function createApi(options: ApiOptions): Hono {
   api.put("/agents/:id/scope", async (c) => {
     const principal = await principalOf(c.req.raw.headers);
     const body = await parseBody(c.req.raw, scopeBody);
-    return c.json(await setAgentScope(ctx, principal, c.req.param("id"), body, agentDeps));
+    const result = await setAgentScope(ctx, principal, c.req.param("id"), body, agentDeps);
+    // After the commit, so a session re-fetching on the notification lists the new scope's tools.
+    options.notifier?.changed(result.agent.id);
+    return c.json(result);
   });
 
   /**
@@ -1822,6 +1828,42 @@ export function createApi(options: ApiOptions): Hono {
       createdAt: row.createdAt,
     }));
     return c.json({ calls });
+  });
+
+  /**
+   * One connection turned on or off for one agent (GRA-294): the integration page's *Agents with
+   * access* and the agent page's per-integration switch, each a single write under the agent's
+   * row lock, so two toggles never race the way a read-modify-write of `PUT /agents/:id/scope`
+   * does. Another person's agent or connection is a 404 from the service. Both answer
+   * `AgentScopeToggleOutput`; a removal from an agent on `all` narrows it to `listed` and says so
+   * in `materialised`. A grant to an agent on `all` changes nothing and tells nobody; otherwise
+   * the agent's session is told after the commit, as the agent page's scope write is.
+   */
+  api.put("/connections/:id/agents/:agentId", async (c) => {
+    const principal = await principalOf(c.req.raw.headers);
+    const result = await addConnectionToAgentScope(
+      ctx,
+      principal,
+      c.req.param("agentId"),
+      c.req.param("id"),
+      agentDeps,
+    );
+    if (result.agent.scopeMode === "listed") options.notifier?.changed(result.agent.id);
+    const answer: AgentScopeToggleOutput = { ...result, materialised: false };
+    return c.json(answer);
+  });
+
+  api.delete("/connections/:id/agents/:agentId", async (c) => {
+    const principal = await principalOf(c.req.raw.headers);
+    const answer: AgentScopeToggleOutput = await removeConnectionFromAgentScope(
+      ctx,
+      principal,
+      c.req.param("agentId"),
+      c.req.param("id"),
+      agentDeps,
+    );
+    options.notifier?.changed(answer.agent.id);
+    return c.json(answer);
   });
 
   /**

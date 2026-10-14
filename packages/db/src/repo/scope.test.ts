@@ -23,6 +23,7 @@ import {
   listAgents,
   listAllActiveAgents,
   listScopeConnectionIds,
+  removeAgentConnection,
   replaceAgentConnections,
   revokeAgent,
 } from "./agent";
@@ -508,6 +509,16 @@ describe("agent-scoped writes take both ids too, so a mis-scoped write edits not
     expect(s.sql).toMatch(/^insert into "agent_connection"/);
     expect(s.sql).toMatch(/ on conflict do nothing$/);
     expect(s.params).toEqual(["agent_1", "conn_2"]);
+  });
+
+  /** The one-connection removal (GRA-294): one delete under the pair and the connection, no read and no insert. */
+  it("removing one connection from the scope is a single delete under the pair and the connection", async () => {
+    await removeAgentConnection(db, SCOPE, "conn_2");
+    const s = only();
+    expect(s.sql).toMatch(/^delete from "agent_connection"/);
+    expect(s.sql).toMatch(SCOPED_AGENT);
+    expect(s.sql).toContain('"agent_connection"."connection_id" = $3');
+    expect(s.params).toEqual(["agent_1", "person_1", "conn_2"]);
   });
 
   /** The find-or-make of a scope ask is serialised on a transaction-scoped advisory lock keyed by the pair and the connection. */
