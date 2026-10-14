@@ -62,7 +62,7 @@ import {
 } from "@graft/core";
 import { createDb, type Database } from "@graft/db";
 import { applyMigrations } from "@graft/db/migrate";
-import { upsertVendorApproval } from "@graft/db/repo/approval";
+import { upsertApproval, upsertVendorApproval } from "@graft/db/repo/approval";
 import { addConnectionHosts } from "@graft/db/repo/connection";
 import { insertPendingAction, listSuggestedConnectionAsks } from "@graft/db/repo/pending-action";
 import { markPersonEmailVerified } from "@graft/db/repo/person";
@@ -1171,6 +1171,26 @@ describe.skipIf(!adminUrl)("the schema, the account and the services over a real
       { personId: alice, agentId: codex.agent.id },
       { vendor: "gmail", includesDestructive: false, grantedAt: at(8) },
     );
+    const draft = await createTool(
+      ctx,
+      { personId: alice },
+      {
+        vendor: "gmail",
+        name: "draft-reply",
+        description: "Drafts a reply",
+        inputSchema: { type: "object" },
+        annotations: { readOnly: false, destructive: false },
+        defaultConnectionId: conn.id,
+      },
+      defaultToolDeps,
+    );
+    await upsertApproval(db, {
+      agentId: codex.agent.id,
+      toolId: draft.id,
+      decision: "allow",
+      decidedAt: at(6),
+      toolVersionId: draft.currentVersionId,
+    });
     await insertPendingAction(
       db,
       { personId: alice, agentId: codex.agent.id },
@@ -1214,9 +1234,23 @@ describe.skipIf(!adminUrl)("the schema, the account and the services over a real
     // Written between pages: a line newer than everything lands above and moves nothing below.
     await line("act_new", codex.agent.id, 30);
     const second = await page({ limit: 3, cursor: first.nextCursor });
-    expect(keys(second.rows)).toEqual(["run:act_7a", "run:act_5", "run:act_2"]);
+    expect(keys(second.rows)).toEqual([
+      "run:act_7a",
+      `tool_approval:${codex.agent.id}:${draft.id}`,
+      "run:act_5",
+    ]);
+    expect(second.rows[1]).toMatchObject({
+      kind: "approval",
+      source: "tool",
+      decision: "allow",
+      vendor: "gmail",
+      connectionId: null,
+      pendingActionId: null,
+      at: at(6),
+      tool: { id: draft.id, vendor: "gmail", name: "draft-reply", description: "Drafts a reply" },
+    });
     const third = await page({ limit: 3, cursor: second.nextCursor });
-    expect(keys(third.rows)).toEqual(["run:act_1"]);
+    expect(keys(third.rows)).toEqual(["run:act_2", "run:act_1"]);
     expect(third.nextCursor).toBeNull();
 
     // Filters narrow the statement: the refused runs alone; dry runs and meta-tools on request.

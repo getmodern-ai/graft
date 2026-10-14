@@ -161,6 +161,14 @@ describe("the activity cursor", () => {
     );
     expect(() => decodeActivityCursor(cursor)).toThrow("not one this list wrote");
   });
+
+  it.each(["2023-02-30 00:00:00", "2026-10-14 24:00:00", "2026-13-01 00:00:00.5"])(
+    "refuses %s, a moment Postgres's cast would refuse, as a bad request",
+    (t) => {
+      const cursor = Buffer.from(JSON.stringify({ t, k: "run:u" })).toString("base64url");
+      expect(() => decodeActivityCursor(cursor)).toThrow("not one this list wrote");
+    },
+  );
 });
 
 describe("getAgentActivityStats", () => {

@@ -109,6 +109,20 @@ export function encodeActivityCursor(position: ActivityPosition): string {
 const POSTGRES_TIMESTAMP = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(\.\d{1,6})?$/;
 
 /**
+ * Whether the moment is Postgres's print of a real one. `Date` rolls an impossible day over
+ * (`02-30` reads as March 2) where Postgres's cast refuses it, so the date and time are read back
+ * and compared with what was written.
+ */
+function isCalendarTimestamp(value: string): boolean {
+  if (!POSTGRES_TIMESTAMP.test(value)) return false;
+  const parsed = new Date(`${value.replace(" ", "T")}Z`);
+  return (
+    !Number.isNaN(parsed.getTime()) &&
+    parsed.toISOString().slice(0, 19) === value.slice(0, 19).replace(" ", "T")
+  );
+}
+
+/**
  * The cursor back. Anything that is not the shape `encodeActivityCursor` writes is a `BAD_REQUEST`
  * rather than a first page. Unsigned, as the Done list's: the statement is under the person
  * whatever it says, so a hand-built one only positions the person's own stream.
@@ -120,8 +134,7 @@ export function decodeActivityCursor(cursor: string): ActivityPosition {
       const { t, k } = parsed as Record<string, unknown>;
       if (
         typeof t === "string" &&
-        POSTGRES_TIMESTAMP.test(t) &&
-        !Number.isNaN(new Date(`${t.replace(" ", "T")}Z`).getTime()) &&
+        isCalendarTimestamp(t) &&
         typeof k === "string" &&
         k.length > 0 &&
         k.length <= 512
