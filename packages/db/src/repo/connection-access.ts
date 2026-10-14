@@ -66,10 +66,28 @@ export async function listAgentAccessForConnection(
 }
 
 /**
+ * Every connection id of the person's for the vendor, revoked rows included: a call through any of
+ * them was a use of the vendor, which is how `lastVendorUseByAgent` counts the execute tools.
+ */
+export async function listVendorConnectionIds(
+  db: DbOrTx,
+  personId: string,
+  vendor: string,
+): Promise<string[]> {
+  const rows = await db
+    .select({ id: connection.id })
+    .from(connection)
+    .where(and(eq(connection.personId, personId), eq(connection.vendor, vendor)))
+    .orderBy(asc(connection.id));
+  return rows.map((row) => row.id);
+}
+
+/**
  * When each of the person's agents last called the vendor, dry runs excluded: a dry run is
  * `acquire` proving a draft (ADR 0012), not the agent using the integration. A call is the
  * vendor's as `repo/usage.ts`'s `listUsageForVendor` reads it: its tool row carries the vendor, or
- * its wire name is one the caller names (the connection's `execute__<id>`, which has no row).
+ * its wire name is one the caller names (the `execute__<id>` of each of the person's connections
+ * to the vendor, which have no row).
  */
 export async function lastVendorUseByAgent(
   db: DbOrTx,

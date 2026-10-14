@@ -53,12 +53,13 @@ export type ConnectionAccess = {
 /**
  * The integration page's Agents view (GRA-296): every active agent of the person's, whether the
  * connection is in its scope, when it last called the vendor, and every answer it holds for the
- * vendor's tools, the vendor and this connection. Six statements however many agents there are:
+ * vendor's tools, the vendor and this connection. Seven statements however many agents there are:
  * the connection, then one per kind of record, each under the person (`repo/connection-access.ts`).
  * Null when the connection is not the person's, which the route answers as a 404.
  *
- * `executeToolName` spells the connection's own `execute__<id>` tool, which has no toolbox row and
- * is counted as the vendor's by its wire name; `@graft/mcp` owns that spelling, and the core does
+ * `executeToolName` spells a connection's own `execute__<id>` tool, which has no toolbox row and
+ * is counted as the vendor's by its wire name, for every connection of the person's to the vendor,
+ * since the last use is the vendor's and not this connection's alone; `@graft/mcp` owns that spelling, and the core does
  * not import it.
  */
 export async function getConnectionAccess(
@@ -72,12 +73,16 @@ export async function getConnectionAccess(
   const connection = await deps.findConnection(ctx.db, personId, connectionId);
   if (!connection) return null;
   const { vendor } = connection;
+  const lastVendorUse = async () => {
+    const ids = await deps.listVendorConnectionIds(ctx.db, personId, vendor);
+    return deps.lastVendorUseByAgent(ctx.db, personId, {
+      vendor,
+      toolNames: ids.map((id) => options.executeToolName(id)),
+    });
+  };
   const [agents, lastUses, toolApprovals, vendorApprovals, buildApprovals] = await Promise.all([
     deps.listAgentAccessForConnection(ctx.db, personId, connection.id),
-    deps.lastVendorUseByAgent(ctx.db, personId, {
-      vendor,
-      toolNames: [options.executeToolName(connection.id)],
-    }),
+    lastVendorUse(),
     deps.listVendorToolApprovals(ctx.db, personId, vendor),
     deps.listVendorApprovalsForVendor(ctx.db, personId, vendor),
     deps.listBuildApprovalsForConnection(ctx.db, personId, connection.id),

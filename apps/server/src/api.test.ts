@@ -437,6 +437,7 @@ function approvalDeps(): ApprovalDeps {
 function connectionAccessDeps(): ConnectionAccessDeps {
   return {
     findConnection: vi.fn(async () => connectionRow),
+    listVendorConnectionIds: vi.fn(async () => ["conn_1", "conn_2"]),
     listAgentAccessForConnection: vi.fn(async () => [
       {
         id: "agent_open",
@@ -1561,9 +1562,10 @@ describe("connections", () => {
     });
     const access = deps.connectionAccess;
     expect(access.findConnection).toHaveBeenCalledWith(fakeDb, "person_1", "conn_1");
+    // Every connection of the person's to the vendor: a call through another was a use too.
     expect(access.lastVendorUseByAgent).toHaveBeenCalledWith(fakeDb, "person_1", {
       vendor: "demo",
-      toolNames: ["execute__conn_1"],
+      toolNames: ["execute__conn_1", "execute__conn_2"],
     });
 
     vi.mocked(access.findConnection).mockResolvedValueOnce(null);

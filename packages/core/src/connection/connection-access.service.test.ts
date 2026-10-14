@@ -40,6 +40,7 @@ function toolApproval(
 function deps(over: Partial<ConnectionAccessDeps> = {}): ConnectionAccessDeps {
   return {
     findConnection: vi.fn(async () => gmail),
+    listVendorConnectionIds: vi.fn(async () => ["conn_1", "conn_2"]),
     listAgentAccessForConnection: vi.fn(async () => [
       {
         id: "agent_claude",
@@ -89,8 +90,10 @@ describe("getConnectionAccess", () => {
     expect(d.listAgentAccessForConnection).toHaveBeenCalledWith(ctx.db, "person_1", "conn_1");
     expect(d.lastVendorUseByAgent).toHaveBeenCalledWith(ctx.db, "person_1", {
       vendor: "gmail",
-      toolNames: ["execute__conn_1"],
+      // Every connection of the person's to the vendor: a call through another was a use too.
+      toolNames: ["execute__conn_1", "execute__conn_2"],
     });
+    expect(d.listVendorConnectionIds).toHaveBeenCalledWith(ctx.db, "person_1", "gmail");
     expect(d.listVendorToolApprovals).toHaveBeenCalledWith(ctx.db, "person_1", "gmail");
     expect(d.listVendorApprovalsForVendor).toHaveBeenCalledWith(ctx.db, "person_1", "gmail");
     expect(d.listBuildApprovalsForConnection).toHaveBeenCalledWith(ctx.db, "person_1", "conn_1");

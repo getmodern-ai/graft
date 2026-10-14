@@ -4,6 +4,7 @@ import {
   listAgentAccessForConnection,
   listBuildApprovalsForConnection,
   listVendorApprovalsForVendor,
+  listVendorConnectionIds,
   listVendorToolApprovals,
 } from "@graft/db/repo/connection-access";
 
@@ -11,6 +12,8 @@ import {
 export type ConnectionAccessDeps = {
   findConnection: typeof findConnection;
   listAgentAccessForConnection: typeof listAgentAccessForConnection;
+  /** The person's connections to the vendor, whose execute tools count as the vendor's use. */
+  listVendorConnectionIds: typeof listVendorConnectionIds;
   lastVendorUseByAgent: typeof lastVendorUseByAgent;
   listVendorToolApprovals: typeof listVendorToolApprovals;
   listVendorApprovalsForVendor: typeof listVendorApprovalsForVendor;
@@ -20,6 +23,7 @@ export type ConnectionAccessDeps = {
 export const defaultConnectionAccessDeps: ConnectionAccessDeps = {
   findConnection,
   listAgentAccessForConnection,
+  listVendorConnectionIds,
   lastVendorUseByAgent,
   listVendorToolApprovals,
   listVendorApprovalsForVendor,

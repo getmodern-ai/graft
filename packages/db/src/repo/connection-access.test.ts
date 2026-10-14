@@ -7,6 +7,7 @@ import {
   listAgentAccessForConnection,
   listBuildApprovalsForConnection,
   listVendorApprovalsForVendor,
+  listVendorConnectionIds,
   listVendorToolApprovals,
 } from "./connection-access";
 
@@ -53,6 +54,15 @@ describe("a connection's access view names the person in every statement", () =>
       /where \("agent"\."person_id" = \$5 and "agent"\."revoked_at" is null\) order by "agent"\."created_at" asc, "agent"\."id" asc$/,
     );
     expect(s.params).toEqual(["conn_1", "person_1", "all", "conn_1", "person_1"]);
+  });
+
+  it("reads the person's connection ids for the vendor under the person", async () => {
+    await listVendorConnectionIds(db, "person_1", "gmail");
+    const s = only();
+    expect(s.sql).toBe(
+      'select "id" from "connection" where ("connection"."person_id" = $1 and "connection"."vendor" = $2) order by "connection"."id" asc',
+    );
+    expect(s.params).toEqual(["person_1", "gmail"]);
   });
 
   it("reads each agent's last call against the vendor, dry runs excluded, under the person", async () => {
