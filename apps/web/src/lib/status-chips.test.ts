@@ -10,9 +10,11 @@ import {
   CONNECTION_STATUS_CHIP,
   connectionStatusChips,
   DRY_RUN_CHIP,
+  EMAIL_STATUS_CHIP,
   MODEL_KEY_STATUS_CHIP,
   MODEL_STATUS_CHIP,
   NO_PASSING_VERSION_CHIP,
+  SIGN_IN_ACCOUNT_CHIP,
   type StatusChip,
   TOOL_ANNOTATION_CHIP,
   toolAnnotationChip,
@@ -28,10 +30,13 @@ const EVERY_CHIP: StatusChip[] = [
   ...Object.values(CALL_OUTCOME_CHIP),
   DRY_RUN_CHIP,
   NO_PASSING_VERSION_CHIP,
+  SIGN_IN_ACCOUNT_CHIP,
   ...Object.values(APPROVAL_DECISION_CHIP),
   ...Object.values(VENDOR_APPROVAL_DESTRUCTIVE_CHIP),
   ...Object.values(WORKING_SET_CHANGE_CHIP),
   ...Object.values(MODEL_KEY_STATUS_CHIP),
+  ...Object.values(EMAIL_STATUS_CHIP),
+  SIGN_IN_ACCOUNT_CHIP,
   ...Object.values(MODEL_STATUS_CHIP),
   ...Object.values(TOOL_ANNOTATION_CHIP),
 ];
@@ -63,6 +68,8 @@ describe("status chips", () => {
       label: "Ask first",
     });
     expect(MODEL_KEY_STATUS_CHIP.set.variant).toBe("success");
+    expect(EMAIL_STATUS_CHIP.verified.variant).toBe("success");
+    expect(SIGN_IN_ACCOUNT_CHIP.variant).toBe("success");
     expect(MODEL_STATUS_CHIP.included.variant).toBe("success");
     expect(MODEL_STATUS_CHIP.own_key.variant).toBe("success");
   });
@@ -84,6 +91,7 @@ describe("status chips", () => {
     expect(AWAITING_RECONNECTION_CHIP.variant).toBe("outline");
     expect(NO_PASSING_VERSION_CHIP.variant).toBe("outline");
     expect(MODEL_KEY_STATUS_CHIP.unset.variant).toBe("outline");
+    expect(EMAIL_STATUS_CHIP.unverified.variant).toBe("outline");
     expect(AGENT_STATUS_CHIP.awaiting_harness.variant).toBe("outline");
   });
 
