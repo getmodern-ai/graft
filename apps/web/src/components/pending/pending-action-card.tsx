@@ -1,6 +1,6 @@
 import type * as React from "react";
 
-import type { AskOrigin } from "@/components/pending/ask-card";
+import type { AskLayout, AskOrigin } from "@/components/pending/ask-card";
 import { BuildAskCard } from "@/components/pending/build-ask-card";
 import { ConnectionAskCard } from "@/components/pending/connection-ask-card";
 import { CredentialAskCard } from "@/components/pending/credential-ask-card";
@@ -17,25 +17,28 @@ import { type PendingAction, readAsk } from "@/lib/pending-action-queries";
  *
  * `origin` reaches the three kinds Setup's connect step can open (a connection, a provider link, a
  * scope ask; GRA-206) and no other: every other caller leaves it unset and gets today's cards.
+ * `layout` is the handoff page's (`focused`, GRA-314) and reaches every kind; unset, the inbox's.
  */
 export function PendingActionCard({
   action,
   onAnswered,
   origin,
   setupFooter,
+  layout,
 }: {
   action: PendingAction;
   onAnswered?: () => void;
   origin?: AskOrigin;
   /** Under Setup's compact card (the task waiting on the connection), for the two connect kinds. */
   setupFooter?: React.ReactNode;
+  layout?: AskLayout;
 }) {
   const ask = readAsk(action);
   switch (ask.kind) {
     case "tool":
-      return <ToolAskCard ask={ask} onAnswered={onAnswered} />;
+      return <ToolAskCard ask={ask} onAnswered={onAnswered} layout={layout} />;
     case "build":
-      return <BuildAskCard ask={ask} onAnswered={onAnswered} />;
+      return <BuildAskCard ask={ask} onAnswered={onAnswered} layout={layout} />;
     case "connection":
       return (
         <ConnectionAskCard
@@ -43,6 +46,7 @@ export function PendingActionCard({
           onAnswered={onAnswered}
           origin={origin}
           setupFooter={setupFooter}
+          layout={layout}
         />
       );
     case "connection-link":
@@ -52,13 +56,14 @@ export function PendingActionCard({
           onAnswered={onAnswered}
           origin={origin}
           setupFooter={setupFooter}
+          layout={layout}
         />
       );
     case "credential":
-      return <CredentialAskCard ask={ask} onAnswered={onAnswered} />;
+      return <CredentialAskCard ask={ask} onAnswered={onAnswered} layout={layout} />;
     case "scope":
-      return <ScopeAskCard ask={ask} onAnswered={onAnswered} origin={origin} />;
+      return <ScopeAskCard ask={ask} onAnswered={onAnswered} origin={origin} layout={layout} />;
     default:
-      return <UnknownAskCard action={action} onAnswered={onAnswered} />;
+      return <UnknownAskCard action={action} onAnswered={onAnswered} layout={layout} />;
   }
 }

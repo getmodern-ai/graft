@@ -15,7 +15,7 @@ function action(kind: string, payload: Record<string, unknown>): PendingAction {
   return {
     id: "pa_1",
     agentId: "agt_1",
-    agent: { id: "agt_1", name: "Codex" },
+    agent: { id: "agt_1", name: "Codex", clientName: null },
     kind,
     payload,
     expiresAt: "2026-10-15T12:00:00.000Z",
@@ -70,7 +70,7 @@ const keyless = (overrides: Record<string, unknown> = {}) =>
   });
 
 describe("requestRowCopy", () => {
-  it("reads a tool ask as what the tool does, with Deny and an Allow that opens the ask", () => {
+  it("reads a tool ask as what the tool does, with Deny and an Allow that opens the how-much menu", () => {
     expect(copyOf("tool", tool())).toEqual({
       variant: "tool",
       vendor: "gmail",
@@ -79,7 +79,7 @@ describe("requestRowCopy", () => {
       destructive: false,
       detail: null,
       decline: "Deny",
-      primary: { label: "Allow", does: "open" },
+      primary: { label: "Allow", does: "menu" },
     });
   });
 

@@ -1,4 +1,10 @@
 import type { IntegrationConnectionOutput, IntegrationOutput } from "@graft/core";
+import type {
+  ConnectionAcquireBody,
+  ConnectionAcquireJob,
+  ConnectionGoalSuggestions,
+  IntegrationSuggestions,
+} from "@graft/server/api";
 import { queryOptions } from "@tanstack/react-query";
 
 import { api, type Jsonified } from "./api";
@@ -13,6 +19,7 @@ import { connectionKeys } from "./connection-queries";
 
 export type Integration = Jsonified<IntegrationOutput>;
 export type IntegrationConnection = Jsonified<IntegrationConnectionOutput>;
+export type SuggestedIntegration = Jsonified<IntegrationSuggestions>["suggestions"][number];
 
 /**
  * Under `connectionKeys.all`, because a row is a projection of the person's connections: every
@@ -21,6 +28,7 @@ export type IntegrationConnection = Jsonified<IntegrationConnectionOutput>;
  */
 export const integrationKeys = {
   all: [...connectionKeys.all, "integrations"] as const,
+  suggested: [...connectionKeys.all, "integrations", "suggested"] as const,
 };
 
 export const integrationsQuery = queryOptions({
@@ -30,4 +38,55 @@ export const integrationsQuery = queryOptions({
   // scope change) move without touching the connections key; stale at once, so every mount
   // refetches rather than drawing a count from before such a write.
   staleTime: 0,
+});
+
+/** One job a connection's Get a new tool started, with the agent and the goal (GRA-303). */
+export type NewToolJob = Jsonified<ConnectionAcquireJob>;
+export type NewToolSuggestions = Jsonified<ConnectionGoalSuggestions>;
+
+export const newToolKeys = {
+  jobs: (connectionId: string) => [...connectionKeys.all, connectionId, "acquire-jobs"] as const,
+  suggestions: (connectionId: string) =>
+    [...connectionKeys.all, connectionId, "goal-suggestions"] as const,
+};
+
+/**
+ * The connection's recent jobs across the person's agents, newest first (GRA-303), so a reload or
+ * a dialog closed mid-build finds the job again. Stale at once: the dialog reads it on each open.
+ */
+export const newToolJobsQuery = (connectionId: string) =>
+  queryOptions({
+    queryKey: newToolKeys.jobs(connectionId),
+    queryFn: () =>
+      api<{ jobs: NewToolJob[] }>(`/connections/${encodeURIComponent(connectionId)}/acquire-jobs`),
+    staleTime: 0,
+  });
+
+/**
+ * The Try chips and whether Create can start a job at all (`build`, `acquire_unconfigured` when no
+ * model can author). The server memoises the model's answer per person and connection.
+ */
+export const newToolSuggestionsQuery = (connectionId: string) =>
+  queryOptions({
+    queryKey: newToolKeys.suggestions(connectionId),
+    queryFn: () =>
+      api<NewToolSuggestions>(`/connections/${encodeURIComponent(connectionId)}/goal-suggestions`),
+  });
+
+/** Create: the picked agent's build approval for the connection and its job, in one write. */
+export function startNewTool(connectionId: string, body: ConnectionAcquireBody) {
+  return api<NewToolJob>(`/connections/${encodeURIComponent(connectionId)}/acquire`, {
+    method: "POST",
+    body,
+  });
+}
+
+/**
+ * "Your agents asked about these" (GRA-305): one entry per connection ask for an integration the
+ * person has not connected. Under `integrationKeys.all`, so a connection made from any door drops
+ * its vendor from the banner with the rest of the connection reads.
+ */
+export const suggestedIntegrationsQuery = queryOptions({
+  queryKey: integrationKeys.suggested,
+  queryFn: () => api<Jsonified<IntegrationSuggestions>>("/integrations/suggested"),
 });

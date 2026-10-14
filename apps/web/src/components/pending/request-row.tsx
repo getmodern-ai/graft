@@ -5,10 +5,10 @@ import { toast } from "sonner";
 
 import { IntegrationHarnessMark } from "@/components/marks";
 import { useAnswerAsk } from "@/components/pending/ask-card";
-import { PendingActionCard } from "@/components/pending/pending-action-card";
+import { RequestDialog } from "@/components/pending/request-dialog";
+import { ToolAllowMenu } from "@/components/pending/tool-allow-menu";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { Skeleton } from "@/components/ui/skeleton";
 import { agentKeys } from "@/lib/agent-queries";
 import { approvalKeys } from "@/lib/approval-queries";
@@ -24,14 +24,16 @@ import {
   requestRowWhen,
 } from "@/lib/request-row";
 import { cachedDirectoryLogo } from "@/lib/setup-queries";
+import { toolAskIntegrationName, toolAskToast } from "@/lib/tool-ask-copy";
 import { cn } from "@/lib/utils";
 
 /**
  * One open request as a row (GRA-310; "Graft / Request row" in the Figma file): the integration's
  * mark with the asking agent's on its corner, the sentence, the "Can delete" chip, the sub-line,
  * then the decline and the primary. The words are `lib/request-row.ts`'s. A primary that needs no
- * input answers here through the answer routes the cards use (`requestRowAnswer`); every other
- * opens the kind's own card in a dialog until GRA-311's Allow menu and request dialog replace it.
+ * input answers here through the answer routes the cards use (`requestRowAnswer`); a tool's Allow
+ * is the how-much menu (`ToolAllowMenu`, GRA-311), and every other primary, like the menu's *Open
+ * request*, opens the ask's focused layout in `RequestDialog`.
  * Requests and Home's *Needs you* (GRA-327) draw this row inside `RequestList`.
  */
 export function RequestRow({ action, harness }: { action: PendingAction; harness: HarnessMarkId }) {
@@ -44,18 +46,21 @@ export function RequestRow({ action, harness }: { action: PendingAction; harness
   const agentName = requestAgentName(action);
 
   const answer = useAnswerAsk(action, undefined, "agent", (said) =>
-    ask.kind === "scope"
-      ? {
-          title: `${ask.payload.displayName} is in ${agentName}'s scope`,
-          description: scopeAllowedToastDescription({
-            origin: "agent",
-            approveBuild: said.approveBuild === true,
-          }),
-        }
-      : {
-          title: "Approved",
-          description: "The agent's waiting call resumes, and the answer holds for its next calls.",
-        },
+    ask.kind === "tool"
+      ? toolAskToast(said, toolAskIntegrationName(ask.payload))
+      : ask.kind === "scope"
+        ? {
+            title: `${ask.payload.displayName} is in ${agentName}'s scope`,
+            description: scopeAllowedToastDescription({
+              origin: "agent",
+              approveBuild: said.approveBuild === true,
+            }),
+          }
+        : {
+            title: "Approved",
+            description:
+              "The agent's waiting call resumes, and the answer holds for its next calls.",
+          },
   );
   const confirm = useMutation({
     mutationFn: (body: Parameters<typeof submitConnectionProposal>[1]) =>
@@ -115,17 +120,21 @@ export function RequestRow({ action, harness }: { action: PendingAction; harness
         >
           {copy.decline}
         </Button>
-        <Button size="sm" disabled={pending} onClick={onPrimary}>
-          {copy.primary.label}
-        </Button>
+        {ask.kind === "tool" ? (
+          <ToolAllowMenu
+            ask={ask}
+            pending={pending}
+            onAnswer={(body) => answer.mutate(body)}
+            onOpenRequest={() => setOpened(true)}
+          />
+        ) : (
+          <Button size="sm" disabled={pending} onClick={onPrimary}>
+            {copy.primary.label}
+          </Button>
+        )}
       </div>
 
-      <Dialog open={opened} onOpenChange={setOpened}>
-        <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
-          <DialogTitle className="pr-8">{copy.title}</DialogTitle>
-          <PendingActionCard action={action} onAnswered={() => setOpened(false)} />
-        </DialogContent>
-      </Dialog>
+      <RequestDialog action={action} title={copy.title} open={opened} onOpenChange={setOpened} />
     </li>
   );
 }
