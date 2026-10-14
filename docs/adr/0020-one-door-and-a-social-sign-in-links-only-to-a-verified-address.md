@@ -24,8 +24,8 @@ invitation's locked address needs an organisation, which is a column awaiting a 
 *Forgot password?* was left out with it for want of a mail transport and arrived with one
 (ADR 0021, GRA-82). The name a password sign-up gets is
 the address's local part, as in Cando — which asks for the real one in onboarding before anything
-shows it. Graft has no such step, so the account menu shows the placeholder until a settings row
-exists; a provider sign-in carries the provider's name and needs none.
+shows it. Graft has no such step, so the account menu shows the placeholder until the person edits it
+on Settings (GRA-331); a provider sign-in carries the provider's name and needs none.
 
 **Amended 2026-09-18 (GRA-94): two doors, and registering opens no session until the address is
 verified.** The one door above is superseded, for Cando's own reason (its ADR 0017, CAN-295): a new
@@ -92,6 +92,17 @@ saying the address already had an account (`socialSignInMessage` in `apps/web/sr
 Since the amendment above (GRA-94) every new password account is verified before it can sign in, so
 the rule below produces Cando's outcome for them; the sentence remains for an account that predates
 the flag and has not signed in since.
+
+**Amended 2026-10-14 (GRA-287 item 8, GRA-331): a provider linked from Settings may carry another
+address.** Settings › Account connects and disconnects Google and GitHub for a signed-in person
+through Better Auth's `linkSocial`, `unlinkAccount` and `listAccounts`. The account the person links
+there may hold an address other than theirs on Graft (`accountLinking.allowDifferentEmails`), since
+many people sign in to GitHub with a personal address and work under another. Better Auth reads the
+option only on that explicit link, whose signed state names the session's person; a sign-in still
+attaches to an account only through the verified address on both sides, as the section above has
+it, and the provider must still vouch for its own address. The console offers no removal that would
+leave the person without a way to sign in that the door still shows
+(`apps/web/src/lib/account-settings.ts`), and Better Auth refuses the last account row on its own.
 
 ## Consequences
 
