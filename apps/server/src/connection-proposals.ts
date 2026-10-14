@@ -8,6 +8,7 @@ import {
   type DocsProposalDeps,
   type DocsProposalFailure,
   type DocsProposalFound,
+  type DocsProposalResult,
   type DocsProposalStage,
   type DocsProposalStats,
   proposeConnectionFromDocs,
@@ -33,6 +34,12 @@ import {
 
 /** How long a job is answered after it started, settled or not. */
 export const CONNECTION_PROPOSAL_TTL_MS = 15 * 60 * 1000;
+/**
+ * How long a job may run before it is failed, whatever it waits on (Greptile on #231): the page's
+ * DNS lookup and the person's model key are read before the reader's and the model's own bounds
+ * start, so the whole job is bounded here, which is what lets a running job never be evicted.
+ */
+export const CONNECTION_PROPOSAL_DEADLINE_MS = 120_000;
 /** How many jobs the process holds before the oldest is dropped. */
 export const CONNECTION_PROPOSAL_MAX = 1000;
 
@@ -103,6 +110,8 @@ export type ConnectionProposalStoreOptions = {
   onSettled?: (event: ConnectionProposalSettled) => void;
   ttlMs?: number;
   max?: number;
+  /** The whole job's bound; `CONNECTION_PROPOSAL_DEADLINE_MS` when absent. */
+  deadlineMs?: number;
   now?: () => Date;
 };
 
@@ -202,6 +211,8 @@ export function createConnectionProposalStore(
         stats: DocsProposalStats,
         error?: string,
       ) => {
+        // The first settle wins: a job the deadline failed stays failed when its work lands late.
+        if (state.status !== "running") return;
         Object.assign(state, patch, { status, settledAt: now() });
         options.onSettled?.({
           id: state.id,
@@ -215,40 +226,75 @@ export function createConnectionProposalStore(
           ...(error === undefined ? {} : { error }),
         });
       };
-      const done = proposeConnectionFromDocs(
+      const settleWith = (result: DocsProposalResult) =>
+        result.ok
+          ? settle(
+              "ready",
+              {
+                found: result.found,
+                proposal: result.proposal,
+                unresolvedHosts: result.unresolvedHosts,
+              },
+              result.stats,
+            )
+          : settle("failed", { found: result.found, failure: result.failure }, result.stats);
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const deadline = new Promise<"deadline">((resolve) => {
+        timer = setTimeout(
+          () => resolve("deadline"),
+          options.deadlineMs ?? CONNECTION_PROPOSAL_DEADLINE_MS,
+        );
+      });
+      const work = proposeConnectionFromDocs(
         { personId, name: input.name, docsUrl: input.docsUrl },
         deps,
         (stage, found) => {
+          if (state.status !== "running") return;
           state.stage = stage;
           state.found = found;
         },
-      ).then(
-        (result) =>
-          result.ok
-            ? settle(
-                "ready",
-                {
-                  found: result.found,
-                  proposal: result.proposal,
-                  unresolvedHosts: result.unresolvedHosts,
-                },
-                result.stats,
-              )
-            : settle("failed", { found: result.found, failure: result.failure }, result.stats),
-        (error: unknown) =>
-          // Not a reason a person can act on: the job says so and the log carries the message.
-          settle(
-            "failed",
-            {
-              failure: {
-                reason: "model_failed",
-                message: "Something went wrong while Graft read the documentation. Try again.",
-              },
-            },
-            { pages: 0, characters: 0, outcome: null, usage: { inputTokens: 0, outputTokens: 0 } },
-            error instanceof Error ? error.message : String(error),
-          ),
       );
+      const done = Promise.race([work, deadline])
+        .then(
+          (result) =>
+            result === "deadline"
+              ? settle(
+                  "failed",
+                  {
+                    failure: {
+                      reason: "proposal_timeout",
+                      message:
+                        "Graft took too long to read the documentation. Try again, or set it up by hand.",
+                    },
+                  },
+                  {
+                    pages: 0,
+                    characters: 0,
+                    outcome: null,
+                    usage: { inputTokens: 0, outputTokens: 0 },
+                  },
+                )
+              : settleWith(result),
+          (error: unknown) =>
+            // Not a reason a person can act on: the job says so and the log carries the message.
+            settle(
+              "failed",
+              {
+                failure: {
+                  reason: "model_failed",
+                  message: "Something went wrong while Graft read the documentation. Try again.",
+                },
+              },
+              {
+                pages: 0,
+                characters: 0,
+                outcome: null,
+                usage: { inputTokens: 0, outputTokens: 0 },
+              },
+              error instanceof Error ? error.message : String(error),
+            ),
+        )
+        .finally(() => clearTimeout(timer));
       jobs.set(state.id, { personId, state, done });
       return { id: state.id };
     },

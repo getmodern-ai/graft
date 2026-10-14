@@ -57,6 +57,8 @@ export type DocsProposalFailureReason =
   | "model_timeout"
   | "model_failed"
   | "model_unavailable"
+  /** The whole job ran past the caller's deadline (a stalled lookup before any bound of its own started). */
+  | "proposal_timeout"
   /** The address is private, loopback, link-local, metadata or internal, by its name or by what it resolves to. */
   | "host_not_public"
   /** The proposal broke another connection rule (a header name, a scheme parameter, an https address). */
@@ -346,7 +348,11 @@ export async function proposeConnectionFromDocs(
   // The sign-in line is done once the rules took the scheme: polls during the lookups show it.
   onStage("checking_address", { ...found });
   const resolve = deps.resolveHost ?? defaultWebPageDeps.resolve;
-  const hostnames = [...new Set(payload.hosts.map((host) => host.replace(/:\d+$/, "")))].filter(
+  // The rules keep an IPv6 literal bracketed (`[2001:db8::1]:443`): bare, it is judged a literal
+  // and never sent to DNS (Greptile on #231).
+  const hostnames = [
+    ...new Set(payload.hosts.map((host) => host.replace(/:\d+$/, "").replace(/^\[|\]$/g, ""))),
+  ].filter(
     // A literal was judged by the rules above.
     (hostname) => isIP(hostname) === 0,
   );

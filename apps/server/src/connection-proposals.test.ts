@@ -327,6 +327,29 @@ describe("createConnectionProposalStore", () => {
     await store.idle();
   });
 
+  it("fails a job that runs past the deadline, whatever it waits on, and frees the person", async () => {
+    const stalled = gatedReader();
+    const store = createConnectionProposalStore({
+      deps: {
+        model: createScriptedModel([], { connectionProposal: UNLEASHED }),
+        readWebPage: stalled.read,
+        resolveHost: async () => PUBLIC,
+      },
+      deadlineMs: 20,
+    });
+    const { id } = store.start("person_a", { name: "Acme", docsUrl: DOCS_URL });
+    await store.idle();
+    expect(store.get("person_a", id)).toMatchObject({
+      status: "failed",
+      failure: { reason: "proposal_timeout" },
+    });
+    // The work landing late changes nothing, and the person may start again.
+    stalled.release();
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(store.get("person_a", id).status).toBe("failed");
+    expect(store.availability("person_a")).toEqual({ available: true, running: null });
+  });
+
   it("fails the job, with the throw for the log alone, when the model throws", async () => {
     const events: ConnectionProposalSettled[] = [];
     const throwing: ModelAdapter = {

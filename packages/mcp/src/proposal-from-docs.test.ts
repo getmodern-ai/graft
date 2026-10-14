@@ -194,6 +194,21 @@ describe("proposeConnectionFromDocs", () => {
     expect(result).toMatchObject({ ok: true, unresolvedHosts: ["files.unleashed.example"] });
   });
 
+  it("judges a bracketed IPv6 address as a literal, never a name to look up", async () => {
+    const looked: string[] = [];
+    const { result } = await run(
+      { ...UNLEASHED, primaryHost: "https://[2606:4700:4700::1111]" },
+      {
+        resolveHost: async (host) => {
+          looked.push(host);
+          throw new Error("ENOTFOUND");
+        },
+      },
+    );
+    expect(result).toMatchObject({ ok: true, unresolvedHosts: [] });
+    expect(looked).toEqual([]);
+  });
+
   it("keeps the provider's failure message, bounded, for the log", async () => {
     const failing: ModelAdapter = {
       name: "failing",
