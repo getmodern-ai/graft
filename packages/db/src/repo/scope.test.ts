@@ -137,9 +137,10 @@ describe("agent-scoped reads take both ids of the scope in the statement", () =>
    * The console's list (GRA-290): one statement for every agent of the person, each figure a
    * subquery correlated to the person-scoped row, so the read costs the same for one agent or
    * fifty. The scope's subquery names the person by parameter on the connection table, as
-   * `listScopeConnectionIds` does, and reads the mode and the list off the outer row.
+   * `listScopeConnectionIds` does, and reads the mode and the list off the outer row. The last
+   * activity counts every outcome; whether the agent has run a tool counts only `ok`.
    */
-  it("reads each agent's working-set count, resolved scope and last activity in the person's list statement", async () => {
+  it("reads each agent's working-set count, resolved scope, last activity and successful run in the person's list statement", async () => {
     await listAgents(db, "person_1");
     const s = only();
     expect(s.sql).toContain(
@@ -151,10 +152,13 @@ describe("agent-scoped reads take both ids of the scope in the statement", () =>
     expect(s.sql).toContain(
       '(select max("usage_ledger"."created_at") from "usage_ledger" where ("usage_ledger"."agent_id" = "agent"."id" and "usage_ledger"."dry_run" = $3))',
     );
-    expect(s.sql).toMatch(
-      /from "agent" where "agent"\."person_id" = \$4 order by "agent"\."created_at" asc, "agent"\."id" asc$/,
+    expect(s.sql).toContain(
+      'exists (select "id" from "usage_ledger" where ("usage_ledger"."agent_id" = "agent"."id" and "usage_ledger"."dry_run" = $4 and "usage_ledger"."outcome" = $5))',
     );
-    expect(s.params).toEqual(["person_1", "all", false, "person_1"]);
+    expect(s.sql).toMatch(
+      /from "agent" where "agent"\."person_id" = \$6 order by "agent"\."created_at" asc, "agent"\."id" asc$/,
+    );
+    expect(s.params).toEqual(["person_1", "all", false, false, "ok", "person_1"]);
   });
 
   it("the working set", async () => {

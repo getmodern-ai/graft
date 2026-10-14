@@ -65,7 +65,7 @@ function fakeDeps(overrides: Partial<AgentDeps> = {}): AgentDeps {
     findAgentByTokenHash: vi.fn(async () => row),
     findAgentByMcpAccessTokenHash: vi.fn(async () => null),
     listAgents: vi.fn(async () => [
-      { ...row, workingSetCount: 0, connectionIds: [], lastActiveAt: null },
+      { ...row, workingSetCount: 0, connectionIds: [], lastActiveAt: null, hasRunTool: false },
     ]),
     updateAgent: vi.fn(async (_db, _p, _a, patch) => ({ ...row, ...patch })),
     revokeAgent: vi.fn(async () => ({ ...row, revokedAt: NOW })),
@@ -213,21 +213,27 @@ describe("createAgent", () => {
 });
 
 describe("listAgents", () => {
-  it("carries each row's scope and last activity, and derives hasRunTool from the list with no second read", async () => {
-    const ranAt = new Date("2026-10-01T10:00:00Z");
+  const ranAt = new Date("2026-10-01T10:00:00Z");
+  const listed = (overrides: { lastActiveAt: Date | null; hasRunTool: boolean }) => ({
+    ...row,
+    id: "agent_2",
+    scopeMode: "listed" as const,
+    revokedAt: NOW,
+    workingSetCount: 0,
+    connectionIds: ["conn_b"],
+    ...overrides,
+  });
+  const onAll = {
+    ...row,
+    workingSetCount: 2,
+    connectionIds: ["conn_a", "conn_b"],
+    lastActiveAt: null,
+    hasRunTool: false,
+  };
+
+  it("carries each row's scope and last activity, folds hasRunTool from the rows with no second read, and keeps the row's flag off the agent", async () => {
     const deps = fakeDeps({
-      listAgents: vi.fn(async () => [
-        { ...row, workingSetCount: 2, connectionIds: ["conn_a", "conn_b"], lastActiveAt: null },
-        {
-          ...row,
-          id: "agent_2",
-          scopeMode: "listed" as const,
-          revokedAt: NOW,
-          workingSetCount: 0,
-          connectionIds: ["conn_b"],
-          lastActiveAt: ranAt,
-        },
-      ]),
+      listAgents: vi.fn(async () => [onAll, listed({ lastActiveAt: ranAt, hasRunTool: true })]),
     });
     const answer = await listAgents(ctx, PRINCIPAL, deps);
     expect(deps.listAgents).toHaveBeenCalledTimes(1);
@@ -250,10 +256,19 @@ describe("listAgents", () => {
       { id: "agent_2", scopeMode: "listed", connectionIds: ["conn_b"], lastActiveAt: ranAt },
     ]);
     expect(answer.agents[0]).not.toHaveProperty("tokenHash");
+    expect(answer.agents[1]).not.toHaveProperty("hasRunTool");
   });
 
-  it("answers hasRunTool false when no agent has a call that was not a dry run, and for no agents", async () => {
-    expect((await listAgents(ctx, PRINCIPAL, fakeDeps())).hasRunTool).toBe(false);
+  it("answers hasRunTool false for an agent active only through refused or failed calls: activity is not a successful run", async () => {
+    const deps = fakeDeps({
+      listAgents: vi.fn(async () => [onAll, listed({ lastActiveAt: ranAt, hasRunTool: false })]),
+    });
+    const answer = await listAgents(ctx, PRINCIPAL, deps);
+    expect(answer.agents[1]?.lastActiveAt).toEqual(ranAt);
+    expect(answer.hasRunTool).toBe(false);
+  });
+
+  it("answers hasRunTool false for no agents", async () => {
     const none = fakeDeps({ listAgents: vi.fn(async () => []) });
     expect(await listAgents(ctx, PRINCIPAL, none)).toEqual({ agents: [], hasRunTool: false });
   });

@@ -246,6 +246,7 @@ function harness(overrides: { clock?: Date } = {}) {
         workingSetCount: 0,
         connectionIds: [],
         lastActiveAt: null,
+        hasRunTool: false,
       })),
     ),
     updateAgent: vi.fn(async () => null),

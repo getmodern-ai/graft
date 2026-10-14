@@ -477,6 +477,9 @@ export function createFakeDeps(store: FakeStore): FakeDeps {
               .filter((usage) => usage.agentId === row.id && !usage.dryRun)
               .map((usage) => usage.createdAt)
               .sort((a, b) => b.getTime() - a.getTime())[0] ?? null,
+          hasRunTool: store.usage.some(
+            (usage) => usage.agentId === row.id && !usage.dryRun && usage.outcome === "ok",
+          ),
         })),
     updateAgent: async (_db, personId, agentId, patch) => {
       const row = store.agents.get(agentId);

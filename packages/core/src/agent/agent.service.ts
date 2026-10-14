@@ -69,10 +69,11 @@ export type AgentListOutput = AgentOutput & {
 
 /**
  * `GET /api/agents`: every agent of the person's, revoked included, and whether any of them has
- * ever run a tool for real (the empty Home's checklist). `hasRunTool` is derived from the list
- * rather than read again: the list holds every agent the person has, and a ledger row cannot
- * outlive its agent (`usage_ledger.agent_id` cascades), so "some agent was last active" is "the
- * person has a non-dry-run ledger row".
+ * ever run a tool for real and had it succeed (the empty Home's checklist): a ledger row that is
+ * not a dry run and answered `ok`, where `lastActiveAt` counts a refused or failed call too. It is
+ * read per agent in the list's own statement and folded here rather than read again: the list
+ * holds every agent the person has, and a ledger row cannot outlive its agent
+ * (`usage_ledger.agent_id` cascades), so "some agent has one" is "the person has one".
  */
 export type AgentListAnswer = { agents: AgentListOutput[]; hasRunTool: boolean };
 
@@ -403,7 +404,7 @@ export async function listAgents(
     connectionIds: row.connectionIds,
     lastActiveAt: row.lastActiveAt,
   }));
-  return { agents, hasRunTool: agents.some((agent) => agent.lastActiveAt !== null) };
+  return { agents, hasRunTool: rows.some((row) => row.hasRunTool) };
 }
 
 export async function getAgent(

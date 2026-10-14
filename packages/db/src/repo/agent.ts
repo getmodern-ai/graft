@@ -17,13 +17,15 @@ import type { AgentScope } from "./scope";
 export type AgentRow = typeof agent.$inferSelect;
 /**
  * An agent as the console's list draws it: the row, the size of its working set, its scope as it
- * resolves under its mode (`listScopeConnectionIds`'s rule) and the moment of its last call that
- * was not a dry run, null for an agent that has made none (GRA-290).
+ * resolves under its mode (`listScopeConnectionIds`'s rule), the moment of its last call that was
+ * not a dry run whatever its outcome, null for an agent that has made none, and whether it has ever
+ * had a call that was not a dry run succeed (GRA-290).
  */
 export type AgentListRow = AgentRow & {
   workingSetCount: number;
   connectionIds: string[];
   lastActiveAt: Date | null;
+  hasRunTool: boolean;
 };
 export type AgentPatch = Partial<
   Pick<AgentRow, "name" | "workingSetCap" | "idleWindowDays" | "scopeMode">
@@ -110,8 +112,9 @@ export async function findAgentForUpdate(
  * The scope is `listScopeConnectionIds`'s rule per row (ADR 0007 as amended 2026-09-19): every
  * connection of the person's, named by the parameter and not only through the agent, when the row
  * is on `all`, and its list's when it is on `listed`, revoked connections included on both. The
- * last activity skips dry runs, which `acquire`'s job makes on the agent's behalf, and is read off
- * `usage_ledger_agent_id_created_at_idx`.
+ * last activity skips dry runs, which `acquire`'s job makes on the agent's behalf, and counts a
+ * refused or failed call as activity; `hasRunTool` counts only a call that answered `ok`. Both are
+ * read off `usage_ledger_agent_id_created_at_idx`.
  */
 export async function listAgents(db: DbOrTx, personId: string): Promise<AgentListRow[]> {
   const scope = db
@@ -140,6 +143,16 @@ export async function listAgents(db: DbOrTx, personId: string): Promise<AgentLis
     .select({ at: sql`max("usage_ledger"."created_at")` })
     .from(usageLedger)
     .where(and(eq(usageLedger.agentId, agent.id), eq(usageLedger.dryRun, false)));
+  const ranOk = db
+    .select({ id: usageLedger.id })
+    .from(usageLedger)
+    .where(
+      and(
+        eq(usageLedger.agentId, agent.id),
+        eq(usageLedger.dryRun, false),
+        eq(usageLedger.outcome, "ok"),
+      ),
+    );
   return db
     .select({
       ...getTableColumns(agent),
@@ -148,6 +161,7 @@ export async function listAgents(db: DbOrTx, personId: string): Promise<AgentLis
       connectionIds: sql<string[]>`${scope}`,
       // A bare subquery loses the column's mapping; `timestamp` without a zone needs it back.
       lastActiveAt: sql<Date | null>`${lastActive}`.mapWith(usageLedger.createdAt),
+      hasRunTool: exists(ranOk).mapWith(Boolean),
     })
     .from(agent)
     .where(eq(agent.personId, personId))

@@ -169,6 +169,7 @@ function harness(session: { user: { id: string } } | null = { user: { id: "perso
         workingSetCount: 0,
         connectionIds: [],
         lastActiveAt: null,
+        hasRunTool: false,
       })),
     ),
     updateAgent: vi.fn(async () => null),

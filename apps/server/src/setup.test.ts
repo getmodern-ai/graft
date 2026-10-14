@@ -82,7 +82,13 @@ function harness(options: { agents?: AgentRow[]; work?: { connections: number; t
       return row;
     }),
     listAgents: async () =>
-      agents.map((row) => ({ ...row, workingSetCount: 0, connectionIds: [], lastActiveAt: null })),
+      agents.map((row) => ({
+        ...row,
+        workingSetCount: 0,
+        connectionIds: [],
+        lastActiveAt: null,
+        hasRunTool: false,
+      })),
     replaceAgentConnections: async () => {},
     listScopeConnectionIds: async () => [],
     findConnectionsByIds: async () => [],

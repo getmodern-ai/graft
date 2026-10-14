@@ -578,9 +578,10 @@ describe.skipIf(!adminUrl)("the schema, the account and the services over a real
   });
 
   /**
-   * GRA-290: the console's list carries each agent's scope as it resolves under its mode and its
-   * last call that was not a dry run, from one statement, against Postgres's own evaluation of the
-   * correlated subqueries the rendered-SQL test in `packages/db` pins.
+   * GRA-290: the console's list carries each agent's scope as it resolves under its mode, its last
+   * call that was not a dry run whatever the outcome, and whether the person has had one answer
+   * `ok`, from one statement, against Postgres's own evaluation of the correlated subqueries the
+   * rendered-SQL test in `packages/db` pins.
    */
   it("lists each agent's resolved scope and last activity, an agent on all beside one on listed", async () => {
     const alice = await signUp("list-alice@example.com");
@@ -613,12 +614,17 @@ describe.skipIf(!adminUrl)("the schema, the account and the services over a real
 
     // The narrow agent's real call is older than its dry run; the dry run must not count.
     const ranAt = new Date("2026-10-01T10:00:00.000Z");
-    const usage = (agentId: string, dryRun: boolean, createdAt: Date) =>
+    const usage = (
+      agentId: string,
+      dryRun: boolean,
+      createdAt: Date,
+      outcome: "ok" | "error" | "refused" = "ok",
+    ) =>
       insertUsage(db, {
         id: `usage_${randomBytes(6).toString("hex")}`,
         agentId,
         toolName: "demo__list",
-        outcome: "ok",
+        outcome,
         dryRun,
         latencyMs: 5,
         createdAt,
@@ -649,6 +655,23 @@ describe.skipIf(!adminUrl)("the schema, the account and the services over a real
     // Bob's agent on `all` reaches Bob's connection alone, and a dry run alone is not a run.
     expect(await listAgents(ctx, { personId: bob }, defaultAgentDeps)).toMatchObject({
       agents: [{ id: bobsAgent.agent.id, connectionIds: [bobs.id], lastActiveAt: null }],
+      hasRunTool: false,
+    });
+
+    // Carol's agent was refused and then failed, and its one `ok` was a dry run: active, never run.
+    const carol = await signUp("list-carol@example.com");
+    const carolsAgent = await createAgent(
+      ctx,
+      { personId: carol },
+      { name: "c" },
+      defaultAgentDeps,
+    );
+    const failedAt = new Date("2026-10-03T10:00:00.000Z");
+    await usage(carolsAgent.agent.id, false, ranAt, "refused");
+    await usage(carolsAgent.agent.id, false, failedAt, "error");
+    await usage(carolsAgent.agent.id, true, new Date("2026-10-04T10:00:00.000Z"));
+    expect(await listAgents(ctx, { personId: carol }, defaultAgentDeps)).toMatchObject({
+      agents: [{ id: carolsAgent.agent.id, lastActiveAt: failedAt }],
       hasRunTool: false,
     });
   });

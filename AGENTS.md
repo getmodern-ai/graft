@@ -1184,8 +1184,9 @@ revoked records are read-only. `GET /api/agents` includes `workingSetCount`, cou
 person-scoped agent in the same statement; the table shows count/cap with Cando's status dot.
 Since GRA-290 the same one statement also answers each agent's `connectionIds` (the scope as it
 resolves under its mode, `listScopeConnectionIds`'s rule) and `lastActiveAt` (its last ledger row
-that was not a dry run), and the answer is `AgentListAnswer`, `{ agents, hasRunTool }`, the flag
-derived from the list in `@graft/core`'s `listAgents` with no second read.
+that was not a dry run, any outcome), and the answer is `AgentListAnswer`, `{ agents, hasRunTool }`:
+the flag is a per-agent `exists` over ledger rows that are not dry runs and answered `ok`, in the
+same statement, folded across the person's agents in `@graft/core`'s `listAgents`.
 
 **Setup is one record per person and three routes** (GRA-204; ADR 0024). The `setup` table
 (`packages/db/src/schema/setup.ts`, migration 0012) keys on the person: the step reached, the
