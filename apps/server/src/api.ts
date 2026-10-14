@@ -107,6 +107,7 @@ import {
   withStarter,
 } from "./directory";
 import { createMcpConsentRoutes, type McpOAuthServerOptions } from "./mcp-oauth";
+import { type ModelDeployment, NO_MODEL_DEPLOYMENT } from "./model";
 import { beginConsent, createOAuthRoutes, type OAuthOptions } from "./oauth";
 import { createOriginGuard } from "./origin-guard";
 import {
@@ -170,6 +171,12 @@ export type {
 export type { SetupFinishOutput, SetupToolContext } from "./setup-finish";
 export type { SetupReadyMade } from "./setup-stock";
 export type { AgentToolRunOutput } from "./tool-run";
+
+/**
+ * `GET /me/model` (GRA-297): the deployment's model as `model.ts` chose it at boot, and whether
+ * this person has a key of their own. The console's Model row reads it.
+ */
+export type ModelOutput = ModelDeployment & { personKey: boolean };
 
 /**
  * The person's JSON API — the routes the console (GRA-26) will call, a plain Hono app for now (GRA-1
@@ -318,6 +325,12 @@ export type ApiOptions = {
    * database's jobs (`defaultAcquireJobDeps`).
    */
   acquire?: SetupAcquireDeps;
+  /**
+   * This deployment's model as a person may read it (GRA-297; `model.ts`'s `ModelDeployment`),
+   * which `GET /me/model` answers. `index.ts` binds `createModel`'s; absent, no fixed model and no
+   * router, as a laptop that configured none.
+   */
+  model?: ModelDeployment;
   /**
    * The MCP endpoint's deps, for the console's run of an authored tool (GRA-208; ADR 0024;
    * `tool-run.ts`), which runs exactly what a first-class call over `/mcp` runs. `index.ts` binds
@@ -1021,6 +1034,23 @@ export function createApi(options: ApiOptions): Hono {
   api.get("/me/model-key", async (c) => {
     const principal = await principalOf(c.req.raw.headers);
     return c.json({ modelKey: await getPersonModelKey(ctx, principal, modelKeyDeps) });
+  });
+
+  /**
+   * What answers this person's `acquire` jobs (GRA-297): the deployment's fixed model, whether a
+   * key of their own would be used (ADR 0014; `model.ts`), and whether they have one. A route of
+   * its own rather than a field on `/me/model-key`, whose three verbs are one row's: the
+   * deployment's half is boot configuration, not the person's row, and the key routes keep
+   * answering the row alone. Neither half carries a key or the operator's model ids.
+   */
+  api.get("/me/model", async (c) => {
+    const principal = await principalOf(c.req.raw.headers);
+    const key = await getPersonModelKey(ctx, principal, modelKeyDeps);
+    const model: ModelOutput = {
+      ...(options.model ?? NO_MODEL_DEPLOYMENT),
+      personKey: key !== null,
+    };
+    return c.json({ model });
   });
 
   api.put("/me/model-key", async (c) => {
