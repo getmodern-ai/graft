@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { toast } from "sonner";
 
+import { RetryNotice } from "@/components/retry-notice";
 import { SettingsEmptyRow, SettingsRow } from "@/components/settings/settings-row";
 import { StatusChip } from "@/components/status-chip";
 import {
@@ -32,7 +33,7 @@ import { MAX_NAME_LENGTH, nameDraftProblem, socialRows } from "@/lib/account-set
 import { authClient } from "@/lib/auth-client";
 import { accountKeys, accountsQuery } from "@/lib/password-queries";
 import { sessionKeys } from "@/lib/session-queries";
-import { SOCIAL_PROVIDER_LABELS, signInMethodsQuery } from "@/lib/sign-in";
+import { SOCIAL_PROVIDER_LABELS, settingsSignInMethodsQuery } from "@/lib/sign-in";
 import { EMAIL_STATUS_CHIP, SIGN_IN_ACCOUNT_CHIP } from "@/lib/status-chips";
 
 /**
@@ -173,12 +174,13 @@ export function EmailRow() {
 
 /**
  * A row per provider `GET /api/sign-in-methods` names, none for one it does not (ADR 0020), so a
- * self-host with neither draws nothing here. The rows wait on the accounts read the password row
+ * self-host with neither draws nothing here. The read is `settingsSignInMethodsQuery`, which
+ * reports a failure where the door's falls back to none (Greptile on #251). The rows wait on the accounts read the password row
  * shares; its failure is shown once, by the password row, rather than once per provider. Removing
  * the last way of signing in is never offered (`account-settings.ts`'s `canDisconnect`).
  */
 export function SocialAccountRows() {
-  const methods = useQuery(signInMethodsQuery);
+  const methods = useQuery(settingsSignInMethodsQuery);
   const accounts = useQuery(accountsQuery);
   const [disconnecting, setDisconnecting] = useState<{
     provider: SocialProviderName;
@@ -186,7 +188,23 @@ export function SocialAccountRows() {
   } | null>(null);
 
   const configured = methods.data?.social ?? [];
-  if (methods.isPending) return <RowSkeleton />;
+  if (methods.data === undefined) {
+    // A failed first read says so with a Retry; a failed refetch keeps the rows as last read.
+    return methods.isError ? (
+      <SettingsEmptyRow>
+        <p className="text-muted-foreground text-sm">
+          <RetryNotice
+            error={methods.error}
+            message="Could not load the accounts you can sign in with."
+            onRetry={() => void methods.refetch()}
+            retrying={methods.isFetching}
+          />
+        </p>
+      </SettingsEmptyRow>
+    ) : (
+      <RowSkeleton />
+    );
+  }
   if (configured.length === 0) return null;
   if (accounts.data === undefined) {
     return accounts.isError ? null : configured.map((provider) => <RowSkeleton key={provider} />);
