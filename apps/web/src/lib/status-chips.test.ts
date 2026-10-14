@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  ACTIVITY_OUTCOME_CHIP,
   AGENT_STATUS_CHIP,
   APPROVAL_DECISION_CHIP,
   AWAITING_CLIENT_SECRET_CHIP,
@@ -28,6 +29,7 @@ const EVERY_CHIP: StatusChip[] = [
   AWAITING_CLIENT_SECRET_CHIP,
   AWAITING_RECONNECTION_CHIP,
   ...Object.values(CALL_OUTCOME_CHIP),
+  ...Object.values(ACTIVITY_OUTCOME_CHIP),
   DRY_RUN_CHIP,
   NO_PASSING_VERSION_CHIP,
   SIGN_IN_ACCOUNT_CHIP,
@@ -82,6 +84,15 @@ describe("status chips", () => {
     expect(APPROVAL_DECISION_CHIP.deny.variant).toBe("destructive");
     expect(MODEL_STATUS_CHIP.needs_key.variant).toBe("destructive");
     expect(MODEL_STATUS_CHIP.unconfigured.variant).toBe("destructive");
+  });
+
+  // GRA-319: a run is an event that ended, so the neutral tone; a failure is still destructive.
+  it("draws an activity run as Ran, Failed or Blocked", () => {
+    expect(ACTIVITY_OUTCOME_CHIP).toEqual({
+      ok: { variant: "secondary", label: "Ran" },
+      error: { variant: "destructive", label: "Failed" },
+      refused: { variant: "outline", label: "Blocked" },
+    });
   });
 
   it("gives the waiting states the outline tone", () => {
