@@ -1,5 +1,5 @@
 import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useNavigate } from "@tanstack/react-router";
+import { useNavigate, useRouterState } from "@tanstack/react-router";
 import * as React from "react";
 import { toast } from "sonner";
 
@@ -145,6 +145,17 @@ export function CommandPalette() {
   const chosenRequest = React.useRef<string | null>(null);
   const [shownRequest, setShownRequest] = React.useState<PendingAction | null>(null);
   const [requestOpen, setRequestOpen] = React.useState(false);
+  // Counts choices; reopening Search or a change of screen counts too, so a choice still reading
+  // the list when either happens is dropped (`openRequest`).
+  const selection = React.useRef(0);
+  const pathname = useRouterState({ select: (state) => state.location.pathname });
+  React.useEffect(() => {
+    if (open) selection.current += 1;
+  }, [open]);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: a change of screen is the trigger.
+  React.useEffect(() => {
+    selection.current += 1;
+  }, [pathname]);
 
   // Every read waits for the palette to open (`enabled`), then answers from the cache the screens
   // share, so a palette opened on Requests or Home costs nothing it has not read already.
@@ -211,9 +222,13 @@ export function CommandPalette() {
   };
 
   const openRequest = async (id: string) => {
+    const mine = ++selection.current;
     const latest = await queryClient
       .fetchQuery({ ...pendingActionsQuery, staleTime: 0 })
       .catch(() => null);
+    // The person moved on while the read was in flight (reopened Search, went elsewhere, or
+    // chose again): this choice is stale, and opening it now would land over the new screen.
+    if (mine !== selection.current) return;
     const live = latest?.pendingActions.find((action) => action.id === id);
     // Answered or gone since the palette read the list (or the read failed): Requests says where
     // it stands.
