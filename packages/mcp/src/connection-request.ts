@@ -215,11 +215,13 @@ export type ScopeAskPayload = {
 };
 
 /**
- * What the console records on a `scope` ask (GRA-104): the person's yes or no, and whether they
- * left the build choice on. Recorded verbatim, as a tool ask's answer is — the connection is the
- * payload's, not the answer's — and read by `readScopeAnswer`.
+ * What the console records on a `scope` ask (GRA-104): the person's yes or no, whether they
+ * left the build choice on, and whether the yes also allows the integration's tools, destructive
+ * ones left out (the handoff page's *Full access*, GRA-314; ADR 0008 as amended 2026-10-14).
+ * Recorded verbatim, as a tool ask's answer is — the connection is the payload's, not the
+ * answer's — and read by `readScopeAnswer`.
  */
-export type ScopeAnswer = { allow: boolean; approveBuild?: boolean };
+export type ScopeAnswer = { allow: boolean; approveBuild?: boolean; allowVendor?: boolean };
 
 /**
  * What the console records on either action once the secret is in the vault: the connection the
@@ -351,6 +353,7 @@ export function readScopeAnswer(answer: Record<string, unknown> | null | undefin
   return {
     allow: answer?.allow === true,
     ...(typeof answer?.approveBuild === "boolean" ? { approveBuild: answer.approveBuild } : {}),
+    ...(typeof answer?.allowVendor === "boolean" ? { allowVendor: answer.allowVendor } : {}),
   };
 }
 

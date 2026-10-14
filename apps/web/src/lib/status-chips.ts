@@ -113,6 +113,18 @@ export const CALL_OUTCOME_CHIP = {
   refused: { variant: "outline", label: "Refused" },
 } as const satisfies Record<ConnectionCall["outcome"], StatusChip>;
 
+/**
+ * A run in the activity (GRA-319; Figma 2095:10473), in the person's words. Not the success tone
+ * for a run that went through: the row records a call that ended, not a state that holds, so it is
+ * the neutral rest; a failure is destructive, and a call Graft stopped before it ran is outline,
+ * as a refused call is above.
+ */
+export const ACTIVITY_OUTCOME_CHIP = {
+  ok: { variant: "secondary", label: "Ran" },
+  error: { variant: "destructive", label: "Failed" },
+  refused: { variant: "outline", label: "Blocked" },
+} as const satisfies Record<ConnectionCall["outcome"], StatusChip>;
+
 /** A dry run reached the vendor for reads only (CONTEXT.md, *Dry run*); the chip rides beside the tool name. */
 export const DRY_RUN_CHIP: StatusChip = { variant: "outline", label: "Dry run" };
 
@@ -195,4 +207,24 @@ export function toolAnnotationChip(readOnly: boolean, destructive: boolean): Sta
   if (readOnly) return TOOL_ANNOTATION_CHIP["read-only"];
   if (destructive) return TOOL_ANNOTATION_CHIP.destructive;
   return TOOL_ANNOTATION_CHIP.write;
+}
+
+/**
+ * A tool's access in App v2's words (GRA-320; GRA-287: "Can delete" on Tools): what the tool does
+ * to the person's data, from the same annotations. Reads never ask (ADR 0008), so a read is the
+ * neutral tone, a write waits on the person's first answer, and a delete keeps the red.
+ */
+export const TOOL_ACCESS_CHIP = {
+  read: { variant: "secondary", label: "Read" },
+  changes: { variant: "outline", label: "Changes data" },
+  deletes: { variant: "destructive", label: "Can delete" },
+} as const satisfies Record<"read" | "changes" | "deletes", StatusChip>;
+
+export function toolAccessChip(annotations: {
+  readOnlyHint: boolean;
+  destructiveHint: boolean;
+}): StatusChip {
+  if (annotations.readOnlyHint) return TOOL_ACCESS_CHIP.read;
+  if (annotations.destructiveHint) return TOOL_ACCESS_CHIP.deletes;
+  return TOOL_ACCESS_CHIP.changes;
 }
