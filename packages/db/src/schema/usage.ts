@@ -26,16 +26,18 @@ export type UsageOutcome = (typeof usageOutcome)[number];
  * - `reason`: the word a `refused` or `error` line ended on, from the vocabulary the run already
  *   answers (a refusal's `reason`, such as `approval_declined`, `tool_denied`, `awaiting_approval`,
  *   `connection_revoked`, `input_invalid`, `blob_quota`; a failure's kind, such as `threw`,
- *   `timeout`, `sandbox_unavailable`, `exit_nonzero`). Null on an `ok` line. Never a message,
- *   never content: `@graft/core`'s `recordUsage` refuses anything that is not a snake_case word.
+ *   `timeout`, `killed`, `still_running`, `sandbox_unavailable`; `execute__`'s `exit_nonzero` or
+ *   `exit_unknown`). Null on an `ok` line. Never a message, never content: `@graft/core`'s
+ *   `recordUsage` refuses anything that is not a snake_case word.
  * - `asked`: whether this call put an approval ask to the person or took the answer to one.
  *   `true`: the call opened an ask, re-offered one still open, or took one answered while it waited
  *   (so `ok` with `true` is "approved", `refused` with `true` is declined, expired or still
  *   awaiting, by `reason`). `false`: the gate decided with no ask on this call, on a read-only
  *   annotation or a standing answer (a tool's, its integration's, or the build approval for
  *   `execute__`), so `ok` with `false` is "ran without asking" and `refused` with `false` is a
- *   standing deny. Null: the call never reached the gate (refused before it, or a dry run, which
- *   passes no gate).
+ *   standing deny. Null: the call never reached the gate (refused before it, or an authored
+ *   tool's dry run, which passes no gate). An `execute__` dry run still needs the build approval,
+ *   so it records `true` or `false` as any other execute call does.
  * - `connectionId`: the connection the call ran, or would have run, against: an authored tool's as
  *   `run.ts` resolves it (the default, the one connection it follows, or the one the caller named),
  *   and `execute__<id>`'s own. Null when the call ended before one was resolved; `set null` with the

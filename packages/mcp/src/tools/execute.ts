@@ -213,12 +213,16 @@ export async function callExecuteTool(
 }
 
 /**
- * The ledger's word for how an execute call ended (GRA-301), never the command's output: a
- * refusal's own `reason`; a quota the record went past, `blob_quota`; a process that ran and
- * exited other than 0, `exit_nonzero`; no process at all (the sandbox would not open, or the exec
- * threw), `sandbox_unavailable`. Null on `ok`.
+ * The ledger's word for how an execute call ended (GRA-301), never the command's output, read off
+ * `describeProcess`'s status before its exit code, since a backing's code can be absent or
+ * misleading for a process that did not finish (Greptile on #244): a refusal's own `reason`; a
+ * quota the record went past, `blob_quota`; a process killed at its limit, `killed`; one still
+ * running when the wait gave up, `still_running` (`RunFailureKind`'s words for the same two); one
+ * that exited with a numeric code other than 0, `exit_nonzero`; one that failed with no code,
+ * `exit_unknown`; no process at all (the sandbox would not open, or the exec threw),
+ * `sandbox_unavailable`. Null on `ok`.
  */
-function executeReason(
+export function executeReason(
   outcome: Record<string, unknown>,
   refused: boolean,
   ok: boolean,
@@ -226,7 +230,12 @@ function executeReason(
   if (ok) return null;
   if (refused) return reasonWord(outcome.reason);
   if ("blobsRemoved" in outcome) return "blob_quota";
-  return "exitCode" in outcome ? "exit_nonzero" : "sandbox_unavailable";
+  if (outcome.status === "killed") return "killed";
+  if (outcome.status === "running") return "still_running";
+  if (!("exitCode" in outcome)) return "sandbox_unavailable";
+  return typeof outcome.exitCode === "number" && outcome.exitCode !== 0
+    ? "exit_nonzero"
+    : "exit_unknown";
 }
 
 function reasonWord(value: unknown): string | null {
