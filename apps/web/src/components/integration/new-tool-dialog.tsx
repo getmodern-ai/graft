@@ -1,4 +1,10 @@
-import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  type UseMutationResult,
+  useMutation,
+  useQueries,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
@@ -82,6 +88,11 @@ type Page = Extract<IntegrationPage, { kind: "integration" }>;
  * then, and the dialog opens on that ending until the person closes it. A reload finds the job
  * again through each live connection's jobs read (`runningNewToolJob`). The ending refreshes the
  * toolbox and the integrations, so the Tools tab and the header's count show the new tool.
+ *
+ * The start (Create and Try again) is this component's too, so a dialog closed and reopened while
+ * the request is in flight cannot send it twice; and each open reads the jobs again, with Create
+ * waiting on that read, so a job started elsewhere is followed rather than started anew. The
+ * header mounts it keyed by vendor, so nothing carries from one integration's page to another's.
  */
 export function GetNewTool({ page }: { page: Page }) {
   const queryClient = useQueryClient();
@@ -104,6 +115,24 @@ export function GetNewTool({ page }: { page: Page }) {
   useEffect(() => {
     if (!followed && running && !dismissed.current.has(running.jobId)) setFollowed(running);
   }, [followed, running]);
+
+  const start = useMutation({
+    mutationFn: (args: StartArgs) =>
+      startNewTool(args.connectionId, { agentId: args.agentId, goal: args.goal }),
+    onSuccess: (job, args) => {
+      if (args.replaces) dismissed.current.add(args.replaces);
+      setFollowed(job);
+      void queryClient.invalidateQueries({ queryKey: newToolKeys.jobs(job.connectionId) });
+      // The build approval is on the agent's access row now.
+      void queryClient.invalidateQueries({ queryKey: connectionKeys.access(job.connectionId) });
+    },
+  });
+
+  const openDialog = () => {
+    setOpen(true);
+    if (!followed) for (const read of jobReads) void read.refetch();
+  };
+  const checkingJobs = jobReads.some((read) => read.isFetching);
 
   const poll = useQuery({
     ...acquireJobQuery(followed?.agent.id ?? "", followed?.jobId ?? ""),
@@ -148,6 +177,7 @@ export function GetNewTool({ page }: { page: Page }) {
     dismissed.current.add(current.jobId);
     if (newToolStep(current) === "ready") setGoal("");
     setFollowed(null);
+    start.reset();
   };
 
   const step = newToolStep(current);
@@ -155,11 +185,11 @@ export function GetNewTool({ page }: { page: Page }) {
   return (
     <>
       {/* The glyph alone below `sm`, where the label would squeeze the integration's name. */}
-      <Button variant="outline" aria-label="Get a new tool" onClick={() => setOpen(true)}>
+      <Button variant="outline" aria-label="Get a new tool" onClick={openDialog}>
         <StarsIcon />
         <span className="hidden sm:inline">Get a new tool</span>
       </Button>
-      <Dialog open={open} onOpenChange={(next) => (next ? setOpen(true) : close())}>
+      <Dialog open={open} onOpenChange={(next) => (next ? openDialog() : close())}>
         <DialogContent className="sm:max-w-lg">
           {step === "describe" || !current ? (
             <DescribeView
@@ -167,16 +197,8 @@ export function GetNewTool({ page }: { page: Page }) {
               open={open}
               goal={goal}
               onGoalChange={setGoal}
-              onStarted={(job) => {
-                setFollowed(job);
-                void queryClient.invalidateQueries({
-                  queryKey: newToolKeys.jobs(job.connectionId),
-                });
-                // The build approval is on the agent's access row now.
-                void queryClient.invalidateQueries({
-                  queryKey: connectionKeys.access(job.connectionId),
-                });
-              }}
+              start={start}
+              checkingJobs={checkingJobs}
               onCancel={close}
             />
           ) : step === "building" ? (
@@ -187,17 +209,12 @@ export function GetNewTool({ page }: { page: Page }) {
             <FailedView
               page={page}
               job={current}
+              start={start}
               onChangeDescription={() => {
                 dismissed.current.add(current.jobId);
                 setGoal(current.goal);
                 setFollowed(null);
-              }}
-              onRetried={(job) => {
-                dismissed.current.add(current.jobId);
-                setFollowed(job);
-                void queryClient.invalidateQueries({
-                  queryKey: newToolKeys.jobs(job.connectionId),
-                });
+                start.reset();
               }}
               onClose={close}
             />
@@ -207,6 +224,15 @@ export function GetNewTool({ page }: { page: Page }) {
     </>
   );
 }
+
+type StartArgs = {
+  connectionId: string;
+  agentId: string;
+  goal: string;
+  /** The failed job a Try again replaces, closed for good once the new one starts. */
+  replaces?: string;
+};
+type Start = UseMutationResult<NewToolJob, Error, StartArgs>;
 
 /** "Gmail, connected 3 days ago": a connection told apart from the vendor's others. */
 function connectionLabel(connection: PageConnection): string {
@@ -218,14 +244,17 @@ function DescribeView({
   open,
   goal,
   onGoalChange,
-  onStarted,
+  start,
+  checkingJobs,
   onCancel,
 }: {
   page: Page;
   open: boolean;
   goal: string;
   onGoalChange: (goal: string) => void;
-  onStarted: (job: NewToolJob) => void;
+  start: Start;
+  /** Set while the jobs are read again on open: Create waits, so a running job is followed. */
+  checkingJobs: boolean;
   onCancel: () => void;
 }) {
   const connected = page.connections.filter((connection) => connection.state === "connected");
@@ -261,17 +290,16 @@ function DescribeView({
   const unavailable =
     suggestions.data && !suggestions.data.build.available ? suggestions.data.build : null;
 
-  const create = useMutation({
-    mutationFn: (args: { connectionId: string; agentId: string; goal: string }) =>
-      startNewTool(args.connectionId, { agentId: args.agentId, goal: args.goal }),
-    onSuccess: onStarted,
-  });
-
   const accessPending = accessReads.some((read) => read.isPending);
   const accessFailed = accessReads.find((read) => read.isError);
   const nobody = !accessPending && !accessFailed && choices.length === 0;
+  // Every access read answered: the picker shows the agent Create approves, never a default
+  // drawn from part of them behind a skeleton or a retry.
   const canCreate =
-    !create.isPending &&
+    !start.isPending &&
+    !checkingJobs &&
+    !accessPending &&
+    !accessFailed &&
     !unavailable &&
     goal.trim().length > 0 &&
     agentId !== null &&
@@ -283,7 +311,7 @@ function DescribeView({
       onSubmit={(event) => {
         event.preventDefault();
         if (!canCreate || !agentId || !connectionId) return;
-        create.mutate({ connectionId, agentId, goal: goal.trim() });
+        start.mutate({ connectionId, agentId, goal: goal.trim() });
       }}
     >
       <DialogHeader>
@@ -397,10 +425,10 @@ function DescribeView({
             <AlertDescription>{unavailable.message}</AlertDescription>
           </Alert>
         ) : null}
-        {create.isError ? (
+        {start.isError ? (
           <Alert variant="destructive">
             <ErrorIcon />
-            <AlertDescription>{create.error.message}</AlertDescription>
+            <AlertDescription>{start.error.message}</AlertDescription>
           </Alert>
         ) : null}
       </FieldGroup>
@@ -414,7 +442,7 @@ function DescribeView({
         </Button>
         <Button type="submit" disabled={!canCreate}>
           <StarsIcon />
-          {create.isPending ? "Creating…" : "Create tool"}
+          {start.isPending ? "Creating…" : "Create tool"}
         </Button>
       </DialogFooter>
     </form>
@@ -554,21 +582,18 @@ function ReadyView({ page, job, onClose }: { page: Page; job: NewToolJob; onClos
 function FailedView({
   page,
   job,
+  start,
   onChangeDescription,
-  onRetried,
   onClose,
 }: {
   page: Page;
   job: NewToolJob;
+  start: Start;
   onChangeDescription: () => void;
-  onRetried: (job: NewToolJob) => void;
   onClose: () => void;
 }) {
   const card = progressCard(job);
-  const retry = useMutation({
-    mutationFn: () => startNewTool(job.connectionId, { agentId: job.agent.id, goal: job.goal }),
-    onSuccess: onRetried,
-  });
+  const retry = start;
   return (
     <>
       <DialogHeader>
@@ -608,7 +633,17 @@ function FailedView({
         <Button variant="outline" onClick={onChangeDescription} disabled={retry.isPending}>
           Change description
         </Button>
-        <Button onClick={() => retry.mutate()} disabled={retry.isPending || job.agent.revoked}>
+        <Button
+          onClick={() =>
+            retry.mutate({
+              connectionId: job.connectionId,
+              agentId: job.agent.id,
+              goal: job.goal,
+              replaces: job.jobId,
+            })
+          }
+          disabled={retry.isPending || job.agent.revoked}
+        >
           {retry.isPending ? "Starting…" : "Try again"}
         </Button>
       </DialogFooter>

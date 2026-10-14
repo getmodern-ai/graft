@@ -63,7 +63,8 @@ export function IntegrationHeader({ page }: { page: Page }) {
         </div>
       </PageHeaderContent>
       <PageHeaderActions>
-        {page.live ? <GetNewTool page={page} /> : null}
+        {/* Keyed by vendor: the route keeps this header mounted from one integration to another. */}
+        {page.live ? <GetNewTool key={page.vendor} page={page} /> : null}
         <DropdownMenu>
           <DropdownMenuTrigger
             render={<Button variant="outline" size="icon" />}
