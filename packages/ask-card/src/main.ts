@@ -26,7 +26,8 @@ import { createCardView } from "./card-view";
  * GRA-84 research).
  *
  * The render and its size report are `card-view.ts`. `autoResize` is off: the card reports its
- * own height once a result has rendered, and never before (`frame-size.ts`, GRA-275).
+ * own height (`frame-size.ts`, GRA-275): the waiting line's before any result, on the page's first
+ * run and again once the bridge is connected (GRA-335), then each result's.
  */
 
 const mount = document.getElementById("ask");
@@ -42,12 +43,16 @@ function applyTheme(context: McpUiHostContext | undefined): void {
   if (context?.styles?.variables) applyHostStyleVariables(context.styles.variables);
 }
 
-const app = new App({ name: "graft-ask-card", version: "0.3.0" }, {}, { autoResize: false });
+const app = new App({ name: "graft-ask-card", version: "0.4.0" }, {}, { autoResize: false });
 
 const view = createCardView(app, document, mount);
+// `<html>`'s height is written now, before the handshake; the notification goes after it.
+view.waiting();
+app.ontoolinput = () => view.input();
 app.ontoolresult = (result) => view.show(result);
 
 app.onhostcontextchanged = (context) => applyTheme(context);
 
 await app.connect();
 applyTheme(app.getHostContext());
+view.waiting();

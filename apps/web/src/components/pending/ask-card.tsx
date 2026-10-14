@@ -24,7 +24,7 @@ import {
   isOpen,
   type PendingAction,
   type PendingAnswer,
-  pendingKeys,
+  settleAnsweredAsk,
 } from "@/lib/pending-action-queries";
 import { proposalDocsLabel, proposalSourceBadge } from "@/lib/proposal-source";
 import { cachedDirectoryLogo } from "@/lib/setup-queries";
@@ -46,8 +46,8 @@ export function useAnswerAsk(
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (answer: PendingAnswer) => answerPendingAction(action.id, answer),
-    onSuccess: (_result, answer) => {
-      queryClient.invalidateQueries({ queryKey: pendingKeys.all });
+    onSuccess: (result, answer) => {
+      settleAnsweredAsk(queryClient, action.id, result);
       queryClient.invalidateQueries({ queryKey: agentKeys.all });
       queryClient.invalidateQueries({ queryKey: approvalKeys.ofAgent(action.agentId) });
       queryClient.invalidateQueries({ queryKey: approvalKeys.vendorsOfAgent(action.agentId) });

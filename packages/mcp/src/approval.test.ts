@@ -6,7 +6,9 @@ import {
   answerPendingAction,
   revokeApproval,
   setApproval,
+  setApprovalFromConsole,
   setAskEveryCall,
+  setVendorApprovalDestructive,
   withdrawVendorApproval,
 } from "@graft/core";
 import type { PendingActionRow } from "@graft/db/repo/pending-action";
@@ -58,6 +60,7 @@ const AGENT_G = "agent_g";
 const AGENT_I = "agent_i";
 const AGENT_J = "agent_j";
 const AGENT_K = "agent_k";
+const AGENT_L = "agent_l";
 const TOKEN_A = "grft_approval_token_a_000000000000000000000000";
 const TOKEN_B = "grft_approval_token_b_000000000000000000000000";
 const TOKEN_C = "grft_approval_token_c_000000000000000000000000";
@@ -68,6 +71,7 @@ const TOKEN_G = "grft_approval_token_g_000000000000000000000000";
 const TOKEN_I = "grft_approval_token_i_000000000000000000000000";
 const TOKEN_J = "grft_approval_token_j_000000000000000000000000";
 const TOKEN_K = "grft_approval_token_k_000000000000000000000000";
+const TOKEN_L = "grft_approval_token_l_000000000000000000000000";
 const CONN_DEMO = "conn_demo";
 const CONSOLE_URL = "http://console.graft.test";
 const SECRET = "graft-approval-test-handoff-secret-long-enough-32";
@@ -148,6 +152,7 @@ beforeAll(async () => {
     [AGENT_I, TOKEN_I, "integration Hermes"],
     [AGENT_J, TOKEN_J, "connecting Hermes"],
     [AGENT_K, TOKEN_K, "careful Hermes"],
+    [AGENT_L, TOKEN_L, "console-answered Hermes"],
   ] as const) {
     store.addAgent({
       scopeMode: "listed",
@@ -182,6 +187,7 @@ beforeAll(async () => {
       AGENT_I,
       AGENT_J,
       AGENT_K,
+      AGENT_L,
     ]) {
       store.promote(agent, tool.id);
     }
@@ -835,6 +841,78 @@ describe("an integration allowed when connecting", () => {
       awaiting(await k.call(CREATE_ITEM, { limit: 1 }));
     } finally {
       await k.close();
+    }
+  }, 60_000);
+});
+
+/** ADR 0008 as amended 2026-10-14 (GRA-302): the console sets an answer outright, per agent. */
+describe("an answer the console sets outright", () => {
+  const scopeL = { personId: PERSON, agentId: AGENT_L };
+  const set = (toolId: string, decision: "allow" | "deny") =>
+    setApprovalFromConsole({ db: deps.db }, scopeL, toolId, decision, deps.approval);
+
+  it("answers and closes the open ask, so the next call runs on the allow and is refused on the deny", async () => {
+    const l = await connect(TOKEN_L);
+    try {
+      const open = awaiting(await l.call(CREATE_ITEM, { limit: 1 }));
+      const allowed = await set("tool_create", "allow");
+      expect(allowed.answeredPendingActionIds).toEqual([open.action.id]);
+      expect(store.pendingActions.get(open.action.id)).toMatchObject({
+        answer: { allow: true, via: "setting" },
+        answeredAt: expect.any(Date),
+        consumedAt: expect.any(Date),
+      });
+      expect(approvalOf(AGENT_L, "tool_create")).toMatchObject({
+        decision: "allow",
+        toolVersionId: open.action.payload.toolVersionId,
+      });
+      const before = actionsOf(AGENT_L, "tool").length;
+      expect(body(await l.call(CREATE_ITEM, { limit: 1 }))).toEqual(VENDOR_BODY);
+      expect(actionsOf(AGENT_L, "tool")).toHaveLength(before);
+
+      await set("tool_create", "deny");
+      expect(body(await l.call(CREATE_ITEM, { limit: 1 }))).toMatchObject({
+        error: "refused",
+        reason: "tool_denied",
+      });
+
+      // Where no answer stood, one is created: the person's answer, given on Graft's page.
+      expect(approvalOf(AGENT_L, "tool_update")).toBeUndefined();
+      await set("tool_update", "allow");
+      expect(body(await l.call(UPDATE_ITEM, { limit: 1 }))).toEqual(VENDOR_BODY);
+    } finally {
+      await l.close();
+      store.approvals.delete(`${AGENT_L} tool_create`);
+      store.approvals.delete(`${AGENT_L} tool_update`);
+    }
+  }, 60_000);
+
+  it("refuses a read-only tool, which never asks", async () => {
+    await expect(set("tool_list", "allow")).rejects.toMatchObject({ code: "BAD_REQUEST" });
+    expect(approvalOf(AGENT_L, "tool_list")).toBeUndefined();
+  });
+
+  it("widens an integration's allow to its destructive tools and narrows it back", async () => {
+    const l = await connect(TOKEN_L);
+    try {
+      await expect(
+        setVendorApprovalDestructive({ db: deps.db }, scopeL, "demo", true, deps.approval),
+      ).resolves.toBeNull();
+      await allowVendor(
+        { db: deps.db },
+        scopeL,
+        "demo",
+        { includesDestructive: false },
+        deps.approval,
+      );
+      awaiting(await l.call(DELETE_ITEM, { limit: 1 }));
+      await setVendorApprovalDestructive({ db: deps.db }, scopeL, "demo", true, deps.approval);
+      expect(body(await l.call(DELETE_ITEM, { limit: 1 }))).toEqual(VENDOR_BODY);
+      await setVendorApprovalDestructive({ db: deps.db }, scopeL, "demo", false, deps.approval);
+      awaiting(await l.call(DELETE_ITEM, { limit: 1 }));
+    } finally {
+      await l.close();
+      store.vendorApprovals.delete(`${AGENT_L} demo`);
     }
   }, 60_000);
 });
