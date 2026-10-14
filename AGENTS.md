@@ -1317,8 +1317,8 @@ once; `components/setup/goal-suggestions.tsx` asks it after, keyed by the connec
 **An integration's page builds a tool for an agent picked before Create** (GRA-303; ADR 0024 as
 amended 2026-10-14; `apps/server/src/connection-acquire.ts`). `POST /api/connections/:id/acquire`
 (`ConnectionAcquireBody`: `{ agentId, goal }`) is `@graft/core`'s `startConsoleAcquire`, one
-transaction with no Setup record: the connection read locked (`findConnectionForUpdate`, so a
-revoke's deletion of build approvals cannot interleave), then the agent (`findAgentForUpdate`, the
+transaction with no Setup record: the connection read locked (`findConnectionForNoKeyUpdate`, so a
+revoke's deletion of build approvals cannot interleave and a scope save's foreign-key check is not blocked), then the agent (`findAgentForUpdate`, the
 order a scope answer takes them; revoked is `agent_revoked`), the connection the person's, not
 revoked, usable and in the agent's scope
 (`connection_revoked`, `connection_unusable`, `connection_not_in_scope`), `grantBuildApproval`

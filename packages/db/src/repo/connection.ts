@@ -52,6 +52,27 @@ export async function findConnectionForUpdate(
 }
 
 /**
+ * The same read locked `FOR NO KEY UPDATE`: it waits for a revoke (`findConnectionForUpdate`) and
+ * a revoke waits for it, but it does not block the `KEY SHARE` lock a foreign-key check takes, so
+ * a transaction inserting a row that references the connection (a scope save's `agent_connection`)
+ * while holding another lock never deadlocks against it. The console's Create reads through it
+ * (GRA-303, Greptile on #237).
+ */
+export async function findConnectionForNoKeyUpdate(
+  db: DbOrTx,
+  personId: string,
+  id: string,
+): Promise<ConnectionRow | null> {
+  const [row] = await db
+    .select()
+    .from(connection)
+    .where(and(eq(connection.id, id), eq(connection.personId, personId)))
+    .limit(1)
+    .for("no key update");
+  return row ?? null;
+}
+
+/**
  * A connection by id and nothing else — **the proxy's read**, and the only unscoped one here. A
  * vendor call carries no session; the capability token's `person` claim is what the proxy compares
  * the row's `personId` against, and that comparison is the whole authorisation (ADR 0010). Do not

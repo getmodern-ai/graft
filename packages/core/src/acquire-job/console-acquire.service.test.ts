@@ -85,7 +85,7 @@ function world(
     },
     connection: {
       findConnection,
-      findConnectionForUpdate: vi.fn(async () => connectionRow),
+      findConnectionForNoKeyUpdate: vi.fn(async () => connectionRow),
       providers: DEFAULT_PROVIDERS,
     },
     approval: {
@@ -136,13 +136,13 @@ describe("startConsoleAcquire", () => {
     expect(w.deps.agent.findAgentForUpdate).toHaveBeenCalledWith(fakeDb, "person_1", "agent_1");
     // The connection is read locked, so a revoke deleting build approvals cannot interleave
     // between the read and the grant (Greptile on #237).
-    expect(w.deps.connection.findConnectionForUpdate).toHaveBeenCalledWith(
+    expect(w.deps.connection.findConnectionForNoKeyUpdate).toHaveBeenCalledWith(
       fakeDb,
       "person_1",
       "conn_1",
     );
     // Connection first, then agent: a scope answer's order, so the two cannot deadlock.
-    const connectionLock = vi.mocked(w.deps.connection.findConnectionForUpdate).mock
+    const connectionLock = vi.mocked(w.deps.connection.findConnectionForNoKeyUpdate).mock
       .invocationCallOrder[0];
     const agentLock = vi.mocked(w.deps.agent.findAgentForUpdate).mock.invocationCallOrder[0];
     expect(connectionLock).toBeLessThan(agentLock ?? 0);

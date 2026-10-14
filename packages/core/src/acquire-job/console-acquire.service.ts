@@ -33,11 +33,11 @@ export type ConsoleAcquireDeps = {
   /** The agent read locked after the connection, so a scope write or a revoke of it waits for the job (`findAgentForUpdate`). */
   agent: AgentDeps;
   /**
-   * The connection read locked (`findConnectionForUpdate`), so a revoke, which deletes the build
-   * approvals under the same lock (`revokeConnection`), waits for the grant and the job, or
+   * The connection read locked (`findConnectionForNoKeyUpdate`), so a revoke, which deletes the
+   * build approvals under `FOR UPDATE` (`revokeConnection`), waits for the grant and the job, or
    * commits first and is read here as revoked.
    */
-  connection: Pick<ConnectionDeps, "findConnection" | "findConnectionForUpdate" | "providers">;
+  connection: Pick<ConnectionDeps, "findConnection" | "findConnectionForNoKeyUpdate" | "providers">;
   approval: ApprovalDeps;
   acquireJob: AcquireJobDeps;
 };
@@ -56,9 +56,16 @@ export async function startConsoleAcquire(
   return ctx.db.transaction(async (tx) => {
     const scoped: ServiceContext = { db: tx };
     // The connection's lock before the agent's, the order a scope answer takes them
-    // (`recordApprovalAnswer`, then `addConnectionToAgentScope`), so the two cannot deadlock.
+    // (`recordApprovalAnswer`, then `addConnectionToAgentScope`). `NO KEY UPDATE` rather than
+    // `UPDATE`, so a scope save holding the agent can still insert its `agent_connection` row
+    // (whose foreign-key check takes `KEY SHARE` on the connection) and commit: neither order
+    // deadlocks (Greptile on #237).
     const row = orNotFound(
-      await deps.connection.findConnectionForUpdate(tx, principal.personId, input.connectionId),
+      await deps.connection.findConnectionForNoKeyUpdate(
+        tx,
+        principal.personId,
+        input.connectionId,
+      ),
       "Connection not found",
     );
     const agent = orNotFound(

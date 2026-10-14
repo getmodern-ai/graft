@@ -54,6 +54,7 @@ import {
   addConnectionHosts,
   findConnection,
   findConnectionByIdUnscoped,
+  findConnectionForNoKeyUpdate,
   findConnectionForUpdate,
   revokeConnection,
   setConnectionProviderRef,
@@ -573,6 +574,15 @@ describe("person-scoped statements take the person", () => {
     const s = only();
     expect(s.sql).toContain('"connection"."person_id" = $');
     expect(s.sql).toMatch(/ for update$/);
+    expect(s.params).toEqual(["conn_1", "person_1", 1]);
+  });
+
+  /** The console's Create (GRA-303): the same predicate, locked against a revoke but not a foreign-key check. */
+  it("a connection read for no key update takes the person and takes the weaker lock", async () => {
+    await findConnectionForNoKeyUpdate(db, "person_1", "conn_1");
+    const s = only();
+    expect(s.sql).toContain('"connection"."person_id" = $');
+    expect(s.sql).toMatch(/ for no key update$/);
     expect(s.params).toEqual(["conn_1", "person_1", 1]);
   });
 
