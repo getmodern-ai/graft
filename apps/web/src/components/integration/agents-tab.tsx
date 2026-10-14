@@ -59,6 +59,7 @@ import {
   toolAnswerWrites,
 } from "@/lib/integration-agents";
 import { harnessMark } from "@/lib/marks";
+import { pendingKeys } from "@/lib/pending-action-queries";
 import { turnConnection } from "@/lib/scope-toggles";
 
 const AGENT_COLUMNS = 4;
@@ -505,6 +506,9 @@ function ChangeMenu({
         queryClient.invalidateQueries({ queryKey: approvalKeys.ofAgent(agent.id) }),
         queryClient.invalidateQueries({ queryKey: approvalKeys.vendorsOfAgent(agent.id) }),
         queryClient.invalidateQueries({ queryKey: approvalKeys.builds }),
+        // An answer set outright answers the tool's open asks (GRA-302), so the Requests list and
+        // the sidebar's count refresh. `exact`: a handoff link's own read is never re-read.
+        queryClient.invalidateQueries({ queryKey: pendingKeys.all, exact: true }),
       ]),
     onSuccess: (_result, action) => {
       toast.success(changedToast(action, agent.name, integrationName));
