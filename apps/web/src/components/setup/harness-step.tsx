@@ -4,10 +4,10 @@ import { isAwaitingHarness } from "@graft/core/setup/setup.rules";
 import { useEffect, useRef, useState } from "react";
 import { InfoIcon } from "@/components/icons";
 import { Loader } from "@/components/loader";
+import { HarnessMark } from "@/components/marks";
 import { SetupChoice } from "@/components/setup/setup-choice";
 import { SetupDisclosure } from "@/components/setup/setup-disclosure";
 import { SetupFooter } from "@/components/setup/setup-footer";
-import { SetupLogo } from "@/components/setup/setup-logo";
 import { SetupStepHeader } from "@/components/setup/setup-step-header";
 import { useSetupMutation } from "@/components/setup/use-setup-mutation";
 import { StatusChip } from "@/components/status-chip";
@@ -23,6 +23,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { useIsMobile } from "@/hooks/use-mobile";
+import { harnessMarkOfSetup } from "@/lib/marks";
 import { readScopeMode, SCOPE_MODE_ITEMS } from "@/lib/scope-mode";
 import { agentToAdopt } from "@/lib/setup-page";
 import { nextSetup, type SetupStateData, startSetup } from "@/lib/setup-queries";
@@ -88,7 +89,7 @@ function HarnessReview({ state }: { state: SetupStateData }) {
               value: entry.id,
               label: entry.label,
               description: entry.description,
-              media: <SetupLogo harness={entry.id} />,
+              media: <HarnessMark mark={harnessMarkOfSetup(entry.id)} />,
             }))}
             value={harness}
             onChange={setHarness}
@@ -180,7 +181,7 @@ function ChooseHarness({ state }: { state: SetupStateData }) {
           value: entry.id,
           label: entry.label,
           description: entry.description,
-          media: <SetupLogo harness={entry.id} />,
+          media: <HarnessMark mark={harnessMarkOfSetup(entry.id)} />,
         }))}
         value={harness}
         onChange={setHarness}

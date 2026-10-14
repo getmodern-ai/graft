@@ -16,16 +16,17 @@ import {
   WarningIcon,
 } from "@/components/icons";
 import { Loader } from "@/components/loader";
+import { HarnessMark } from "@/components/marks";
 import { RetryNotice } from "@/components/retry-notice";
 import { ToolResultCard } from "@/components/setup/result-step";
 import { SetupAppCard } from "@/components/setup/setup-app-card";
 import { SetupDisclosure } from "@/components/setup/setup-disclosure";
 import { SetupFooter } from "@/components/setup/setup-footer";
-import { SetupLogo } from "@/components/setup/setup-logo";
 import { SetupStepHeader } from "@/components/setup/setup-step-header";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { agentKeys, issueAgentToken } from "@/lib/agent-queries";
+import { harnessMarkOfSetup } from "@/lib/marks";
 import { harnessSetup, mcpEndpointUrl } from "@/lib/mcp-snippet";
 import { DEFAULT_SIGNED_IN_PATH } from "@/lib/safe-redirect";
 import {
@@ -438,7 +439,7 @@ function SetupPromptCard({
   });
   return (
     <SetupAppCard
-      media={<SetupLogo harness={harness} />}
+      media={<HarnessMark mark={harnessMarkOfSetup(harness)} />}
       name={<span className="text-base">Paste this into {label} to connect Graft</span>}
       subline={`It holds no token. ${label} walks you through connecting, then makes your first request.`}
       action={<CopyButton text={prompt} label="Copy prompt" variant="default" />}
