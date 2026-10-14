@@ -68,6 +68,7 @@ describe("createAuth", () => {
     expect(options.account?.accountLinking).toEqual({
       enabled: true,
       requireLocalEmailVerified: true,
+      allowDifferentEmails: true,
     });
     expect(options.account?.accountLinking?.trustedProviders).toBeUndefined();
   });
