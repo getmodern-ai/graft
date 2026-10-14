@@ -2,7 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 import { useState } from "react";
 
-import { AgentsTable } from "@/components/agent/agents-table";
+import { AgentCards } from "@/components/agent/agent-cards";
 import { CreateAgentDialog } from "@/components/agent/create-agent-dialog";
 import { AddIcon } from "@/components/icons";
 import { PageContainer } from "@/components/page/page-container";
@@ -17,31 +17,35 @@ import { useScreenTitle } from "@/components/shell/screen-title";
 import { Button } from "@/components/ui/button";
 import { agentsQuery } from "@/lib/agent-queries";
 import { connectionsQuery } from "@/lib/connection-queries";
+import { pendingActionsQuery } from "@/lib/pending-action-queries";
 import { setupQuery } from "@/lib/setup-queries";
 
 /**
- * The loader *starts* both reads and awaits neither, so the screen paints at once — header, table
- * header, skeleton rows — and fills when the agents arrive; a hover on the sidebar link has
- * usually run it already (`defaultPreload: "intent"`), so the rows are there on click. Awaiting
- * would hand the wait to the router's whole-screen spinner and leave the table's own pending rows
- * unreachable, which is the state the design draws for this (Cando's CAN-546 makes the same call
- * for its detail page). The connections are the create dialog's, which draws its scope as
- * skeleton rows and holds Create until they arrive (`create-agent-dialog.tsx`).
+ * The loader *starts* the reads and awaits none, so the screen paints at once — header and
+ * skeleton cards — and fills when the agents arrive; a hover on the sidebar link has usually run
+ * it already (`defaultPreload: "intent"`), so the cards are there on click. Awaiting would hand the
+ * wait to the router's whole-screen spinner and leave the cards' own pending state unreachable
+ * (Cando's CAN-546 makes the same call for its detail page). The connections draw each card's
+ * "Can use" marks and are the create dialog's scope, which holds Create until they arrive
+ * (`create-agent-dialog.tsx`); the open asks are each card's request count, the same list the
+ * sidebar's count reads.
  */
 export const Route = createFileRoute("/_auth/_shell/agents/")({
   loader: ({ context }) => {
     void context.queryClient.prefetchQuery(agentsQuery);
     void context.queryClient.prefetchQuery(connectionsQuery);
+    void context.queryClient.prefetchQuery(pendingActionsQuery);
   },
   component: AgentsRoute,
 });
 
 function AgentsRoute() {
-  // `useQuery`, not the suspense form: the table draws its own pending and failed rows, and a
-  // refetch that fails has to reach it as state rather than as a throw the route boundary would
-  // swallow the whole screen for.
+  // `useQuery`, not the suspense form: the cards draw their own pending and failed states, and a
+  // refetch that fails has to reach them as state rather than as a throw the route boundary would
+  // swallow the whole screen for. The marks and request counts fill in when their reads land.
   const agents = useQuery(agentsQuery);
   const connections = useQuery(connectionsQuery);
+  const pending = useQuery(pendingActionsQuery);
   // The shell's intercept read it already; a person who skipped is offered Setup again.
   const setup = useQuery(setupQuery);
   const [creating, setCreating] = useState(false);
@@ -50,29 +54,35 @@ function AgentsRoute() {
   useScreenTitle("Agents");
 
   return (
-    <PageContainer size="full" className="gap-4">
+    <PageContainer size="large" className="gap-4">
       <PageHeader>
         <PageHeaderContent>
           <PageHeaderTitle>Agents</PageHeaderTitle>
           <PageHeaderDescription>
-            Each agent that connects to Graft has a token, a scope and a working set of its own.
+            Each agent that connects to Graft can use only the integrations you allow, and keeps its
+            own tools ready.
           </PageHeaderDescription>
         </PageHeaderContent>
         <PageHeaderActions>
           <Button id="new-agent" onClick={() => setCreating(true)}>
             <AddIcon />
-            New agent
+            Add an agent
           </Button>
         </PageHeaderActions>
       </PageHeader>
 
-      <AgentsTable
+      <AgentCards
         agents={rows}
+        connections={connections.data?.connections}
+        connectionsFailed={connections.isError}
+        pendingActions={pending.data?.pendingActions ?? []}
+        setup={setup.data}
         isPending={agents.isPending}
         isError={agents.isError}
         error={agents.error}
         retrying={agents.isFetching}
         onRetry={() => void agents.refetch()}
+        onAdd={() => setCreating(true)}
         offerSetup={Boolean(setup.data?.setup?.skippedAt && !setup.data.setup.completedAt)}
       />
 
