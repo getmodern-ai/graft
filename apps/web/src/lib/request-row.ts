@@ -54,7 +54,7 @@ export const EXPIRY_SHOWN_WITHIN_MS = 6 * 60 * 60 * 1000;
 const DETAIL_MAX = 120;
 
 /** The agent as the sentence names it; an ask outlives a revoked agent (ADR 0007). */
-export function requestAgentName(action: PendingAction): string {
+export function requestAgentName(action: Pick<PendingAction, "agent">): string {
   return action.agent?.name ?? "A revoked agent";
 }
 
