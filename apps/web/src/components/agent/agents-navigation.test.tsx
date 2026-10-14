@@ -212,7 +212,7 @@ async function click(label: string, within: ParentNode = document) {
 }
 
 describe("standalone agent management", () => {
-  it("opens the agent name from the table and supports browser back and forward without a drawer", async () => {
+  it("opens the agent name from its card and supports browser back and forward without a drawer", async () => {
     const router = await mount();
     await waitFor(() => expect(document.body.textContent).toContain("Laptop"));
     expect(control("Laptop").getAttribute("href")).toBe("/agents/agent_1");
@@ -280,6 +280,9 @@ describe("standalone agent management", () => {
   it("keeps a revoked agent's records reachable and read-only", async () => {
     current = { ...agent, revokedAt: at };
     await mount();
+    // A revoked agent sits under the Revoked disclosure below the cards (GRA-287, item 3).
+    await waitFor(() => expect(document.body.textContent).toContain("Revoked (1)"));
+    await click("Revoked (1)");
     await waitFor(() => expect(document.body.textContent).toContain("Laptop"));
     await click("Actions for Laptop");
     await click("View agent");
