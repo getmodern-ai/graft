@@ -63,9 +63,11 @@ async function run(
     model?: ModelAdapter;
   } = {},
 ) {
-  const model =
-    overrides.model ??
-    createScriptedModel([], proposal === undefined ? {} : { connectionProposal: proposal });
+  const scripted = createScriptedModel(
+    [],
+    proposal === undefined ? {} : { connectionProposal: proposal },
+  );
+  const model = overrides.model ?? scripted;
   const stages: DocsProposalStage[] = [];
   const snapshots: DocsProposalFound[] = [];
   const result = await proposeConnectionFromDocs(
@@ -83,7 +85,7 @@ async function run(
       snapshots.push(found);
     },
   );
-  return { result, stages, snapshots, model };
+  return { result, stages, snapshots, model: scripted };
 }
 
 describe("proposeConnectionFromDocs", () => {
