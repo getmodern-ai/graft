@@ -318,4 +318,12 @@ describe("handoffFootnote", () => {
       ),
     ).toBe("Expires tomorrow · Your key is stored by Graft, encrypted");
   });
+
+  it("sends nobody back from the console's own dialog (GRA-311)", () => {
+    const at = { expiresAt: "2026-10-15T11:00:00.000Z", agentName: "Codex", inConsole: true };
+    expect(handoffFootnote({ ...at, secret: false }, NOW)).toBe("Expires in 23 hours");
+    expect(handoffFootnote({ ...at, secret: true }, NOW)).toBe(
+      "Expires in 23 hours · Your key is stored by Graft, encrypted",
+    );
+  });
 });
