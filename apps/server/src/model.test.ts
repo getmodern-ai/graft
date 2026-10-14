@@ -300,6 +300,24 @@ describe("createModel", () => {
     const reply = await scripted.model.open(job("j", "p")).turn({ kind: "goal" });
     expect(reply.answer).toEqual({ kind: "give_up", reason: "scripted" });
 
+    // The file's `connectionProposal` is what a proposal from an API's docs answers (GRA-299).
+    const proposing = await createModel({
+      env: { ...base, GRAFT_MODEL_BACKEND: "scripted", GRAFT_MODEL_SCRIPT: "./script.json" },
+      db,
+      decrypt: async () => ({}),
+      modelKey: { findPersonModelKey: async () => null },
+      readScript: async () => JSON.stringify({ steps: [], connectionProposal: null }),
+    });
+    const answer = await proposing.model?.proposeConnection?.({
+      personId: "p",
+      traceId: "connect:p",
+      name: "Acme",
+      docsUrl: "https://docs.acme.example",
+      pages: [],
+      schemes: [],
+    });
+    expect(answer?.outcome).toBe("declined");
+
     const { setup, built } = harness(
       { ...FIXED, GRAFT_MODEL_BASE_URL: "https://gateway.example/v1" },
       [],

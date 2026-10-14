@@ -71,6 +71,7 @@ import {
   listDonePendingActions,
   listOpenToolActions,
   listPendingActionsByKind,
+  listSuggestedConnectionAsks,
   lockPendingActionKey,
   settleAnsweredToolActions,
 } from "./pending-action";
@@ -1064,6 +1065,34 @@ describe("person-scoped statements take the person", () => {
     });
     expect(row).toBeNull();
     expect(statements).toHaveLength(0);
+  });
+
+  /**
+   * "Your agents asked for these" (ADR 0001 as amended 2026-10-14, GRA-305): the person on both
+   * tables, the ask through its agent's owner and the connection through its own column, so neither
+   * the asks nor the "already connected" test reads another person's rows.
+   */
+  it("the suggested integrations name the person on the asks and on the connections they rule out", async () => {
+    await listSuggestedConnectionAsks(db, "person_1", 12);
+    const s = only();
+    expect(s.sql).toMatch(
+      /^select .* from \(select distinct on \("pending_action"\."payload" ->> 'vendor'\)/,
+    );
+    expect(s.sql).toContain(
+      'from "pending_action" inner join "agent" on "agent"."id" = "pending_action"."agent_id"',
+    );
+    expect(s.sql).toContain('"agent"."person_id" = $1');
+    expect(s.sql).toContain('"agent"."revoked_at" is null');
+    expect(s.sql).toContain('"pending_action"."kind" = $2');
+    expect(s.sql).toContain(
+      `not exists (select "id" from "connection" where ("connection"."person_id" = $3 and "connection"."vendor" = "pending_action"."payload" ->> 'vendor' and "connection"."revoked_at" is null))`,
+    );
+    // The newest ask per vendor decides; only then is one answered with a connection left out.
+    expect(s.sql).toContain(
+      `order by "pending_action"."payload" ->> 'vendor', "pending_action"."created_at" desc, "pending_action"."id" desc) "latest" where "answered_with" is null`,
+    );
+    expect(s.sql).toMatch(/order by "latest"\."created_at" desc, "latest"\."id" desc limit \$4$/);
+    expect(s.params).toEqual(["person_1", "connection", "person_1", 12]);
   });
 
   /** A revoke's third sweep (GRA-28): by the column, under the person, both clocks stamped, the JSON unread. */

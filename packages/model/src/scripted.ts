@@ -1,6 +1,8 @@
 import { proofReadRequestProblems } from "./answer";
 import { goalProposalOf, type RawGoalProposal } from "./goal-grounding";
 import {
+  type ConnectionProposalAnswer,
+  type ConnectionProposalRequest,
   type GoalProposal,
   type GoalProposalRequest,
   isValidUsage,
@@ -13,6 +15,7 @@ import {
   type ModelUsage,
   type ModuleDraft,
   type ProofReadTarget,
+  type RawConnectionProposal,
 } from "./types";
 
 /**
@@ -51,7 +54,34 @@ export type ScriptedModel = ModelAdapter & {
   /** Every goal proposal asked for, in order. */
   readonly proposals: GoalProposalRequest[];
   proposeGoals(request: GoalProposalRequest): Promise<GoalProposal>;
+  /** Every connection proposal asked for, in order (GRA-299). */
+  readonly connectionProposals: ConnectionProposalRequest[];
+  proposeConnection(request: ConnectionProposalRequest): Promise<ConnectionProposalAnswer>;
 };
+
+/**
+ * What the scripted backing proposes for a connection from an API's docs (GRA-299) when the script
+ * names none: the documentation's own host with a leading `docs.`, `developer.` or `developers.`
+ * read as `api.`, or `api.` put in front of it otherwise, signing with a bearer token. A guess, and
+ * a deterministic one, so the console's flow runs end to end on a laptop with no provider key; a
+ * script that wants a particular answer writes `connectionProposal` (`readScriptConnectionProposal`).
+ */
+export function scriptedConnectionProposal(docsUrl: string): RawConnectionProposal {
+  let hostname = "api.example.com";
+  try {
+    hostname = new URL(docsUrl).hostname.toLowerCase();
+  } catch {
+    // Not a URL: the caller judged it before asking, so the fallback is never seen on the wire.
+  }
+  const bare = hostname.replace(/^(docs|developers?|www)\./, "");
+  return {
+    vendor: bare.split(".")[0] ?? "vendor",
+    primaryHost: `https://api.${bare}`,
+    hosts: [],
+    scheme: "bearer",
+    schemeConfig: {},
+  };
+}
 
 /**
  * What the scripted backing proposes for Setup's goal step (GRA-209), whatever the vendor: a fixed
@@ -102,19 +132,46 @@ export class ScriptMismatchError extends Error {
   }
 }
 
+export type ScriptedModelOptions = {
+  name?: string;
+  defaultUsage?: ModelUsage;
+  /**
+   * What `proposeConnection` answers (GRA-299): a proposal, whatever the pages say; null for a
+   * decline; absent for `scriptedConnectionProposal`'s guess from the documentation's host.
+   */
+  connectionProposal?: RawConnectionProposal | null;
+};
+
 export function createScriptedModel(
   script: readonly ScriptedStep[],
-  options: { name?: string; defaultUsage?: ModelUsage } = {},
+  options: ScriptedModelOptions = {},
 ): ScriptedModel {
   const steps = [...script];
   const defaultUsage = options.defaultUsage ?? DEFAULT_SCRIPTED_USAGE;
   const conversations: ScriptedConversationRecord[] = [];
   const proposals: GoalProposalRequest[] = [];
+  const connectionProposals: ConnectionProposalRequest[] = [];
 
   return {
     name: options.name ?? SCRIPTED_MODEL_NAME,
     conversations,
     proposals,
+    connectionProposals,
+    async proposeConnection(request) {
+      connectionProposals.push(request);
+      const proposal =
+        options.connectionProposal === undefined
+          ? scriptedConnectionProposal(request.docsUrl)
+          : options.connectionProposal;
+      return proposal
+        ? { proposal, outcome: "proposed", usage: defaultUsage }
+        : {
+            proposal: null,
+            outcome: "declined",
+            usage: defaultUsage,
+            reason: "The script declines every connection proposal.",
+          };
+    },
     async proposeGoals(request) {
       proposals.push(request);
       return goalProposalOf(
@@ -216,6 +273,42 @@ export function parseScript(value: unknown): ScriptedStep[] {
     throw new Error('A model script is an array of steps, or { "steps": [...] }');
   }
   return raw.map((entry, index) => parseStep(entry, index));
+}
+
+/**
+ * A script file's `connectionProposal` (GRA-299), beside its `steps`: `{ "vendor", "primaryHost",
+ * "hosts"?, "scheme", "schemeConfig"? }`, or `null` for a decline. Undefined when the file names
+ * none (a bare array, or an object without the key), which leaves `scriptedConnectionProposal`'s
+ * guess in place.
+ */
+export function readScriptConnectionProposal(
+  value: unknown,
+): RawConnectionProposal | null | undefined {
+  if (!isRecord(value) || !("connectionProposal" in value)) return undefined;
+  const raw = value.connectionProposal;
+  if (raw === null) return null;
+  const at = "connectionProposal";
+  if (!isRecord(raw)) throw new Error(`${at} is an object, or null for a decline`);
+  const { vendor, primaryHost, hosts, scheme, schemeConfig } = raw;
+  if (typeof vendor !== "string" || typeof primaryHost !== "string" || typeof scheme !== "string") {
+    throw new Error(`${at} needs "vendor", "primaryHost" and "scheme" as strings`);
+  }
+  if (hosts !== undefined && !isStringArray(hosts)) {
+    throw new Error(`${at}: "hosts" is an array of hostnames`);
+  }
+  if (
+    schemeConfig !== undefined &&
+    !(isRecord(schemeConfig) && Object.values(schemeConfig).every((v) => typeof v === "string"))
+  ) {
+    throw new Error(`${at}: "schemeConfig" is an object of strings`);
+  }
+  return {
+    vendor,
+    primaryHost,
+    hosts: hosts ?? [],
+    scheme,
+    schemeConfig: (schemeConfig as Record<string, string> | undefined) ?? {},
+  };
 }
 
 function parseStep(entry: unknown, index: number): ScriptedStep {
