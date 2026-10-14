@@ -76,7 +76,8 @@ import {
   proposalQuery,
   startProposal,
 } from "@/lib/custom-api-queries";
-import { awaitConsent, openConsentPopup } from "@/lib/oauth-consent";
+import { openConsentPopup } from "@/lib/oauth-consent";
+import { awaitLink, type LinkSettled } from "@/lib/provider-link";
 import { providerLabel } from "@/lib/provider-name";
 import { cn } from "@/lib/utils";
 
@@ -700,10 +701,19 @@ function CheckStep({
         const stop = new AbortController();
         stopLink.current = stop;
         setLinkWait({ provider: routed.provider, stop });
-        const { outcome } = await awaitConsent({
+        // `/link/callback`'s message names the record (GRA-304), so a failed sign-in ends the
+        // wait at once; the poll is the fallback, the row being made under the record's id.
+        const { outcome, message } = await awaitLink({
           popup,
-          connectionId: routed.connectId,
-          isConnected: () => fetchConnection(routed.connectId).then(() => true),
+          match: { connectId: routed.connectId },
+          isSettled: () =>
+            fetchConnection(routed.connectId).then(
+              ({ connection }): LinkSettled =>
+                connection.revokedAt === null
+                  ? { settled: true, connectionId: connection.id }
+                  : { settled: false },
+              (): LinkSettled => ({ settled: false }),
+            ),
           signal: stop.signal,
           deadlineMs: Math.max(0, new Date(routed.expiresAt).getTime() - Date.now()),
         });
@@ -713,6 +723,9 @@ function CheckStep({
         setLinkWait(null);
         if (outcome === "connected") finished(registration);
         else if (outcome === "expired") toast.error("The sign-in took too long. Connect again.");
+        else if (outcome !== "stopped") {
+          toast.error(message || "Nothing was connected. Connect again to try once more.");
+        }
       }
     },
     onError: (error) => {
