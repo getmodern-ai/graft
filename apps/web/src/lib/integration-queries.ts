@@ -1,4 +1,9 @@
 import type { IntegrationConnectionOutput, IntegrationOutput } from "@graft/core";
+import type {
+  ConnectionAcquireBody,
+  ConnectionAcquireJob,
+  ConnectionGoalSuggestions,
+} from "@graft/server/api";
 import { queryOptions } from "@tanstack/react-query";
 
 import { api, type Jsonified } from "./api";
@@ -31,3 +36,44 @@ export const integrationsQuery = queryOptions({
   // refetches rather than drawing a count from before such a write.
   staleTime: 0,
 });
+
+/** One job a connection's Get a new tool started, with the agent and the goal (GRA-303). */
+export type NewToolJob = Jsonified<ConnectionAcquireJob>;
+export type NewToolSuggestions = Jsonified<ConnectionGoalSuggestions>;
+
+export const newToolKeys = {
+  jobs: (connectionId: string) => [...connectionKeys.all, connectionId, "acquire-jobs"] as const,
+  suggestions: (connectionId: string) =>
+    [...connectionKeys.all, connectionId, "goal-suggestions"] as const,
+};
+
+/**
+ * The connection's recent jobs across the person's agents, newest first (GRA-303), so a reload or
+ * a dialog closed mid-build finds the job again. Stale at once: the dialog reads it on each open.
+ */
+export const newToolJobsQuery = (connectionId: string) =>
+  queryOptions({
+    queryKey: newToolKeys.jobs(connectionId),
+    queryFn: () =>
+      api<{ jobs: NewToolJob[] }>(`/connections/${encodeURIComponent(connectionId)}/acquire-jobs`),
+    staleTime: 0,
+  });
+
+/**
+ * The Try chips and whether Create can start a job at all (`build`, `acquire_unconfigured` when no
+ * model can author). The server memoises the model's answer per person and connection.
+ */
+export const newToolSuggestionsQuery = (connectionId: string) =>
+  queryOptions({
+    queryKey: newToolKeys.suggestions(connectionId),
+    queryFn: () =>
+      api<NewToolSuggestions>(`/connections/${encodeURIComponent(connectionId)}/goal-suggestions`),
+  });
+
+/** Create: the picked agent's build approval for the connection and its job, in one write. */
+export function startNewTool(connectionId: string, body: ConnectionAcquireBody) {
+  return api<NewToolJob>(`/connections/${encodeURIComponent(connectionId)}/acquire`, {
+    method: "POST",
+    body,
+  });
+}

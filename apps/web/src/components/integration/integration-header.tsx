@@ -3,6 +3,7 @@ import { useState } from "react";
 
 import { RevokeConnectionDialog } from "@/components/connection/revoke-connection-dialog";
 import { MoreHorizIcon } from "@/components/icons";
+import { GetNewTool } from "@/components/integration/new-tool-dialog";
 import { IntegrationMark } from "@/components/marks";
 import {
   PageHeader,
@@ -28,7 +29,8 @@ type Page = Extract<IntegrationPage, { kind: "integration" }>;
 /**
  * The integration page's header (GRA-315; Figma 2044:7001): the mark in a 56px outlined tile, the
  * name, the status chip and one line of facts (since when, the tool count, how many agents can use
- * it). The account label joins the line when GRA-300 provides it; Get a new tool is GRA-320's.
+ * it). The account label joins the line when GRA-300 provides it. Get a new tool (GRA-320,
+ * `new-tool-dialog.tsx`) is offered while the integration has a live connection.
  *
  * The ⋯ menu holds the page's ways out and, for an integration with one live connection, its
  * revoke; with several, each connection's revoke is on the Connection tab beside it.
@@ -61,6 +63,7 @@ export function IntegrationHeader({ page }: { page: Page }) {
         </div>
       </PageHeaderContent>
       <PageHeaderActions>
+        {page.live ? <GetNewTool page={page} /> : null}
         <DropdownMenu>
           <DropdownMenuTrigger
             render={<Button variant="outline" size="icon" />}
