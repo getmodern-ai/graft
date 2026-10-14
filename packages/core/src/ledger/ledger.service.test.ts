@@ -45,8 +45,58 @@ describe("recordUsage", () => {
       outcome: "ok",
       dryRun: false,
       latencyMs: 13,
+      reason: null,
+      asked: null,
+      connectionId: null,
       createdAt: NOW,
     });
+  });
+
+  it("carries a refusal's reason, the ask and the connection (GRA-301)", async () => {
+    const deps = fakeDeps();
+    await recordUsage(
+      ctx,
+      SCOPE,
+      {
+        toolId: "tool_1",
+        toolName: "demo__send",
+        outcome: "refused",
+        latencyMs: 4,
+        reason: "approval_declined",
+        asked: true,
+        connectionId: "conn_1",
+      },
+      deps,
+    );
+    expect(vi.mocked(deps.insertUsage).mock.calls[0]?.[1]).toMatchObject({
+      outcome: "refused",
+      reason: "approval_declined",
+      asked: true,
+      connectionId: "conn_1",
+    });
+  });
+
+  it("refuses a reason that is not a word, and a reason on an ok line", async () => {
+    const deps = fakeDeps();
+    for (const reason of ["The person said no.", "Approval_Declined", "x".repeat(65), ""]) {
+      await expect(
+        recordUsage(
+          ctx,
+          SCOPE,
+          { toolName: "demo__send", outcome: "refused", latencyMs: 1, reason },
+          deps,
+        ),
+      ).rejects.toMatchObject({ code: "BAD_REQUEST" });
+    }
+    await expect(
+      recordUsage(
+        ctx,
+        SCOPE,
+        { toolName: "demo__send", outcome: "ok", latencyMs: 1, reason: "threw" },
+        deps,
+      ),
+    ).rejects.toMatchObject({ code: "BAD_REQUEST" });
+    expect(deps.insertUsage).not.toHaveBeenCalled();
   });
 
   it("records a meta-tool call with no tool row", async () => {

@@ -999,6 +999,9 @@ export function createFakeDeps(store: FakeStore): FakeDeps {
         outcome: input.outcome,
         dryRun: input.dryRun ?? false,
         latencyMs: input.latencyMs,
+        reason: input.reason ?? null,
+        asked: input.asked ?? null,
+        connectionId: input.connectionId ?? null,
         owner: "person",
         createdAt: input.createdAt ?? store.now(),
       };

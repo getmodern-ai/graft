@@ -184,9 +184,10 @@ describe("delete behaviour", () => {
   });
 
   /** ADR 0012: the ledger is the record; a tool or version going away must not erase what it did. */
-  it("keeps a ledger line when its tool or version is deleted", () => {
+  it("keeps a ledger line when its tool, version or connection is deleted", () => {
     expect(deleteActions(schema.usageLedger).get("tool_id")).toBe("set null");
     expect(deleteActions(schema.usageLedger).get("version_id")).toBe("set null");
+    expect(deleteActions(schema.usageLedger).get("connection_id")).toBe("set null");
     expect(deleteActions(schema.toolVersion).get("publisher_job_id")).toBe("set null");
   });
 

@@ -173,7 +173,7 @@ export const DESCRIPTION_PROVENANCE_NOTE = toolProvenance("authored").note;
  * the tools that render one; a caller that does not attaches nothing. On the wire the two part:
  * the refusal is an error, the awaiting answer a result (`result.ts`'s `toolAwaitingOrError`).
  */
-export type GateOutcome =
+export type GateOutcome = (
   | { pass: true }
   | {
       pass: false;
@@ -181,7 +181,15 @@ export type GateOutcome =
       card?: AskCard;
       /** The awaiting `message` in its card form (`handoff-message.ts`, GRA-120), for a client that renders the card. */
       cardMessage?: string;
-    };
+    }
+) & {
+  /**
+   * Set by `gateToolCall` and `requireBuildApproval` when the outcome came through an ask this call
+   * put or took, for the ledger's `asked` (GRA-301; `@graft/db/schema/usage`); absent when the
+   * rule decided with no ask.
+   */
+  asked?: true;
+};
 
 const PASS: GateOutcome = { pass: true };
 
@@ -360,12 +368,15 @@ export async function gateToolCall(
       deps,
       channel,
     );
-    if (outcome !== RETRY) return outcome;
+    if (outcome !== RETRY) return { ...outcome, asked: true };
   }
-  return refuse(
-    "approval_declined",
-    `The answer to ${wire}'s ask was taken by another call of this agent. Call again.`,
-  );
+  return {
+    ...refuse(
+      "approval_declined",
+      `The answer to ${wire}'s ask was taken by another call of this agent. Call again.`,
+    ),
+    asked: true,
+  };
 }
 
 /**
@@ -392,12 +403,15 @@ export async function requireBuildApproval(
       return refuse("connection_not_found", `Connection ${connectionId} does not exist.`);
     }
     const outcome = await askApproval(ctx, scope, { kind: "build", connection }, deps, channel);
-    if (outcome !== RETRY) return outcome;
+    if (outcome !== RETRY) return { ...outcome, asked: true };
   }
-  return refuse(
-    "approval_declined",
-    "The answer to this connection's build ask was taken by another call of this agent. Call again.",
-  );
+  return {
+    ...refuse(
+      "approval_declined",
+      "The answer to this connection's build ask was taken by another call of this agent. Call again.",
+    ),
+    asked: true,
+  };
 }
 
 async function askApproval(

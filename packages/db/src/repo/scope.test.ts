@@ -102,7 +102,13 @@ import {
   lockAuthoredToolName,
   setCurrentToolVersion,
 } from "./tool";
-import { lastRunByToolForPerson, lastUsedAtByVendor, listUsage, listUsageForVendor } from "./usage";
+import {
+  insertUsage,
+  lastRunByToolForPerson,
+  lastUsedAtByVendor,
+  listUsage,
+  listUsageForVendor,
+} from "./usage";
 import {
   deleteWorkingSetEntriesForConnection,
   deleteWorkingSetEntry,
@@ -373,6 +379,47 @@ describe("agent-scoped reads take both ids of the scope in the statement", () =>
   it("the ledger", async () => {
     await listUsage(db, SCOPE, { limit: 10 });
     expect(only().sql).toMatch(SCOPED_AGENT);
+  });
+
+  /**
+   * GRA-301: a ledger line carries how the call ended (`reason`, `asked`) and the connection it
+   * resolved to, beside the columns it always had, and nothing a call carried in or out: the
+   * statement's parameters are the row's ids, words, flags and numbers alone.
+   */
+  it("a ledger line's insert names the reason, the ask and the connection, and no content", async () => {
+    const at = new Date("2026-10-14T10:00:00Z");
+    // The fake client answers no row, which the insert reports as a throw once the statement is out.
+    await insertUsage(db, {
+      id: "use_1",
+      agentId: "agent_1",
+      toolId: "tool_1",
+      versionId: "ver_1",
+      toolName: "demo__hello",
+      outcome: "refused",
+      dryRun: false,
+      latencyMs: 12,
+      reason: "approval_declined",
+      asked: true,
+      connectionId: "conn_1",
+      createdAt: at,
+    }).catch(() => null);
+    const s = only();
+    expect(s.sql).toBe(
+      'insert into "usage_ledger" ("id", "agent_id", "tool_id", "version_id", "tool_name", "outcome", "dry_run", "latency_ms", "reason", "asked", "connection_id", "owner", "created_at") values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, default, $12) returning "id", "agent_id", "tool_id", "version_id", "tool_name", "outcome", "dry_run", "latency_ms", "reason", "asked", "connection_id", "owner", "created_at"',
+    );
+    expect(s.params.slice(0, 11)).toEqual([
+      "use_1",
+      "agent_1",
+      "tool_1",
+      "ver_1",
+      "demo__hello",
+      "refused",
+      false,
+      12,
+      "approval_declined",
+      true,
+      "conn_1",
+    ]);
   });
 
   it("an acquire job, its attempts and its trace", async () => {
