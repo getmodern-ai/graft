@@ -196,9 +196,10 @@ function RowAction({ row }: { row: Integration }) {
 
 /**
  * Sign in, the way the integration page's Connection tab does it (`reconnectActionsOf`): the
- * consent in a popup where the client secret is in place, the credential dialog otherwise.
+ * consent in a popup where the client secret is in place, the credential dialog otherwise. Home's
+ * *Connected integrations* (GRA-327) draws it too.
  */
-function SignInButton({
+export function SignInButton({
   connection,
   kind,
 }: {
