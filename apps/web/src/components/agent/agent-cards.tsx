@@ -1,7 +1,7 @@
 import { Link } from "@tanstack/react-router";
 import { useId, useState } from "react";
 
-import { AgentCard } from "@/components/agent/agent-card";
+import { AgentCard, type ConnectAgent } from "@/components/agent/agent-card";
 import { AddIcon, InfoIcon, KeyboardArrowDownIcon, KeyboardArrowUpIcon } from "@/components/icons";
 import { HarnessMark } from "@/components/marks";
 import { RetryNotice } from "@/components/retry-notice";
@@ -47,6 +47,7 @@ export function AgentCards({
   retrying,
   onRetry,
   onAdd,
+  onConnectAgent,
   offerSetup = false,
 }: {
   agents: readonly AgentListItem[];
@@ -61,6 +62,8 @@ export function AgentCards({
   retrying: boolean;
   onRetry: () => void;
   onAdd: () => void;
+  /** Opens the screen's *Connect an agent*, held above the cards (GRA-336). */
+  onConnectAgent: ConnectAgent;
   /** A person who skipped Setup (ADR 0024) is offered it again from the empty screen. */
   offerSetup?: boolean;
 }) {
@@ -118,6 +121,7 @@ export function AgentCards({
       connectionsFailed={connectionsFailed}
       requests={requests.get(agent.id) ?? 0}
       setup={setup}
+      onConnectAgent={onConnectAgent}
     />
   );
 

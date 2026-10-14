@@ -8,12 +8,13 @@ import {
 } from "@tanstack/react-router";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, type Mock, vi } from "vitest";
 
 import type { Agent } from "@/lib/agent-queries";
 import type { Connection } from "@/lib/connection-queries";
 import { hermesConfigSnippet } from "@/lib/mcp-snippet";
 import { AgentActions } from "./agent-actions";
+import type { ConnectAgent } from "./agent-card";
 import { AgentCards } from "./agent-cards";
 
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
@@ -32,9 +33,11 @@ const agent: Agent = {
 };
 let root: Root;
 let client: QueryClient;
+let connectAgent: Mock<ConnectAgent>;
 
 beforeEach(() => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  connectAgent = vi.fn<ConnectAgent>();
   const container = document.createElement("div");
   document.body.append(container);
   root = createRoot(container);
@@ -80,6 +83,7 @@ async function mount(
             pendingActions={[]}
             setup={undefined}
             onAdd={() => {}}
+            onConnectAgent={connectAgent}
             isPending={false}
             isError={false}
             error={null}
@@ -173,7 +177,7 @@ describe("agent actions", () => {
     await waitFor(() => expect(document.activeElement).toBe(trigger));
   });
 
-  it("opens Connect an agent from a card awaiting its agent and restores focus", async () => {
+  it("hands Connect an agent to the screen from a card, never opening a dialog of its own", async () => {
     await mount({ ...agent, tokenPrefix: null }, true);
     expect(document.body.textContent).toContain("Not recorded");
     const trigger = document.querySelector<HTMLButtonElement>(
@@ -181,15 +185,14 @@ describe("agent actions", () => {
     );
     if (!trigger) throw new Error("Missing connect trigger");
     expect(trigger.textContent).toBe("Connect its agent");
-    await act(async () => {
-      trigger.focus();
-      trigger.click();
-    });
-    expect(document.querySelectorAll("[role=dialog]")).toHaveLength(1);
-    expect(document.querySelector("[role=dialog]")?.textContent).toContain("Issue a token");
-    await click("Done");
-    await waitFor(() => expect(document.querySelector("[role=dialog]")).toBeNull());
-    await waitFor(() => expect(document.activeElement).toBe(trigger));
+    await act(async () => trigger.click());
+    expect(connectAgent).toHaveBeenCalledWith(expect.objectContaining({ id: "agent_1" }), trigger);
+    // The card's menu goes the same way, with the menu's trigger for focus to return to.
+    const menu = control("Actions for Laptop");
+    await click("Actions for Laptop");
+    await click("Connect an agent");
+    expect(connectAgent).toHaveBeenLastCalledWith(expect.objectContaining({ id: "agent_1" }), menu);
+    expect(document.querySelector("[role=dialog]")).toBeNull();
   });
 
   it("says No integrations yet only once the connections are read", async () => {

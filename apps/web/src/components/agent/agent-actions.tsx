@@ -14,12 +14,21 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import type { Agent } from "@/lib/agent-queries";
+import type { ConnectAgent } from "./agent-card";
 
 /**
  * An agent's menu, on its card (GRA-324): View, *Connect an agent*, Edit (name, cap, idle window)
  * and Revoke, the same confirmation the agent's page opens. A revoked agent keeps View alone.
+ * Given `onConnectAgent`, *Connect an agent* opens the screen's dialog rather than one of its own,
+ * so a token issued there outlives a card that changes under it (GRA-336).
  */
-export function AgentActions({ agent }: { agent: Agent }) {
+export function AgentActions({
+  agent,
+  onConnectAgent,
+}: {
+  agent: Agent;
+  onConnectAgent?: ConnectAgent;
+}) {
   const trigger = useRef<HTMLButtonElement>(null);
   const [editing, setEditing] = useState(false);
   const [revoking, setRevoking] = useState(false);
@@ -41,7 +50,11 @@ export function AgentActions({ agent }: { agent: Agent }) {
             View agent
           </DropdownMenuItem>
           {active ? (
-            <DropdownMenuItem onClick={() => setConnecting(true)}>
+            <DropdownMenuItem
+              onClick={() =>
+                onConnectAgent ? onConnectAgent(agent, trigger.current) : setConnecting(true)
+              }
+            >
               Connect an agent
             </DropdownMenuItem>
           ) : null}
