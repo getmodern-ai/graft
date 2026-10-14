@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   AGENT_STATUS_CHIP,
+  ANSWER_CHIP,
   APPROVAL_DECISION_CHIP,
   AWAITING_CLIENT_SECRET_CHIP,
   AWAITING_RECONNECTION_CHIP,
@@ -29,6 +30,7 @@ const EVERY_CHIP: StatusChip[] = [
   DRY_RUN_CHIP,
   NO_PASSING_VERSION_CHIP,
   ...Object.values(APPROVAL_DECISION_CHIP),
+  ...Object.values(ANSWER_CHIP),
   ...Object.values(VENDOR_APPROVAL_DESTRUCTIVE_CHIP),
   ...Object.values(WORKING_SET_CHANGE_CHIP),
   ...Object.values(MODEL_KEY_STATUS_CHIP),
@@ -65,6 +67,9 @@ describe("status chips", () => {
     expect(MODEL_KEY_STATUS_CHIP.set.variant).toBe("success");
     expect(MODEL_STATUS_CHIP.included.variant).toBe("success");
     expect(MODEL_STATUS_CHIP.own_key.variant).toBe("success");
+    // GRA-318: an answer under which the agent runs without asking.
+    expect(ANSWER_CHIP.always.variant).toBe("success");
+    expect(ANSWER_CHIP.allowed.variant).toBe("success");
   });
 
   it("gives the refused states the destructive tone", () => {
@@ -75,6 +80,7 @@ describe("status chips", () => {
     expect(APPROVAL_DECISION_CHIP.deny.variant).toBe("destructive");
     expect(MODEL_STATUS_CHIP.needs_key.variant).toBe("destructive");
     expect(MODEL_STATUS_CHIP.unconfigured.variant).toBe("destructive");
+    expect(ANSWER_CHIP.denied.variant).toBe("destructive");
   });
 
   it("gives the waiting states the outline tone", () => {
@@ -85,6 +91,7 @@ describe("status chips", () => {
     expect(NO_PASSING_VERSION_CHIP.variant).toBe("outline");
     expect(MODEL_KEY_STATUS_CHIP.unset.variant).toBe("outline");
     expect(AGENT_STATUS_CHIP.awaiting_harness.variant).toBe("outline");
+    expect(ANSWER_CHIP.asks_next_time.variant).toBe("outline");
   });
 
   // Person-facing copy says agent, never harness (CONTEXT.md, *Harness*; GRA-332).

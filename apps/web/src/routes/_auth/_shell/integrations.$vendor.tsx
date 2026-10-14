@@ -2,6 +2,7 @@ import { useSuspenseQuery } from "@tanstack/react-query";
 import { createFileRoute, Link } from "@tanstack/react-router";
 
 import { PowerIcon } from "@/components/icons";
+import { AgentsTab } from "@/components/integration/agents-tab";
 import { ConnectionTab } from "@/components/integration/connection-tab";
 import { IntegrationHeader } from "@/components/integration/integration-header";
 import { IntegrationTabs } from "@/components/integration/integration-tabs";
@@ -106,6 +107,12 @@ function IntegrationRoute() {
       />
       {tab === "connection" ? (
         <ConnectionTab connections={page.connections} integrationName={page.displayName} />
+      ) : tab === "agents" ? (
+        <AgentsTab
+          vendor={page.vendor}
+          integrationName={page.displayName}
+          connections={page.connections.filter((connection) => connection.state !== "revoked")}
+        />
       ) : (
         <p className="text-muted-foreground text-sm">{PLACEHOLDERS[tab](page.displayName)}</p>
       )}
