@@ -5,6 +5,7 @@ import { PowerIcon } from "@/components/icons";
 import { ConnectionTab } from "@/components/integration/connection-tab";
 import { IntegrationHeader } from "@/components/integration/integration-header";
 import { IntegrationTabs } from "@/components/integration/integration-tabs";
+import { ToolsTab } from "@/components/integration/tools-tab";
 import { PageContainer } from "@/components/page/page-container";
 import { PageNavBreadcrumb } from "@/components/page/page-nav-breadcrumb";
 import { useScreenTitle } from "@/components/shell/screen-title";
@@ -106,6 +107,12 @@ function IntegrationRoute() {
       />
       {tab === "connection" ? (
         <ConnectionTab connections={page.connections} integrationName={page.displayName} />
+      ) : tab === "tools" ? (
+        <ToolsTab
+          vendor={page.vendor}
+          integrationName={page.displayName}
+          connections={page.connections}
+        />
       ) : (
         <p className="text-muted-foreground text-sm">{PLACEHOLDERS[tab](page.displayName)}</p>
       )}

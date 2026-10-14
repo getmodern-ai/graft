@@ -185,3 +185,20 @@ export function toolAnnotationChip(readOnly: boolean, destructive: boolean): Sta
   if (destructive) return TOOL_ANNOTATION_CHIP.destructive;
   return TOOL_ANNOTATION_CHIP.write;
 }
+
+/**
+ * A tool's annotations as the integration page's Access column words them (GRA-317; GRA-287 item
+ * 9): `Read` or `Changes data`, and `Can delete` beside `Changes data` for a destructive tool. The
+ * tones are `TOOL_ANNOTATION_CHIP`'s, by the same rule.
+ */
+export const TOOL_ACCESS_CHIP = {
+  read: { variant: "secondary", label: "Read" },
+  write: { variant: "outline", label: "Changes data" },
+  delete: { variant: "destructive", label: "Can delete" },
+} as const satisfies Record<"read" | "write" | "delete", StatusChip>;
+
+export function toolAccessChips(readOnly: boolean, destructive: boolean): StatusChip[] {
+  if (readOnly) return [TOOL_ACCESS_CHIP.read];
+  if (destructive) return [TOOL_ACCESS_CHIP.write, TOOL_ACCESS_CHIP.delete];
+  return [TOOL_ACCESS_CHIP.write];
+}
