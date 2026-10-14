@@ -106,21 +106,37 @@ export function agentStepAction(
  * Whom the ask step's setup prompt names, and which agent's words it is written in: the first
  * active agent whose software is connected, else the first awaiting it, else none, when the prompt
  * keeps "A new agent" on the consent page. The harness is the client's that consented (ADR 0018),
- * else the one Setup recorded for its own agent, else `other`, whose words fit any MCP client.
+ * else the one Setup recorded for its own agent, else `other`, whose words fit any MCP client. The
+ * connection it names is the first integration in that agent's scope, or none.
  */
 export function askPromptTarget(
   agents: readonly AgentListItem[],
   setup: Pick<SetupStateData, "setup" | "agent"> | undefined,
-): { agentName?: string; harness: SetupPromptHarness } {
+  integrations: readonly {
+    displayName: string;
+    connections: readonly Pick<Integration["connections"][number], "id">[];
+  }[],
+): { agentName?: string; harness: SetupPromptHarness; connection?: { displayName: string } } {
   const { active } = groupAgents(agents);
   const agent = active.find((row) => !isAwaitingHarness(row)) ?? active[0];
-  if (!agent) return { harness: setup?.setup?.harness ?? "other" };
+  if (!agent) {
+    // The prompt's new agent takes every connection, as a new agent's scope does (ADR 0007).
+    const first = integrations[0];
+    return {
+      harness: setup?.setup?.harness ?? "other",
+      ...(first ? { connection: { displayName: first.displayName } } : {}),
+    };
+  }
   const recorded = setup?.agent?.id === agent.id ? setup.setup?.harness : null;
+  // An integration the agent can reach, so a `listed` agent is never told of one it cannot use.
+  const scope = new Set(agent.connectionIds);
+  const reachable = integrations.find((row) => row.connections.some((c) => scope.has(c.id)));
   return {
     agentName: agent.name,
     harness: agent.connectedVia
       ? promptHarnessOfClient(agent.connectedVia.clientName)
       : (recorded ?? "other"),
+    ...(reachable ? { connection: { displayName: reachable.displayName } } : {}),
   };
 }
 

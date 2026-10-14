@@ -144,29 +144,45 @@ describe("agentStepAction", () => {
 });
 
 describe("askPromptTarget", () => {
+  const gmail = { displayName: "Gmail", connections: [{ id: "conn_gmail" }] };
+  const slack = { displayName: "Slack", connections: [{ id: "conn_slack" }] };
+
   it("names a connected agent in its client's words", () => {
-    expect(askPromptTarget([awaiting, ready], undefined)).toEqual({
+    expect(askPromptTarget([awaiting, ready], undefined, [])).toEqual({
       agentName: "Claude",
       harness: "claude-code",
     });
   });
 
   it("names an agent awaiting its software in the harness Setup recorded, else any client's", () => {
-    expect(askPromptTarget([awaiting], setupState())).toEqual({
+    expect(askPromptTarget([awaiting], setupState(), [])).toEqual({
       agentName: "Hermes",
       harness: "hermes",
     });
-    expect(askPromptTarget([awaiting], undefined)).toEqual({
+    expect(askPromptTarget([awaiting], undefined, [])).toEqual({
       agentName: "Hermes",
       harness: "other",
     });
   });
 
-  it("names no agent when the person has none active", () => {
-    expect(askPromptTarget([revoked], undefined)).toEqual({ harness: "other" });
-    expect(askPromptTarget([], setupState({ harness: "codex" }, null))).toEqual({
+  it("names no agent when the person has none active, and the first integration", () => {
+    expect(askPromptTarget([revoked], undefined, [gmail, slack])).toEqual({
+      harness: "other",
+      connection: { displayName: "Gmail" },
+    });
+    expect(askPromptTarget([], setupState({ harness: "codex" }, null), [])).toEqual({
       harness: "codex",
     });
+  });
+
+  it("names only an integration in the agent's scope", () => {
+    const listed = { ...ready, scopeMode: "listed" as const, connectionIds: ["conn_slack"] };
+    expect(askPromptTarget([listed], undefined, [gmail, slack]).connection).toEqual({
+      displayName: "Slack",
+    });
+    expect(
+      askPromptTarget([{ ...listed, connectionIds: [] }], undefined, [gmail, slack]).connection,
+    ).toBeUndefined();
   });
 });
 

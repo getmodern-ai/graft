@@ -192,7 +192,7 @@ function AgentStep({ step }: { step: HomeChecklistStep }) {
               Connect its agent
             </Button>
           ) : action.kind === "dialog" ? (
-            <ConnectItsAgent agent={action.agent} />
+            <ConnectItsAgent agent={action.agent} variant={variant} />
           ) : (
             <Button variant={variant} size="sm" onClick={() => setCreating(true)}>
               <AddIcon />
@@ -268,8 +268,11 @@ function AskStep({ step }: { step: HomeChecklistStep }) {
   const agents = useQuery(agentsQuery);
   const setup = useQuery(setupQuery);
   const integrations = useQuery(integrationsQuery);
-  const target = askPromptTarget(agents.data?.agents ?? [], setup.data);
-  const connection = integrations.data?.integrations[0];
+  const target = askPromptTarget(
+    agents.data?.agents ?? [],
+    setup.data,
+    integrations.data?.integrations ?? [],
+  );
   return (
     <>
       <StepHeading
@@ -282,7 +285,7 @@ function AskStep({ step }: { step: HomeChecklistStep }) {
         <SetupPromptBlock
           harness={target.harness}
           agentName={target.agentName}
-          connection={connection ? { displayName: connection.displayName } : undefined}
+          connection={target.connection}
         />
       )}
     </>
