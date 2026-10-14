@@ -13,6 +13,7 @@ import {
   createAgentAwaitingHarness,
   createAgentForClient,
   issueAwaitingAgentToken,
+  removeConnectionFromAgentScope,
   revokeAgent,
   rotateAgentToken,
   setAgentScope,
@@ -76,6 +77,7 @@ function fakeDeps(overrides: Partial<AgentDeps> = {}): AgentDeps {
     })),
     replaceAgentConnections: vi.fn(async () => {}),
     addAgentConnection: vi.fn(async () => {}),
+    removeAgentConnection: vi.fn(async () => {}),
     listAgentConnectionIds: vi.fn(async () => []),
     // The person's three connections, as the resolved read answers for an agent on `all`.
     listScopeConnectionIds: vi.fn(async () => ["conn_1", "conn_2", "conn_3"]),
@@ -673,5 +675,256 @@ describe("addConnectionToAgentScope", () => {
       addConnectionToAgentScope(ctx, PRINCIPAL, "agent_1", "conn_x", foreign),
     ).rejects.toMatchObject({ code: "NOT_FOUND", details: { connectionIds: ["conn_x"] } });
     expect(foreign.addAgentConnection).not.toHaveBeenCalled();
+  });
+});
+
+describe("removeConnectionFromAgentScope", () => {
+  /** GRA-294: under `listed`, one delete on the scope's key; the rest of the list stays. */
+  it("under listed: deletes the one row under the scope pair once the connection is confirmed the person's, and answers the list", async () => {
+    const deps = fakeDeps({ listAgentConnectionIds: vi.fn(async () => ["conn_1"]) });
+    const result = await removeConnectionFromAgentScope(ctx, PRINCIPAL, "agent_1", "conn_2", deps);
+    expect(result).toMatchObject({ connectionIds: ["conn_1"], materialised: false });
+    expect(result.agent.scopeMode).toBe("listed");
+    expect(deps.findConnectionsByIds).toHaveBeenCalledWith(fakeDb, "person_1", ["conn_2"]);
+    expect(deps.removeAgentConnection).toHaveBeenCalledWith(
+      fakeDb,
+      { personId: "person_1", agentId: "agent_1" },
+      "conn_2",
+    );
+    expect(deps.findAgentForUpdate).toHaveBeenCalledWith(fakeDb, "person_1", "agent_1");
+    expect(
+      vi.mocked(deps.findAgentForUpdate).mock.invocationCallOrder[0] ?? Number.NaN,
+    ).toBeLessThan(vi.mocked(deps.removeAgentConnection).mock.invocationCallOrder[0] ?? Number.NaN);
+    expect(deps.replaceAgentConnections).not.toHaveBeenCalled();
+    expect(deps.updateAgent).not.toHaveBeenCalled();
+  });
+
+  /** ADR 0007 as amended 2026-09-19: turning one off under `all` narrows the agent, and says so. */
+  it("under all: materialises listed with every connection the scope resolved to but this one, and answers materialised", async () => {
+    const deps = fakeDeps({ findAgentForUpdate: vi.fn(async () => openRow) });
+    const result = await removeConnectionFromAgentScope(ctx, PRINCIPAL, "agent_1", "conn_2", deps);
+    expect(result).toMatchObject({ connectionIds: ["conn_1", "conn_3"], materialised: true });
+    expect(result.agent.scopeMode).toBe("listed");
+    expect(deps.updateAgent).toHaveBeenCalledWith(fakeDb, "person_1", "agent_1", {
+      scopeMode: "listed",
+    });
+    expect(deps.replaceAgentConnections).toHaveBeenCalledWith(
+      fakeDb,
+      { personId: "person_1", agentId: "agent_1" },
+      ["conn_1", "conn_3"],
+    );
+    expect(deps.removeAgentConnection).not.toHaveBeenCalled();
+  });
+
+  it("refuses an unknown agent and a connection that is not the person's, under either mode, writing nothing", async () => {
+    const noAgent = fakeDeps({ findAgentForUpdate: vi.fn(async () => null) });
+    await expect(
+      removeConnectionFromAgentScope(ctx, PRINCIPAL, "missing", "conn_1", noAgent),
+    ).rejects.toMatchObject({ code: "NOT_FOUND" });
+    expect(noAgent.findConnectionsByIds).not.toHaveBeenCalled();
+
+    for (const agentRow of [row, openRow]) {
+      const foreign = fakeDeps({
+        findAgentForUpdate: vi.fn(async () => agentRow),
+        findConnectionsByIds: vi.fn(async () => []),
+      });
+      await expect(
+        removeConnectionFromAgentScope(ctx, PRINCIPAL, "agent_1", "conn_x", foreign),
+      ).rejects.toMatchObject({ code: "NOT_FOUND", details: { connectionIds: ["conn_x"] } });
+      expect(foreign.removeAgentConnection).not.toHaveBeenCalled();
+      expect(foreign.replaceAgentConnections).not.toHaveBeenCalled();
+      expect(foreign.updateAgent).not.toHaveBeenCalled();
+    }
+  });
+});
+
+/**
+ * The agent row's lock, held as Postgres holds `FOR UPDATE`: from `findAgentForUpdate` until the
+ * transaction that took it ends. Each transaction gets its own handle, the writes land on one
+ * in-memory agent, and `pause` holds a transaction between its locked read and its writes, so the
+ * interleaving that would lose a connection is reached deterministically.
+ */
+function lockedWorld(initial: { mode: AgentRow["scopeMode"]; connections: string[] }) {
+  const state = {
+    mode: initial.mode,
+    list: new Set<string>(),
+    connections: [...initial.connections],
+  };
+  const log: string[] = [];
+  type Tx = { name: string; release: () => void };
+  const txOf = (db: unknown) => db as Tx;
+  let tail: Promise<void> = Promise.resolve();
+  let gate: Promise<void> | null = null;
+
+  const ctxNamed = (name: string): ServiceContext =>
+    ({
+      db: {
+        transaction: async <T>(fn: (tx: unknown) => Promise<T>) => {
+          const tx: Tx = { name, release: () => {} };
+          try {
+            return await fn(tx);
+          } finally {
+            log.push(`${name}:commit`);
+            tx.release();
+          }
+        },
+      },
+    }) as unknown as ServiceContext;
+
+  const deps = fakeDeps({
+    findAgentForUpdate: vi.fn(async (db) => {
+      const tx = txOf(db);
+      const before = tail;
+      tail = new Promise<void>((release) => {
+        tx.release = release;
+      });
+      await before;
+      log.push(`${tx.name}:locked`);
+      return { ...row, scopeMode: state.mode };
+    }),
+    findConnectionsByIds: vi.fn(async (_db, _p, ids: readonly string[]) =>
+      ids.filter((id) => state.connections.includes(id)).map(connectionRow),
+    ),
+    listScopeConnectionIds: vi.fn(async () => {
+      const resolved = state.mode === "all" ? [...state.connections] : [...state.list];
+      if (gate) await gate;
+      return resolved.sort();
+    }),
+    listAgentConnectionIds: vi.fn(async () => [...state.list].sort()),
+    updateAgent: vi.fn(async (_db, _p, _a, patch) => {
+      if (patch.scopeMode) state.mode = patch.scopeMode;
+      return { ...row, scopeMode: state.mode };
+    }),
+    replaceAgentConnections: vi.fn(async (_db, _scope, ids: readonly string[]) => {
+      state.list = new Set(ids);
+    }),
+    addAgentConnection: vi.fn(async (db, _scope, id: string) => {
+      log.push(`${txOf(db).name}:insert ${id}`);
+      state.list.add(id);
+    }),
+    removeAgentConnection: vi.fn(async (_db, _scope, id: string) => {
+      state.list.delete(id);
+    }),
+  });
+
+  /** Hold every `listScopeConnectionIds` until the returned function is called. */
+  const pause = () => {
+    let open = () => {};
+    gate = new Promise<void>((resolve) => {
+      open = () => {
+        gate = null;
+        resolve();
+      };
+    });
+    return open;
+  };
+
+  return { state, log, deps, ctx: ctxNamed, pause };
+}
+
+const ticks = async (n = 10) => {
+  for (let i = 0; i < n; i++) await Promise.resolve();
+};
+
+describe("one-connection scope writes serialise on the agent's row lock (GRA-294)", () => {
+  /**
+   * The race the lock closes: an agent on `all` has one connection turned off while another
+   * connection is made and granted. The removal locks the row and reads the scope; the grant,
+   * started meanwhile, waits on the lock rather than reading `all` and doing nothing, then finds
+   * the agent on `listed` and writes its row, so the new connection is not lost.
+   */
+  it("a grant racing a materialising removal waits for it, sees listed, and keeps the new connection", async () => {
+    const world = lockedWorld({ mode: "all", connections: ["conn_1", "conn_2", "conn_3"] });
+    const open = world.pause();
+    const removal = removeConnectionFromAgentScope(
+      world.ctx("remove"),
+      PRINCIPAL,
+      "agent_1",
+      "conn_2",
+      world.deps,
+    );
+    await ticks();
+    expect(world.log).toEqual(["remove:locked"]);
+
+    // A connection made while the removal holds the lock, and the grant-on-connect after it.
+    world.state.connections.push("conn_4");
+    const grant = addConnectionToAgentScope(
+      world.ctx("grant"),
+      PRINCIPAL,
+      "agent_1",
+      "conn_4",
+      world.deps,
+    );
+    await ticks();
+    expect(world.log).toEqual(["remove:locked"]);
+
+    open();
+    const [removed, granted] = await Promise.all([removal, grant]);
+    expect(world.log).toEqual([
+      "remove:locked",
+      "remove:commit",
+      "grant:locked",
+      "grant:insert conn_4",
+      "grant:commit",
+    ]);
+    expect(removed).toMatchObject({ connectionIds: ["conn_1", "conn_3"], materialised: true });
+    expect(granted.connectionIds).toEqual(["conn_1", "conn_3", "conn_4"]);
+    expect(world.state.mode).toBe("listed");
+    expect([...world.state.list].sort()).toEqual(["conn_1", "conn_3", "conn_4"]);
+  });
+
+  /** A whole-scope write started second lands whole after the removal, never interleaved with it. */
+  it("setAgentScope to all started during a removal runs after it commits, and its answer stands", async () => {
+    const world = lockedWorld({ mode: "all", connections: ["conn_1", "conn_2"] });
+    const open = world.pause();
+    const removal = removeConnectionFromAgentScope(
+      world.ctx("remove"),
+      PRINCIPAL,
+      "agent_1",
+      "conn_2",
+      world.deps,
+    );
+    await ticks();
+    const widen = setAgentScope(
+      world.ctx("set"),
+      PRINCIPAL,
+      "agent_1",
+      { mode: "all" },
+      world.deps,
+    );
+    await ticks();
+    expect(world.log).toEqual(["remove:locked"]);
+    open();
+    await Promise.all([removal, widen]);
+    expect(world.log).toEqual(["remove:locked", "remove:commit", "set:locked", "set:commit"]);
+    expect(world.state.mode).toBe("all");
+    expect(world.state.list.size).toBe(0);
+  });
+
+  it("a removal started during setAgentScope to listed removes from the list that write committed", async () => {
+    const world = lockedWorld({ mode: "all", connections: ["conn_1", "conn_2", "conn_3"] });
+    const open = world.pause();
+    const narrow = setAgentScope(
+      world.ctx("set"),
+      PRINCIPAL,
+      "agent_1",
+      { mode: "listed" },
+      world.deps,
+    );
+    await ticks();
+    const removal = removeConnectionFromAgentScope(
+      world.ctx("remove"),
+      PRINCIPAL,
+      "agent_1",
+      "conn_1",
+      world.deps,
+    );
+    await ticks();
+    expect(world.log).toEqual(["set:locked"]);
+    open();
+    const [, removed] = await Promise.all([narrow, removal]);
+    expect(world.log).toEqual(["set:locked", "set:commit", "remove:locked", "remove:commit"]);
+    expect(removed).toMatchObject({ connectionIds: ["conn_2", "conn_3"], materialised: false });
+    expect([...world.state.list].sort()).toEqual(["conn_2", "conn_3"]);
   });
 });

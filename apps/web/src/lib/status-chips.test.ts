@@ -11,6 +11,7 @@ import {
   connectionStatusChips,
   DRY_RUN_CHIP,
   MODEL_KEY_STATUS_CHIP,
+  MODEL_STATUS_CHIP,
   NO_PASSING_VERSION_CHIP,
   type StatusChip,
   TOOL_ANNOTATION_CHIP,
@@ -31,6 +32,7 @@ const EVERY_CHIP: StatusChip[] = [
   ...Object.values(VENDOR_APPROVAL_DESTRUCTIVE_CHIP),
   ...Object.values(WORKING_SET_CHANGE_CHIP),
   ...Object.values(MODEL_KEY_STATUS_CHIP),
+  ...Object.values(MODEL_STATUS_CHIP),
   ...Object.values(TOOL_ANNOTATION_CHIP),
 ];
 
@@ -61,6 +63,8 @@ describe("status chips", () => {
       label: "Ask first",
     });
     expect(MODEL_KEY_STATUS_CHIP.set.variant).toBe("success");
+    expect(MODEL_STATUS_CHIP.included.variant).toBe("success");
+    expect(MODEL_STATUS_CHIP.own_key.variant).toBe("success");
   });
 
   it("gives the refused states the destructive tone", () => {
@@ -69,6 +73,8 @@ describe("status chips", () => {
     expect(CONNECTION_STATUS_CHIP.consent_required.variant).toBe("destructive");
     expect(CALL_OUTCOME_CHIP.error.variant).toBe("destructive");
     expect(APPROVAL_DECISION_CHIP.deny.variant).toBe("destructive");
+    expect(MODEL_STATUS_CHIP.needs_key.variant).toBe("destructive");
+    expect(MODEL_STATUS_CHIP.unconfigured.variant).toBe("destructive");
   });
 
   it("gives the waiting states the outline tone", () => {

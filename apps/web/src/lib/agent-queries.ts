@@ -1,4 +1,9 @@
-import type { AgentListOutput, AgentOutput, AgentScopeMode } from "@graft/core";
+import type {
+  AgentListOutput,
+  AgentOutput,
+  AgentScopeMode,
+  AgentScopeToggleOutput,
+} from "@graft/core";
 import type {
   ScopeBody,
   ToolOutput,
@@ -22,6 +27,8 @@ export type AgentListItem = Jsonified<AgentListOutput>;
 export type Tool = Jsonified<ToolOutput>;
 export type WorkingSetEntry = Jsonified<WorkingSetEntryOutput>;
 export type WorkingSetChange = Jsonified<WorkingSetChangeOutput>;
+/** What turning one connection on or off for one agent answers (GRA-294). */
+export type AgentScopeToggle = Jsonified<AgentScopeToggleOutput>;
 
 export const agentKeys = {
   all: ["agents"] as const,
@@ -125,5 +132,24 @@ export function setAgentScope(agentId: string, body: ScopeBody) {
   return api<{ agent: Agent; connectionIds: string[] }>(
     `/agents/${encodeURIComponent(agentId)}/scope`,
     { method: "PUT", body },
+  );
+}
+
+/**
+ * One connection on or off for one agent (GRA-294), each a single write under the agent's lock;
+ * `lib/scope-toggles.ts` says which a switch makes. `materialised` on a removal says the agent
+ * left `all`.
+ */
+export function grantConnectionToAgent(connectionId: string, agentId: string) {
+  return api<AgentScopeToggle>(
+    `/connections/${encodeURIComponent(connectionId)}/agents/${encodeURIComponent(agentId)}`,
+    { method: "PUT" },
+  );
+}
+
+export function removeConnectionFromAgent(connectionId: string, agentId: string) {
+  return api<AgentScopeToggle>(
+    `/connections/${encodeURIComponent(connectionId)}/agents/${encodeURIComponent(agentId)}`,
+    { method: "DELETE" },
   );
 }

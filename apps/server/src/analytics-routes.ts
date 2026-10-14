@@ -47,6 +47,8 @@ export const TRACKED_ROUTES: ReadonlyArray<TrackedRoute> = [
   { method: "POST", path: /^\/agents\/[^/]+\/revoke$/, event: "agent_revoked" },
   { method: "POST", path: /^\/agents\/[^/]+\/token\/rotate$/, event: "agent_token_rotated" },
   { method: "PUT", path: /^\/agents\/[^/]+\/scope$/, event: "scope_changed" },
+  { method: "PUT", path: /^\/connections\/[^/]+\/agents\/[^/]+$/, event: "scope_changed" },
+  { method: "DELETE", path: /^\/connections\/[^/]+\/agents\/[^/]+$/, event: "scope_changed" },
   { method: "POST", path: /^\/mcp-oauth\/consent$/, event: "mcp_client_consented" },
   { method: "POST", path: /^\/connections$/, event: "connection_created" },
   { method: "POST", path: /^\/connections\/[^/]+\/revoke$/, event: "connection_revoked" },
@@ -96,6 +98,14 @@ export const TRACKED_ROUTES: ReadonlyArray<TrackedRoute> = [
     path: /^\/setup\/build$/,
     event: "setup_step_completed",
     properties: setupStepProperties("goal"),
+  },
+  {
+    // A ready-made tool chosen instead of a task to build (GRA-276): the same step, told apart by
+    // `readyMade`.
+    method: "POST",
+    path: /^\/setup\/stock$/,
+    event: "setup_step_completed",
+    properties: (answer) => ({ ...setupStepProperties("goal")(answer), readyMade: true }),
   },
   // The result step completes on its Continue; the finish completes Setup (GRA-208).
   {
