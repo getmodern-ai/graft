@@ -3,6 +3,7 @@ import { useState } from "react";
 
 import { PageNav } from "@/components/page/page-nav";
 import { PageNavCollapsedSidebar } from "@/components/page/page-nav-collapsed-sidebar";
+import { CommandPalette, CommandPaletteProvider } from "@/components/shell/command-palette";
 import { MainSidebar } from "@/components/shell/main-sidebar";
 import { MobileTopBar } from "@/components/shell/mobile-top-bar";
 import { ScreenTitle, ScreenTitleProvider } from "@/components/shell/screen-title";
@@ -36,31 +37,36 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     // own for the shortcut to act on — the case the provider's opt-out exists for is a provider
     // mounted with none.
     <SidebarProvider defaultOpen={defaultOpen}>
-      <ScreenTitleProvider>
-        {/* First in the tree, deliberately: it has to be the first focusable element for a
-            keyboard user's first Tab to land on it, ahead of the sidebar it exists to skip. */}
-        <SkipNav />
-        <MainSidebar />
-        <SidebarInset
-          id={MAIN_CONTENT_ID}
-          // Not in the normal tab order — a keyboard user reaches it only via `SkipNav`'s href,
-          // which needs the target to be programmatically focusable at all.
-          tabIndex={-1}
-          className="h-svh min-h-0 min-w-0"
-        >
-          <MobileTopBar />
-          {/* `hidden … md:flex`: below `md` the top bar above stands in for this strip. The
-              collapsed-sidebar control leads the title whenever the sidebar is off canvas, by its
-              own rule (`page-nav-collapsed-sidebar.tsx`). */}
-          <PageNav aria-label="Page" className="hidden shrink-0 md:flex">
-            <div className="flex min-w-0 items-center">
-              <PageNavCollapsedSidebar />
-              <ScreenTitle />
-            </div>
-          </PageNav>
-          <div className="min-h-0 flex-1 overflow-y-auto">{children}</div>
-        </SidebarInset>
-      </ScreenTitleProvider>
+      {/* ⌘K, beside the provider's ⌘B: the palette is mounted once here, and the sidebar's Search
+          row opens the same one (`command-palette.tsx`). */}
+      <CommandPaletteProvider>
+        <ScreenTitleProvider>
+          {/* First in the tree, deliberately: it has to be the first focusable element for a
+              keyboard user's first Tab to land on it, ahead of the sidebar it exists to skip. */}
+          <SkipNav />
+          <MainSidebar />
+          <SidebarInset
+            id={MAIN_CONTENT_ID}
+            // Not in the normal tab order — a keyboard user reaches it only via `SkipNav`'s href,
+            // which needs the target to be programmatically focusable at all.
+            tabIndex={-1}
+            className="h-svh min-h-0 min-w-0"
+          >
+            <MobileTopBar />
+            {/* `hidden … md:flex`: below `md` the top bar above stands in for this strip. The
+                collapsed-sidebar control leads the title whenever the sidebar is off canvas, by
+                its own rule (`page-nav-collapsed-sidebar.tsx`). */}
+            <PageNav aria-label="Page" className="hidden shrink-0 md:flex">
+              <div className="flex min-w-0 items-center">
+                <PageNavCollapsedSidebar />
+                <ScreenTitle />
+              </div>
+            </PageNav>
+            <div className="min-h-0 flex-1 overflow-y-auto">{children}</div>
+          </SidebarInset>
+          <CommandPalette />
+        </ScreenTitleProvider>
+      </CommandPaletteProvider>
     </SidebarProvider>
   );
 }

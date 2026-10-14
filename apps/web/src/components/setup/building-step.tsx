@@ -5,11 +5,11 @@ import { useEffect } from "react";
 import { CodeBlock } from "@/components/code-block";
 import { CheckCircleIcon, ErrorIcon, ScheduleIcon } from "@/components/icons";
 import { Loader } from "@/components/loader";
+import { IntegrationMark } from "@/components/marks";
 import { RetryNotice } from "@/components/retry-notice";
 import { SetupAppCard, SetupTaskRow } from "@/components/setup/setup-app-card";
 import { SetupDisclosure } from "@/components/setup/setup-disclosure";
 import { SetupFooter } from "@/components/setup/setup-footer";
-import { SetupLogo } from "@/components/setup/setup-logo";
 import { SetupStepHeader } from "@/components/setup/setup-step-header";
 import { useSetupMutation } from "@/components/setup/use-setup-mutation";
 import { Badge } from "@/components/ui/badge";
@@ -129,10 +129,11 @@ function BuildingJob({
       ) : (
         <SetupAppCard
           media={
-            <SetupLogo
-              starterId={goal.data?.starterId}
-              url={connection ? cachedDirectoryLogo(queryClient, connection.vendor) : null}
-              tile={false}
+            <IntegrationMark
+              slug={goal.data?.starterId ?? connection?.vendor}
+              name={connection?.displayName}
+              logoUrl={connection ? cachedDirectoryLogo(queryClient, connection.vendor) : null}
+              tile="none"
               className="size-8"
             />
           }

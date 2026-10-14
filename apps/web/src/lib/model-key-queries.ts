@@ -1,4 +1,5 @@
 import type { ModelKeyOutput } from "@graft/core";
+import type { ModelOutput } from "@graft/server/api";
 import { queryOptions } from "@tanstack/react-query";
 
 import { api, type Jsonified } from "./api";
@@ -16,7 +17,17 @@ export type ModelKeyProvider = ModelKey["provider"];
 
 export const modelKeyKeys = {
   current: ["me", "model-key"] as const,
+  /** `GET /me/model` (GRA-297): what answers the person's jobs, which a key set or removed moves. */
+  model: ["me", "model"] as const,
 };
+
+/** The deployment's model and whether the person has a key (`apps/server/src/api.ts`'s `ModelOutput`). */
+export type Model = Jsonified<ModelOutput>;
+
+export const modelQuery = queryOptions({
+  queryKey: modelKeyKeys.model,
+  queryFn: () => api<{ model: Model }>("/me/model"),
+});
 
 export const modelKeyQuery = queryOptions({
   queryKey: modelKeyKeys.current,

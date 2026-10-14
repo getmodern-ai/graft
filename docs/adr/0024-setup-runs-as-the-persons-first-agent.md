@@ -122,3 +122,13 @@ record and taken the moment the connection lands, as a planned task is built the
 model, so a deployment with none can still finish Setup with a ready-made tool. The rejected
 option above, a canned starter tool, stays rejected in its own terms: these are the tools every
 person has, not one written for Setup.
+
+## Amendment, 2026-10-14: the console builds a tool outside Setup (GRA-284)
+
+The text above keeps Setup the console's only caller of `acquire`, and calls a Run action elsewhere
+"a later decision". It is decided (Aleks): an integration's page may **get a new tool** for an
+agent the person picks **before** pressing Create. Create is that agent's build approval for the
+connection, as Build is in Setup, and the job is an ordinary `acquire` job of that agent's, which
+promotes into its working set. The console polls the job as Setup's building step does and can find
+it again after a reload. Other agents reach the tool through `find_tool`, within their scope. No
+link opens the agent's own software: nothing holds a deep link into it.

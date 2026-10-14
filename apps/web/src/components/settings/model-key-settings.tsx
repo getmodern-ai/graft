@@ -31,14 +31,17 @@ import {
   type ModelKeyProvider,
   modelKeyKeys,
   modelKeyQuery,
+  modelQuery,
   removeModelKey,
   setModelKey,
 } from "@/lib/model-key-queries";
-import { MODEL_KEY_STATUS_CHIP } from "@/lib/status-chips";
+import { MODEL_ROW_COPY, modelStatusOf } from "@/lib/model-status";
+import { MODEL_KEY_STATUS_CHIP, MODEL_STATUS_CHIP } from "@/lib/status-chips";
 
 /**
  * Bring your own model key (ADR 0014): the one setting a person has today, as a section of
- * Cando's settings row family (GRA-47) — a heading, one card, and a row per fact or field.
+ * Cando's settings row family (GRA-47) — a heading, the Model row's card (GRA-297), then the
+ * key's card with a row per fact or field.
  *
  * The card shows what is set — the provider, the model ids, when the key was entered — and never
  * the key; entering one is a form whose value goes to the server once and is then gone from the
@@ -94,7 +97,63 @@ export function ModelKeySettings() {
     );
   }
 
-  return <SettingsSection heading="Model">{content}</SettingsSection>;
+  return (
+    <SettingsSection heading="Building tools">
+      <ModelStatusCard />
+      {content}
+    </SettingsSection>
+  );
+}
+
+/**
+ * The Model row (GRA-297; Figma Settings, *Building tools*): what answers the person's jobs, from
+ * `GET /me/model`, as `lib/model-status.ts` decides it. Its own card and its own read above the
+ * key's, so a failed read of one leaves the other drawn.
+ */
+function ModelStatusCard() {
+  const read = useQuery(modelQuery);
+  let row: React.ReactNode;
+  if (read.isPending) {
+    row = (
+      <SettingsEmptyRow>
+        <Skeleton className="h-5 w-40" />
+        <Skeleton className="h-5 w-24" />
+      </SettingsEmptyRow>
+    );
+  } else if (read.isError) {
+    row = (
+      <SettingsEmptyRow>
+        <p className="text-muted-foreground text-sm">
+          <RetryNotice
+            error={read.error}
+            message="Could not load what writes your tools."
+            onRetry={() => void read.refetch()}
+            retrying={read.isFetching}
+          />
+        </p>
+      </SettingsEmptyRow>
+    );
+  } else {
+    const status = modelStatusOf(read.data.model);
+    const copy = MODEL_ROW_COPY[status];
+    row = (
+      <SettingsRow
+        title="Model"
+        description={copy.description}
+        action={
+          <div className="flex shrink-0 items-center gap-2">
+            {copy.value ? <Value>{copy.value}</Value> : null}
+            <StatusChip chip={MODEL_STATUS_CHIP[status]} />
+          </div>
+        }
+      />
+    );
+  }
+  return (
+    <SettingsCard>
+      <SettingsRowGroup>{row}</SettingsRowGroup>
+    </SettingsCard>
+  );
 }
 
 /** The two-sentence account of what the key does, above whichever rows follow it. */
@@ -233,6 +292,7 @@ function ModelKeyForm({
     mutationFn: setModelKey,
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: modelKeyKeys.current });
+      queryClient.invalidateQueries({ queryKey: modelKeyKeys.model });
       toast.success(replacing ? "Your model key is replaced" : "Your model key is set", {
         description: "Your next acquire job runs on your provider.",
       });
@@ -419,6 +479,7 @@ function RemoveKeyButton() {
     mutationFn: removeModelKey,
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: modelKeyKeys.current });
+      queryClient.invalidateQueries({ queryKey: modelKeyKeys.model });
       toast.success("Your model key is removed", {
         description: "Your acquire jobs run on Graft's fixed model again.",
       });
