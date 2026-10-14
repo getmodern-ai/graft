@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 
 import { AddConnectionDialog } from "@/components/connection/add-connection-dialog";
 import { AddIcon, InfoIcon, KeyboardArrowDownIcon, SearchIcon } from "@/components/icons";
+import { CategoryChips } from "@/components/integration/category-chips";
 import { IntegrationMark } from "@/components/marks";
 import { RetryNotice } from "@/components/retry-notice";
 import { DiscardJobDialog } from "@/components/setup/discard-job-dialog";
@@ -26,12 +27,9 @@ import {
   setupGoalQuery,
 } from "@/lib/setup-queries";
 import { ANOTHER_VENDOR, choiceLeavesJob } from "@/lib/setup-vendors";
-import { cn } from "@/lib/utils";
 
 /** How long the search waits after the last keystroke before it asks. */
 const SEARCH_DEBOUNCE_MS = 300;
-/** How many category chips show before *N more*. */
-const CHIPS_SHOWN = 8;
 
 /** What a card says about connecting it, in the footer beside its name. */
 const CONNECT_LABEL: Record<DirectoryEntry["connect"], string> = {
@@ -64,7 +62,6 @@ export function VendorChoice({
   const [typed, setTyped] = useState("");
   const [query, setQuery] = useState("");
   const [category, setCategory] = useState<string | null>(null);
-  const [allChips, setAllChips] = useState(false);
   useEffect(() => {
     const timer = setTimeout(() => setQuery(typed.trim()), SEARCH_DEBOUNCE_MS);
     return () => clearTimeout(timer);
@@ -214,29 +211,11 @@ export function VendorChoice({
             </span>
           </div>
           {home.data && home.data.categories.length > 0 && !query ? (
-            // One scrolling row on a phone, so the cards are on the first screen (GRA-267).
-            <div className="-mx-4 flex items-center gap-1 overflow-x-auto px-4 md:mx-0 md:flex-wrap md:overflow-visible md:px-0">
-              <Chip active={category === null} onClick={() => setCategory(null)}>
-                All
-              </Chip>
-              {(allChips ? home.data.categories : home.data.categories.slice(0, CHIPS_SHOWN)).map(
-                (chip) => (
-                  <Chip
-                    key={chip.name}
-                    active={category === chip.name}
-                    onClick={() => setCategory(chip.name)}
-                  >
-                    {chip.name}
-                  </Chip>
-                ),
-              )}
-              {!allChips && home.data.categories.length > CHIPS_SHOWN ? (
-                <Button type="button" variant="ghost" size="sm" onClick={() => setAllChips(true)}>
-                  <KeyboardArrowDownIcon />
-                  {home.data.categories.length - CHIPS_SHOWN} more
-                </Button>
-              ) : null}
-            </div>
+            <CategoryChips
+              categories={home.data.categories}
+              value={category}
+              onChange={setCategory}
+            />
           ) : null}
 
           {loading ? (
@@ -357,30 +336,6 @@ export function VendorChoice({
         }}
       />
     </>
-  );
-}
-
-/** A category chip: the frames' `Category chip`, outline, the chosen one in the primary's border. */
-function Chip({
-  active,
-  onClick,
-  children,
-}: {
-  active: boolean;
-  onClick: () => void;
-  children: React.ReactNode;
-}) {
-  return (
-    <Button
-      type="button"
-      variant="outline"
-      size="sm"
-      aria-pressed={active}
-      className={cn("shrink-0 rounded-full", active ? "border-primary bg-primary/5" : null)}
-      onClick={onClick}
-    >
-      {children}
-    </Button>
   );
 }
 
