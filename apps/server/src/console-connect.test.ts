@@ -559,4 +559,29 @@ describe("what Greptile's review of #238 asked for", () => {
     expect((await read(res)).details).toMatchObject({ reason: "connection_revoked" });
     expect(approvalsOf(h)).toEqual({ build: [], vendor: [] });
   });
+
+  it("a spent link landed on after its connection was revoked reconnects nothing and restores no access", async () => {
+    const h = harness();
+    const said = await read(
+      await h.app.request("/api/connect", post({ proposal: GMAIL, access: "full" })),
+    );
+    const success = h.broker.minted.at(-1)?.success ?? "";
+    h.broker.connectAccount({ personId: PERSON, target: "gmail", id: "acct_1" });
+    expect(consoleOutcome(await landing(h, success)).status).toBe("connected");
+    const revoked = await h.app.request(`/api/connections/${said.connectId}/revoke`, {
+      method: "POST",
+      headers: { origin: AUTH_URL },
+    });
+    expect(revoked.status).toBe(200);
+    expect(approvalsOf(h)).toEqual({ build: [], vendor: [] });
+    // The provider now holds another account for the person, and the old success URL is landed on.
+    h.broker.connectAccount({ personId: PERSON, target: "gmail", id: "acct_2" });
+    const again = consoleOutcome(await landing(h, success));
+    expect(again).toMatchObject({ status: "failed", connectId: said.connectId });
+    expect(again.message).toContain("revoked since");
+    const row = h.store.connections.get(said.connectId);
+    expect(row?.revokedAt).not.toBeNull();
+    expect(row?.providerRef).not.toBe("acct_2");
+    expect(approvalsOf(h)).toEqual({ build: [], vendor: [] });
+  });
 });

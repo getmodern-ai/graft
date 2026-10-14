@@ -497,24 +497,32 @@ export async function completeConsoleLink(
   // for the person would answer it and a refresh would connect that too. The row this link inserted
   // carries the record's id; a released row it reconnected in place keeps its own, and is the one
   // of this provider and integration made before the record was issued and touched since.
+  //
+  // A record that made its row is spent even once that row is revoked (Greptile on #238): landing
+  // on it again would reconnect the released row to whatever account the provider holds next and
+  // write the old record's access over the revoke's sweep, so it says what happened instead.
   const issuedAt = record.expiresAt - LINK_STATE_TTL_MS;
   const madeByThisLink = async (scoped: ServiceContext) =>
     (await listConnections(scoped, principal, deps.connection)).find(
       (row) =>
-        row.revokedAt === null &&
         row.provider === provider.name &&
         row.vendor === record.vendor &&
         (row.id === record.connectId ||
           (row.createdAt.getTime() < issuedAt && row.updatedAt.getTime() >= issuedAt)),
     ) ?? null;
-  const already = (connectionId: string) =>
-    outcome(
-      "connected",
-      `${record.displayName} is connected through ${name}. The console updates on its own.`,
-      connectionId,
-    );
+  const already = (row: Pick<ConnectionOutput, "id" | "revokedAt">) =>
+    row.revokedAt
+      ? outcome(
+          "failed",
+          `This link already connected ${record.displayName}, and the connection was revoked since. Connect it again from the console.`,
+        )
+      : outcome(
+          "connected",
+          `${record.displayName} is connected through ${name}. The console updates on its own.`,
+          row.id,
+        );
   const before = await madeByThisLink(ctx);
-  if (before) return already(before.id);
+  if (before) return already(before);
 
   const takenRefs = (await deps.connection.listConnections(ctx.db, principal.personId)).flatMap(
     (row) => (row.provider === provider.name && row.providerRef ? [row.providerRef] : []),
@@ -535,11 +543,11 @@ export async function completeConsoleLink(
   }
   if (!completed.ok) {
     const landed = await madeByThisLink(ctx);
-    return landed ? already(landed.id) : outcome("failed", completed.message);
+    return landed ? already(landed) : outcome("failed", completed.message);
   }
   const ref = completed.ref;
 
-  let made: { connectionId: string; now: boolean };
+  let made: { connection: Pick<ConnectionOutput, "id" | "revokedAt">; now: boolean };
   try {
     made = await ctx.db.transaction(async (tx) => {
       const scoped: ServiceContext = { db: tx };
@@ -548,7 +556,7 @@ export async function completeConsoleLink(
       // database's guard beside the lock.
       await deps.connection.lockConnectionKey(tx, principal.personId, `link:${record.connectId}`);
       const earlier = await madeByThisLink(scoped);
-      if (earlier) return { connectionId: earlier.id, now: false };
+      if (earlier) return { connection: earlier, now: false };
       const connection = await connectThroughProvider(
         scoped,
         principal,
@@ -565,14 +573,14 @@ export async function completeConsoleLink(
       );
       // No agent asked, so no agent's scope is granted: the row is in every `all` agent's already.
       if (record.access === "full") await recordFullAccess(scoped, principal, connection, deps);
-      return { connectionId: connection.id, now: true };
+      return { connection, now: true };
     });
   } catch (error) {
     // Two landings claimed the same account and the database let one in.
     if (error instanceof ServiceError && error.code === "CONFLICT") {
       for (let attempt = 0; attempt < 10; attempt += 1) {
         const settled = await madeByThisLink(ctx);
-        if (settled) return already(settled.id);
+        if (settled) return already(settled);
         await new Promise((resolve) => setTimeout(resolve, 50));
       }
     }
@@ -583,8 +591,8 @@ export async function completeConsoleLink(
       `${record.displayName} was connected at ${name} but not in Graft: ${detail}. Press Connect to try again.`,
     );
   }
-  const connectionId = made.connectionId;
-  if (!made.now) return already(connectionId);
+  if (!made.now) return already(made.connection);
+  const connectionId = made.connection.id;
   await notifyAgentsReachingConnection(
     ctx,
     principal,
