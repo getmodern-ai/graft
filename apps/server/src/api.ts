@@ -1,7 +1,9 @@
 import type { SocialProviderName } from "@graft/auth";
 import {
   type AgentDeps,
+  type AgentScopeToggleOutput,
   type ApprovalDeps,
+  addConnectionToAgentScope,
   answerPendingAction,
   type ConnectionDeps,
   createAgent,
@@ -40,10 +42,12 @@ import {
   reconnectConnection,
   registerConnection,
   registerConnectionWithCredential,
+  removeConnectionFromAgentScope,
   requirePerson,
   retryProviderRelease,
   revokeAgent,
   revokeApproval,
+  rotateAgentToken,
   type ServiceContext,
   ServiceError,
   type ServiceErrorCode,
@@ -109,6 +113,7 @@ import {
   withStarter,
 } from "./directory";
 import { createMcpConsentRoutes, type McpOAuthServerOptions } from "./mcp-oauth";
+import { type ModelDeployment, NO_MODEL_DEPLOYMENT } from "./model";
 import { beginConsent, createOAuthRoutes, type OAuthOptions } from "./oauth";
 import { createOriginGuard } from "./origin-guard";
 import {
@@ -172,6 +177,12 @@ export type {
 export type { SetupFinishOutput, SetupToolContext } from "./setup-finish";
 export type { SetupReadyMade } from "./setup-stock";
 export type { AgentToolRunOutput } from "./tool-run";
+
+/**
+ * `GET /me/model` (GRA-297): the deployment's model as `model.ts` chose it at boot, and whether
+ * this person has a key of their own. The console's Model row reads it.
+ */
+export type ModelOutput = ModelDeployment & { personKey: boolean };
 
 /**
  * The person's JSON API — the routes the console (GRA-26) will call, a plain Hono app for now (GRA-1
@@ -320,6 +331,12 @@ export type ApiOptions = {
    * database's jobs (`defaultAcquireJobDeps`).
    */
   acquire?: SetupAcquireDeps;
+  /**
+   * This deployment's model as a person may read it (GRA-297; `model.ts`'s `ModelDeployment`),
+   * which `GET /me/model` answers. `index.ts` binds `createModel`'s; absent, no fixed model and no
+   * router, as a laptop that configured none.
+   */
+  model?: ModelDeployment;
   /**
    * The MCP endpoint's deps, for the console's run of an authored tool (GRA-208; ADR 0024;
    * `tool-run.ts`), which runs exactly what a first-class call over `/mcp` runs. `index.ts` binds
@@ -1035,6 +1052,23 @@ export function createApi(options: ApiOptions): Hono {
     return c.json({ modelKey: await getPersonModelKey(ctx, principal, modelKeyDeps) });
   });
 
+  /**
+   * What answers this person's `acquire` jobs (GRA-297): the deployment's fixed model, whether a
+   * key of their own would be used (ADR 0014; `model.ts`), and whether they have one. A route of
+   * its own rather than a field on `/me/model-key`, whose three verbs are one row's: the
+   * deployment's half is boot configuration, not the person's row, and the key routes keep
+   * answering the row alone. Neither half carries a key or the operator's model ids.
+   */
+  api.get("/me/model", async (c) => {
+    const principal = await principalOf(c.req.raw.headers);
+    const key = await getPersonModelKey(ctx, principal, modelKeyDeps);
+    const model: ModelOutput = {
+      ...(options.model ?? NO_MODEL_DEPLOYMENT),
+      personKey: key !== null,
+    };
+    return c.json({ model });
+  });
+
   api.put("/me/model-key", async (c) => {
     const principal = await principalOf(c.req.raw.headers);
     const body = await parseBody(c.req.raw, modelKeyBody);
@@ -1512,6 +1546,19 @@ export function createApi(options: ApiOptions): Hono {
   });
 
   /**
+   * Rotate an active static-token agent's token (ADR 0007 as amended 2026-10-14; GRA-306),
+   * answered once, `201 { agent, token }` as the issue above answers: the old token is refused from
+   * the next request on. An agent a client connected, one awaiting its harness (the issue route
+   * above gives its first token) and a revoked one are `409 agent_token_not_rotatable`, another
+   * person's a 404 (`rotateAgentToken`).
+   */
+  api.post("/agents/:id/token/rotate", async (c) => {
+    const principal = await principalOf(c.req.raw.headers);
+    await parseBody(c.req.raw, z.object({}), { emptyIs: {} });
+    return c.json(await rotateAgentToken(ctx, principal, c.req.param("id"), agentDeps), 201);
+  });
+
+  /**
    * Run an authored tool as one of the person's agents (GRA-208; ADR 0024; `tool-run.ts`): read-only
    * tools in the agent's working set only, synchronous, `AgentToolRunOutput`. Setup's result step is
    * the only caller; the route is the agent's, not Setup's.
@@ -1625,7 +1672,10 @@ export function createApi(options: ApiOptions): Hono {
   api.put("/agents/:id/scope", async (c) => {
     const principal = await principalOf(c.req.raw.headers);
     const body = await parseBody(c.req.raw, scopeBody);
-    return c.json(await setAgentScope(ctx, principal, c.req.param("id"), body, agentDeps));
+    const result = await setAgentScope(ctx, principal, c.req.param("id"), body, agentDeps);
+    // After the commit, so a session re-fetching on the notification lists the new scope's tools.
+    options.notifier?.changed(result.agent.id);
+    return c.json(result);
   });
 
   /**
@@ -1804,6 +1854,42 @@ export function createApi(options: ApiOptions): Hono {
       createdAt: row.createdAt,
     }));
     return c.json({ calls });
+  });
+
+  /**
+   * One connection turned on or off for one agent (GRA-294): the integration page's *Agents with
+   * access* and the agent page's per-integration switch, each a single write under the agent's
+   * row lock, so two toggles never race the way a read-modify-write of `PUT /agents/:id/scope`
+   * does. Another person's agent or connection is a 404 from the service. Both answer
+   * `AgentScopeToggleOutput`; a removal from an agent on `all` narrows it to `listed` and says so
+   * in `materialised`. A grant to an agent on `all` changes nothing and tells nobody; otherwise
+   * the agent's session is told after the commit, as the agent page's scope write is.
+   */
+  api.put("/connections/:id/agents/:agentId", async (c) => {
+    const principal = await principalOf(c.req.raw.headers);
+    const result = await addConnectionToAgentScope(
+      ctx,
+      principal,
+      c.req.param("agentId"),
+      c.req.param("id"),
+      agentDeps,
+    );
+    if (result.agent.scopeMode === "listed") options.notifier?.changed(result.agent.id);
+    const answer: AgentScopeToggleOutput = { ...result, materialised: false };
+    return c.json(answer);
+  });
+
+  api.delete("/connections/:id/agents/:agentId", async (c) => {
+    const principal = await principalOf(c.req.raw.headers);
+    const answer: AgentScopeToggleOutput = await removeConnectionFromAgentScope(
+      ctx,
+      principal,
+      c.req.param("agentId"),
+      c.req.param("id"),
+      agentDeps,
+    );
+    options.notifier?.changed(answer.agent.id);
+    return c.json(answer);
   });
 
   /**

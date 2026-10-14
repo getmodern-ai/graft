@@ -65,3 +65,19 @@ export function toolStepDescription(options: { readyMade: boolean; connected: bo
     ? "Start with a ready-made tool, or pick one for Graft to build. You can add more from the console after."
     : "Pick one read-only tool to build first. You can add more from the console after.";
 }
+
+/**
+ * The connect step's line under its title, by the path the record holds (GRA-276): a ready-made
+ * tool is copied in once the connection lands and nothing is built, so only a task to build says
+ * Graft starts building. A record with neither asks for the connection as the agent's own.
+ */
+export function connectStepDescription(options: {
+  vendorName: string;
+  agentName: string;
+  record: { stockTool: string | null; goal: string | null } | null | undefined;
+}): string {
+  const { vendorName, agentName, record } = options;
+  if (record?.stockTool) return `Your tool is ready the moment ${vendorName} is connected.`;
+  if (record?.goal) return `Graft starts building your tool the moment ${vendorName} is connected.`;
+  return `${agentName} asks for this connection as its own, the way it would from your harness. Answer it here.`;
+}

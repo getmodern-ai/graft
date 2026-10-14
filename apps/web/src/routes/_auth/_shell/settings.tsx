@@ -9,7 +9,7 @@ import {
 } from "@/components/page/page-header";
 import { ModelKeySettings } from "@/components/settings/model-key-settings";
 import { useScreenTitle } from "@/components/shell/screen-title";
-import { modelKeyQuery } from "@/lib/model-key-queries";
+import { modelKeyQuery, modelQuery } from "@/lib/model-key-queries";
 
 /**
  * The person's settings — one section today, the model key (ADR 0014), in Cando's settings row
@@ -20,7 +20,11 @@ import { modelKeyQuery } from "@/lib/model-key-queries";
  * console has one settings screen and no settings sidebar to carry the navigation instead.
  */
 export const Route = createFileRoute("/_auth/_shell/settings")({
-  loader: ({ context }) => context.queryClient.ensureQueryData(modelKeyQuery),
+  loader: ({ context }) =>
+    Promise.all([
+      context.queryClient.ensureQueryData(modelKeyQuery),
+      context.queryClient.ensureQueryData(modelQuery),
+    ]),
   component: SettingsRoute,
 });
 
