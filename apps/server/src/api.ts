@@ -1,4 +1,5 @@
-import type { SocialProviderName } from "@graft/auth";
+import type { SetFirstPasswordOutcome, SocialProviderName } from "@graft/auth";
+import { MAX_PASSWORD_LENGTH, MIN_PASSWORD_LENGTH } from "@graft/auth/password.rules";
 import {
   type AgentDeps,
   type AgentScopeToggleOutput,
@@ -7,10 +8,12 @@ import {
   answerPendingAction,
   type ConnectionDeps,
   createAgent,
+  createIntegrationDeps,
   defaultAcquireJobDeps,
   defaultIntegrationToolsDeps,
   defaultSetupDeps,
   defaultStockDeps,
+  defaultSuggestedIntegrationDeps,
   deletePersonModelKey,
   GOAL_MAX_LENGTH,
   getAgent,
@@ -19,6 +22,7 @@ import {
   getPendingActionForPerson,
   getPersonModelKey,
   getSetupState,
+  type IntegrationDeps,
   type IntegrationDirectory,
   type IntegrationTool,
   type IntegrationToolsDeps,
@@ -29,8 +33,10 @@ import {
   listApprovals,
   listBuildApprovals,
   listConnections,
+  listIntegrations,
   listIntegrationTools,
   listOpenPendingActions,
+  listSuggestedIntegrations,
   listTools,
   listToolVersionOrigins,
   listVendorApprovals,
@@ -62,6 +68,8 @@ import {
   STARTER_VENDOR_IDS,
   type StockDeps,
   type StockLineage,
+  type SuggestedIntegration,
+  type SuggestedIntegrationDeps,
   setAgentScope,
   setApprovalFromConsole,
   setAskEveryCall,
@@ -109,7 +117,7 @@ import { type Analytics, NO_ANALYTICS } from "@graft/observability";
 import { AUTH_SCHEMES } from "@graft/proxy";
 import { log } from "evlog";
 import { useLogger } from "evlog/hono";
-import { Hono } from "hono";
+import { type Context, Hono } from "hono";
 import { cors } from "hono/cors";
 import { z } from "zod";
 
@@ -193,6 +201,15 @@ export type { SetupFinishOutput, SetupToolContext } from "./setup-finish";
 export type { SetupReadyMade } from "./setup-stock";
 export type { AgentToolRunOutput } from "./tool-run";
 
+/** `GET /api/integrations/suggested`'s answer (GRA-305): newest ask first, at most twelve. */
+export type IntegrationSuggestions = { suggestions: SuggestedIntegration[] };
+
+/**
+ * The second segments under `/api/integrations` that are routes of their own (GRA-305): a route
+ * keyed by a vendor slug at that position cannot reach a vendor slugged one of these.
+ */
+export const INTEGRATION_RESERVED_SEGMENTS = ["directory", "suggested"] as const;
+
 /**
  * `GET /me/model` (GRA-297): the deployment's model as `model.ts` chose it at boot, and whether
  * this person has a key of their own. The console's Model row reads it.
@@ -246,7 +263,19 @@ export type ModelOutput = ModelDeployment & { personKey: boolean };
 export type AuthHandle = {
   handler: (request: Request) => Promise<Response>;
   getSession: (headers: Headers) => Promise<SessionLike>;
+  /**
+   * `@graft/auth`'s `setFirstPassword` over the session's headers (GRA-298), behind
+   * `POST /me/password`. Optional so a harness that never sets a password binds nothing; absent,
+   * the route refuses saying so.
+   */
+  setFirstPassword?: (headers: Headers, newPassword: string) => Promise<SetFirstPasswordOutcome>;
 };
+
+/** `POST /me/password`'s body: the new password, held to Better Auth's lengths (GRA-298). */
+const setPasswordBody = z.object({
+  newPassword: z.string().min(MIN_PASSWORD_LENGTH).max(MAX_PASSWORD_LENGTH),
+});
+export type SetPasswordBody = z.input<typeof setPasswordBody>;
 
 /**
  * How a person may sign in at this deployment (GRA-81): email and password always, and the
@@ -270,6 +299,11 @@ export type ApiDeps = {
   /** The person's own model key (GRA-31, ADR 0014) — the vault's encrypt half rides inside. */
   modelKey: ModelKeyDeps;
   /**
+   * The integrations list's four reads (GRA-291). Optional, and the real reads under
+   * `connection.providers` when absent; a suite that reaches `/integrations` passes fakes.
+   */
+  integration?: IntegrationDeps;
+  /**
    * The person's Setup record (ADR 0024; GRA-204). Optional, and `defaultSetupDeps` when absent,
    * so a harness that never reaches `/setup` binds nothing; a suite that does passes fakes.
    */
@@ -285,6 +319,11 @@ export type ApiDeps = {
    * fake catalogue its tool source copies from.
    */
   stock?: StockDeps;
+  /**
+   * "Your agents asked for these" (GRA-305; ADR 0001 as amended 2026-10-14). Optional, and
+   * `defaultSuggestedIntegrationDeps` when absent, as `setup` is.
+   */
+  suggested?: SuggestedIntegrationDeps;
 };
 
 export type ApiOptions = {
@@ -338,8 +377,9 @@ export type ApiOptions = {
    */
   connectionRouting?: ConnectionRoutingDeps;
   /**
-   * The integration directory Setup's integration step searches (`directory.ts`; ADR 0001 as
-   * amended 2026-10-10): the private package's, bound by `index.ts` from `Backings.directory`.
+   * The integration directory Setup's integration step and the console's Integrations screen
+   * search (`directory.ts`; ADR 0001 as amended 2026-10-10 and 2026-10-14): the private package's,
+   * bound by `index.ts` from `Backings.directory`.
    * Absent, the starters this deployment connects (`createStarterDirectory`).
    */
   directory?: IntegrationDirectory;
@@ -1137,6 +1177,29 @@ export function createApi(options: ApiOptions): Hono {
   });
 
   /**
+   * A first password for a person who signed up with Google or GitHub (GRA-298; ADR 0020), so the
+   * email door opens for them too. Better Auth keeps this server-only, so it is here, behind the
+   * session and the origin check; a person who already holds a password is refused 409 and changes
+   * it at Better Auth's own `/change-password` with the current one. The lengths are checked
+   * before Better Auth is asked, so the refusal is this API's shape.
+   */
+  api.post("/me/password", async (c) => {
+    await principalOf(c.req.raw.headers);
+    const body = await parseBody(c.req.raw, setPasswordBody);
+    if (!options.auth.setFirstPassword) {
+      throw new ServiceError("BAD_REQUEST", "This server cannot set a password");
+    }
+    const outcome = await options.auth.setFirstPassword(c.req.raw.headers, body.newPassword);
+    if (outcome === "password_exists") {
+      throw new ServiceError(
+        "CONFLICT",
+        "You already have a password. Change it with your current one instead.",
+      );
+    }
+    return c.json({ set: true });
+  });
+
+  /**
    * **Setup** (ADR 0024; GRA-204): the person's guided first run, one record per person. `GET`
    * answers `SetupState` — the record, the step the person is on, the show rule's verdict the
    * console's shell redirects on, the agent it runs as and the person's active agents. `start`
@@ -1372,19 +1435,21 @@ export function createApi(options: ApiOptions): Hono {
   });
 
   /**
-   * Setup v2's integration directory (`directory.ts`): the first view (`SetupDirectoryHome`) and a
-   * search (`SetupDirectoryPage`), both reads. The backing is the private package's when it has one
-   * and the starters this deployment connects otherwise.
+   * The integration directory (`directory.ts`): the first view (`SetupDirectoryHome`) and a search
+   * (`SetupDirectoryPage`), both reads. The backing is the private package's when it has one and
+   * the starters this deployment connects otherwise. One handler each, mounted twice: under
+   * `/setup` for Setup v2's integration step, and under `/integrations` for the console's
+   * Integrations screen, search and home (ADR 0001 as amended 2026-10-14), with the same answers.
    */
   const starterDirectory = createStarterDirectory(() => listSetupVendors(connectionDeps.providers));
-  const setupDirectory = () => options.directory ?? starterDirectory;
+  const integrationDirectory = () => options.directory ?? starterDirectory;
 
-  api.get("/setup/directory", async (c) => {
+  const directoryHome = async (c: Context) => {
     await principalOf(c.req.raw.headers);
-    return c.json(await setupDirectoryHome(setupDirectory()));
-  });
+    return c.json(await setupDirectoryHome(integrationDirectory()));
+  };
 
-  api.get("/setup/directory/search", async (c) => {
+  const directorySearch = async (c: Context) => {
     await principalOf(c.req.raw.headers);
     const query = c.req.query("q") ?? "";
     const category = c.req.query("category");
@@ -1393,13 +1458,41 @@ export function createApi(options: ApiOptions): Hono {
     const cursor = c.req.query("cursor");
     const limit = Number.parseInt(c.req.query("limit") ?? "", 10);
     return c.json(
-      await searchSetupDirectory(setupDirectory(), {
+      await searchSetupDirectory(integrationDirectory(), {
         query: query.slice(0, 200),
         ...(category ? { category: category.slice(0, 100) } : {}),
         ...(cursor ? { cursor: cursor.slice(0, 500) } : {}),
         limit: Number.isFinite(limit) ? limit : 24,
       }),
     );
+  };
+
+  api.get("/setup/directory", directoryHome);
+  api.get("/setup/directory/search", directorySearch);
+
+  // `directory` and `suggested` are fixed second segments under `/integrations`
+  // (`INTEGRATION_RESERVED_SEGMENTS`), registered ahead of any `/integrations/:vendor…` route,
+  // which Hono tries in registration order. A vendor slugged either word keeps every route of
+  // three segments or more (`/integrations/directory/tools`); only a bare `/integrations/:vendor`
+  // would be shadowed, and a route of that shape is to refuse the two words itself.
+  api.get("/integrations/directory", directoryHome);
+  api.get("/integrations/directory/search", directorySearch);
+
+  /**
+   * "Your agents asked for these" (GRA-305; ADR 0001 as amended 2026-10-14): the integrations the
+   * person's agents asked to connect and the person has not, with the asking agent and the ask's
+   * age, and the directory's mark where it has one (`IntegrationSuggestions`).
+   */
+  api.get("/integrations/suggested", async (c) => {
+    const principal = await principalOf(c.req.raw.headers);
+    const suggestions = await listSuggestedIntegrations(
+      ctx,
+      principal,
+      integrationDirectory(),
+      options.deps.suggested ?? defaultSuggestedIntegrationDeps,
+    );
+    useLogger().set({ suggested: { count: suggestions.length } });
+    return c.json({ suggestions } satisfies IntegrationSuggestions);
   });
 
   api.post("/setup/starter", async (c) => {
@@ -1415,7 +1508,7 @@ export function createApi(options: ApiOptions): Hono {
     // Which integration the task is for, never the task's words (the person's own sentence).
     useLogger().set({ setup: { slug: body.slug ?? null, taskLength: body.goal.length } });
     if (body.slug) {
-      const entry = await setupDirectory().get(body.slug);
+      const entry = await integrationDirectory().get(body.slug);
       if (!entry) throw new ServiceError("NOT_FOUND", "The directory has no such integration");
       const starterId = withStarter(entry).starterId;
       if (starterId) {
@@ -1575,7 +1668,7 @@ export function createApi(options: ApiOptions): Hono {
 
   api.get("/agents", async (c) => {
     const principal = await principalOf(c.req.raw.headers);
-    return c.json({ agents: await listAgents(ctx, principal, agentDeps) });
+    return c.json(await listAgents(ctx, principal, agentDeps));
   });
 
   api.post("/agents", async (c) => {
@@ -1862,6 +1955,23 @@ export function createApi(options: ApiOptions): Hono {
   api.get("/connections", async (c) => {
     const principal = await principalOf(c.req.raw.headers);
     return c.json({ connections: await listConnections(ctx, principal, connectionDeps) });
+  });
+
+  /**
+   * The integrations list (GRA-291): one row per vendor the person holds a live connection of, with
+   * its connections and their states, the active agents whose scope reaches any of them, the live
+   * tool count, the last call and the worst connection's reason for needing the person
+   * (`@graft/core`'s `IntegrationOutput`). Four statements whatever the person holds.
+   */
+  api.get("/integrations", async (c) => {
+    const principal = await principalOf(c.req.raw.headers);
+    const integrations = await listIntegrations(
+      ctx,
+      principal,
+      { executeToolName },
+      options.deps.integration ?? createIntegrationDeps(connectionDeps.providers),
+    );
+    return c.json({ integrations });
   });
 
   /**

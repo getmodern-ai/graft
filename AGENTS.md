@@ -1195,6 +1195,11 @@ and every row's menu has View agent, revoked rows included; the detail drawer is
 page keeps scope and limit editors, the working set, approvals, history and standalone revocation;
 revoked records are read-only. `GET /api/agents` includes `workingSetCount`, counted against each
 person-scoped agent in the same statement; the table shows count/cap with Cando's status dot.
+Since GRA-290 the same one statement also answers each agent's `connectionIds` (the scope as it
+resolves under its mode, `listScopeConnectionIds`'s rule) and `lastActiveAt` (its last ledger row
+that was not a dry run, any outcome), and the answer is `AgentListAnswer`, `{ agents, hasRunTool }`:
+the flag is a per-agent `exists` over ledger rows that are not dry runs and answered `ok`, in the
+same statement, folded across the person's agents in `@graft/core`'s `listAgents`.
 **A lost static token is rotated, not a new agent** (GRA-306; ADR 0007 as amended 2026-10-14):
 the page's *Rotate token* (`rotate-token-dialog.tsx`, drawn when `lib/agent-token.ts`'s
 `tokenRotatable` says so) confirms, then calls `POST /api/agents/:id/token/rotate`, `@graft/core`'s
@@ -1493,6 +1498,17 @@ Back read it as the *Tool* stage) until its task is chosen, when `POST /api/setu
 `slug` reads the entry from the directory again and proposes it (`directoryProposal`: the slug as the
 vendor, the first host as the primary) through the starter's routing (`connectSetupProposal`). No
 column holds it: a reload on that tool screen returns to the directory.
+
+**The directory answers outside Setup too, beside the person's own suggestions** (ADR 0001 as
+amended 2026-10-14; GRA-305). `GET /api/integrations/directory` and `/search` are Setup's two
+handlers mounted a second time, same answers. `GET /api/integrations/suggested`
+(`IntegrationSuggestions`) is `@graft/core`'s `listSuggestedIntegrations` over
+`repo/pending-action.ts`'s `listSuggestedConnectionAsks`: per vendor, the newest `connection` ask
+of the person's live agents, kept when it was not answered with a connection and the person holds
+no unrevoked connection of that vendor, newest first, at most `SUGGESTED_INTEGRATIONS_LIMIT` (12),
+with the agent, the ask's state (`open`, `declined`, `expired`) and age, and the directory entry's
+`logoUrl` (null under the starters). `directory` and `suggested` are registered before any
+`/integrations/:vendor…` route (`INTEGRATION_RESERVED_SEGMENTS`).
 
 **Setup's words are integration and task** (GRA-216; CONTEXT.md, *Integration*; ADR 0024's
 amendment of 2026-09-24). Person-facing copy says *integration* for the service a person connects

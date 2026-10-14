@@ -51,7 +51,9 @@ where a decision is theirs. Anything that breaks either is in scope:
   (`POST /api/agents/:id/tools/:vendor/:name/run`), refusing any other (ADR 0024); a token issued
   or replaced for any other agent, one replaced once Setup is completed, a replaced or rotated
   token that still works, a rotation of another person's agent or of one a client holds, or a run
-  of any other tool, is in scope.
+  of any other tool, is in scope. The session also sets a first password for a person who signed
+  up with Google or GitHub and holds none (`POST /api/me/password`, GRA-298); one set over a
+  password the person holds, or on anyone's account but the session's, is in scope.
 
 Out of scope: a vendor's own API, a self-hosted deployment's own misconfiguration (an exposed
 database, a public console with no reverse proxy, a leaked `.env`), and the quality of what the
