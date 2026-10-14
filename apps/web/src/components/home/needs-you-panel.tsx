@@ -61,7 +61,13 @@ export function NeedsYouPanel() {
             />
           </RequestListNote>
         ) : asks.length + signIns.length === 0 ? (
-          <RequestListNote>Nothing is waiting on you.</RequestListNote>
+          // Empty only once the sign-in rows' read has said so too: a pending or failed one says
+          // nothing about whether a connection needs the person.
+          integrations.isPending ? (
+            <RequestListLoading rows={1} />
+          ) : integrations.isError && !integrations.data ? null : (
+            <RequestListNote>Nothing is waiting on you.</RequestListNote>
+          )
         ) : (
           shown.asks.map((action) => (
             <RequestRow
@@ -71,6 +77,16 @@ export function NeedsYouPanel() {
             />
           ))
         )}
+        {integrations.isError && !integrations.data ? (
+          <RequestListNote>
+            <RetryNotice
+              error={integrations.error}
+              message="Connections that need you to sign in could not be loaded."
+              onRetry={() => void integrations.refetch()}
+              retrying={integrations.isFetching}
+            />
+          </RequestListNote>
+        ) : null}
       </RequestList>
     </HomePanel>
   );

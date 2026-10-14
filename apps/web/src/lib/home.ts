@@ -131,6 +131,22 @@ export function activityIntegrationName(
   return integrationNameFor(vendor, names.get(vendor) ?? vendor);
 }
 
+/**
+ * A failed run's sub-line by the ledger's `reason` (`@graft/db`'s `schema/usage.ts`). None of the
+ * words says the integration answered with an error: a failure is also Graft's sandbox or the
+ * tool's own code, and the ledger does not tell a vendor's error apart from those.
+ */
+const FAILURE_SENTENCES: Record<string, string> = {
+  timeout: "It took too long and was stopped",
+  killed: "It was stopped before it finished",
+  still_running: "It was still running when Graft stopped waiting",
+  sandbox_unavailable: "Graft could not start it",
+};
+
+export function failureSentence(reason: string | null): string {
+  return (reason ? FAILURE_SENTENCES[reason] : undefined) ?? "It could not finish";
+}
+
 function possessive(name: string): string {
   return `${name}'s`;
 }
@@ -165,7 +181,7 @@ export function homeActivityCopy(
       default:
         return {
           title: `${possessive(agent)} ${tool} failed`,
-          detail: integration ? `${integration} returned an error` : "It returned an error",
+          detail: failureSentence(row.reason),
           tone: "destructive",
         };
     }

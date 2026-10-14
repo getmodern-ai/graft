@@ -194,11 +194,18 @@ describe("homeActivityCopy", () => {
       detail: "You denied it",
       tone: "destructive",
     });
-    expect(homeActivityCopy(run({ outcome: "error" }), names)).toEqual({
+    expect(homeActivityCopy(run({ outcome: "error", reason: "threw" }), names)).toEqual({
       title: "Codex's Find leads failed",
-      detail: "Apollo returned an error",
+      detail: "It could not finish",
       tone: "destructive",
     });
+    // Graft's own failure is never put on the integration.
+    expect(
+      homeActivityCopy(run({ outcome: "error", reason: "sandbox_unavailable" }), names).detail,
+    ).toBe("Graft could not start it");
+    expect(homeActivityCopy(run({ outcome: "error", reason: "timeout" }), names).detail).toBe(
+      "It took too long and was stopped",
+    );
   });
 
   it("names a vendor it does not hold by its slug", () => {
