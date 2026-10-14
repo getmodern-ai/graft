@@ -105,3 +105,20 @@ toolbox nobody authored", is overtaken: stock tools are authored by this loop ah
 copied into a person's toolbox when first reached for (ADR 0025). Setup itself is unchanged by that
 record; how its first tool uses stock is a later decision, and until it is made Setup acquires its
 first tool as described above.
+
+## Amendment, 2026-10-11: Setup offers the integration's ready-made tools first (GRA-276)
+
+The amendment above left how Setup's first tool uses stock to a later decision. A production run on
+2026-10-11 decided it: after connecting Gmail, Setup acquired a tool for 41 seconds that
+`gmail__search-messages` already was. **The task step offers the integration's read-only stock
+tools first**, as *Use a ready-made tool*, with building one through `acquire` still below them.
+Each starter integration names the few it offers, the curated task's best match first, in the
+person's words; the server offers one only while the catalogue holds it as read-only, and a task a
+ready-made tool already does is not offered to build beside it. **Choosing one copies it in as
+`promote` does** (ADR 0025), bound to the record's connection and promoted into the agent's working
+set, and the record moves past the building step to the result with no job; the result step runs
+it as it runs a built tool. Chosen on the tool screen before connecting, the choice is saved on the
+record and taken the moment the connection lands, as a planned task is built then. It needs no
+model, so a deployment with none can still finish Setup with a ready-made tool. The rejected
+option above, a canned starter tool, stays rejected in its own terms: these are the tools every
+person has, not one written for Setup.

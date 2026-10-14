@@ -1,5 +1,5 @@
 {
-  "id": "29c4e45a-e0d3-4b5e-a6fc-a5601c4fe21e",
+  "id": "c47913e1-0dd8-4421-b7b3-7a50395ac988",
   "prevId": "b56ef86d-4bc5-46ad-81df-e52284deeeac",
   "version": "7",
   "dialect": "postgresql",
@@ -2357,12 +2357,6 @@
           "primaryKey": false,
           "notNull": false
         },
-        "closed_reason": {
-          "name": "closed_reason",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
         "owner": {
           "name": "owner",
           "type": "text",
@@ -2566,6 +2560,12 @@
         },
         "goal": {
           "name": "goal",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "stock_tool": {
+          "name": "stock_tool",
           "type": "text",
           "primaryKey": false,
           "notNull": false

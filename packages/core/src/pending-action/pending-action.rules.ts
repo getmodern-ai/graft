@@ -8,7 +8,7 @@ import type { PendingActionClosedReason } from "@graft/db/schema/pending-action"
 /**
  * `answered`: the person answered it, whatever happened after. `closed`: a revoke closed it
  * unanswered, `closedReason` saying which. `expired`: it ran to its expiry unanswered, which is
- * also how an ask closed by a revoke before `closed_reason` existed (migration 0018) reads, since
+ * also how an ask closed by a revoke before `closed_reason` existed (migration 0019) reads, since
  * nothing recorded the difference then.
  */
 export type PendingActionDoneState = "answered" | "closed" | "expired";
