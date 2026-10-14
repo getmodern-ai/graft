@@ -90,7 +90,11 @@ export function DiscoverTab({ q, custom }: { q?: string; custom?: string }) {
   const [form, setForm] = useState<{ form: ConnectForm; name: string } | null>(null);
 
   const handOff = (text: string) =>
-    void navigate({ to: "/integrations", search: { tab: "discover", custom: text } });
+    void navigate({
+      to: "/integrations",
+      // `q` is kept, so the tab (keyed by it) is not drawn afresh under the dialog.
+      search: { tab: "discover", ...(q ? { q } : {}), custom: text },
+    });
   const connected = connectedVendors(integrations.data?.integrations ?? []);
   // A failed suggestions read hides the section: it is a nudge, never what the tab is for.
   const suggested = suggestedVendorsOf(
@@ -249,7 +253,9 @@ export function DiscoverTab({ q, custom }: { q?: string; custom?: string }) {
       />
       <CustomApiFallback
         custom={custom}
-        onClose={() => void navigate({ to: "/integrations", search: { tab: "discover" } })}
+        onClose={() =>
+          void navigate({ to: "/integrations", search: { tab: "discover", ...(q ? { q } : {}) } })
+        }
       />
     </>
   );
@@ -432,7 +438,7 @@ function NoResults({ name, onAdd }: { name: string; onAdd: () => void }) {
  * reading the same param through `customApiSeed`.
  */
 function CustomApiFallback({ custom, onClose }: { custom?: string; onClose: () => void }) {
-  const seed = custom ? customApiSeed(custom) : null;
+  const seed = custom !== undefined ? customApiSeed(custom) : null;
   return (
     <AddConnectionDialog
       open={seed !== null}

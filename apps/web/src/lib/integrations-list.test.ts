@@ -101,8 +101,18 @@ describe("readIntegrationsListSearch", () => {
     expect(
       readIntegrationsListSearch({ tab: "discover", q: "notion", custom: "https://docs.acme.dev" }),
     ).toEqual({ tab: "discover", q: "notion", custom: "https://docs.acme.dev" });
-    expect(readIntegrationsListSearch({ tab: "discover", q: "  ", custom: 4 })).toEqual({
+    expect(readIntegrationsListSearch({ tab: "discover", q: "  ", custom: {} })).toEqual({
       tab: "discover",
+    });
+    // An empty `custom` still opens Add a custom API; a number is what was typed.
+    expect(readIntegrationsListSearch({ tab: "discover", custom: "" })).toEqual({
+      tab: "discover",
+      custom: "",
+    });
+    expect(readIntegrationsListSearch({ tab: "discover", q: 360, custom: 42 })).toEqual({
+      tab: "discover",
+      q: "360",
+      custom: "42",
     });
     expect(readIntegrationsListSearch({ q: "notion", custom: "acme" })).toEqual({});
     expect(

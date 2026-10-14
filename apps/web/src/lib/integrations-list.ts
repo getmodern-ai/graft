@@ -29,23 +29,34 @@ export type IntegrationsListSearch = {
   /** Discover's search box, as a deep link fills it. */
   q?: string;
   /**
-   * Flow C's hand-off (GRA-323): the name typed or the docs link pasted into Discover's search,
-   * which opens *Add a custom API* with it. `customApiSeed` (`integrations-discover.ts`) reads it.
+   * Flow C's hand-off (GRA-323): present, *Add a custom API* is open; its value is the name typed
+   * or the docs link pasted into Discover's search, empty when nothing was. `customApiSeed`
+   * (`integrations-discover.ts`) reads it.
    */
   custom?: string;
 };
 
+/** A param's text: the router reads `?q=123` as a number, which is still what was typed. */
 const textParam = (value: unknown): string | undefined =>
-  typeof value === "string" && value.trim() !== "" ? value.slice(0, SEARCH_PARAM_MAX) : undefined;
+  typeof value === "string"
+    ? value.slice(0, SEARCH_PARAM_MAX)
+    : typeof value === "number"
+      ? String(value)
+      : undefined;
 
 /** `?tab=discover` alone sticks in the URL: Connected is the default, so `/integrations` is it. */
 export function readIntegrationsListSearch(
   search: Record<string, unknown>,
 ): IntegrationsListSearch {
   if (search.tab !== "discover") return {};
-  const q = textParam(search.q);
+  const q = textParam(search.q)?.trim();
   const custom = textParam(search.custom);
-  return { tab: "discover", ...(q ? { q } : {}), ...(custom ? { custom } : {}) };
+  return {
+    tab: "discover",
+    ...(q ? { q } : {}),
+    // Empty is kept: *Add a custom API* with nothing typed opens the dialog all the same.
+    ...(custom !== undefined ? { custom } : {}),
+  };
 }
 
 export type IntegrationsSort = "attention" | "recent" | "name";

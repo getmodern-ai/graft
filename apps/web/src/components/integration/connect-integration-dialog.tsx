@@ -47,7 +47,7 @@ export type ConnectForm = Extract<ConsoleConnect, { kind: "form" }>;
 type LinkPhase =
   | { phase: "idle" }
   | { phase: "running" }
-  | { phase: "blocked"; url: string; connectId: string }
+  | { phase: "blocked"; url: string; connectId: string; expiresAt: string }
   | { phase: "done"; outcome: Exclude<LinkOutcome, "connected">; message: string };
 
 /**
@@ -81,6 +81,8 @@ export function ConnectIntegrationDialog({
   const [access, setAccess] = useState<ConnectAccess>("full");
   const [link, setLink] = useState<LinkPhase>({ phase: "idle" });
   const stop = useRef<AbortController | null>(null);
+  // The attempt the dialog stands on: a reply to one closed or replaced since is ignored.
+  const attempt = useRef(0);
   // The last integration shown, so the closing animation does not draw an empty dialog.
   const [shown, setShown] = useState<ConnectTarget | null>(target);
   if (target && target !== shown) setShown(target);
@@ -88,11 +90,11 @@ export function ConnectIntegrationDialog({
 
   useEffect(() => () => stop.current?.abort(), []);
 
-  const connected = (vendor: string, name: string) => {
+  const connected = (vendor: string, name: string, chosen: ConnectAccess) => {
     void queryClient.invalidateQueries({ queryKey: connectionKeys.all });
     toast.success(`${name} is connected`, {
       description:
-        access === "full"
+        chosen === "full"
           ? "Your agents can build its tools and use them without asking."
           : "Each agent asks before it builds or uses a tool.",
     });
@@ -100,7 +102,13 @@ export function ConnectIntegrationDialog({
     void navigate({ to: "/integrations/$vendor", params: { vendor } });
   };
 
-  const wait = async (popup: Window, connectId: string, vendor: string, name: string) => {
+  const wait = async (
+    popup: Window,
+    started: { connectId: string; expiresAt: string; access: ConnectAccess },
+    vendor: string,
+    name: string,
+  ) => {
+    const { connectId } = started;
     stop.current?.abort();
     const controller = new AbortController();
     stop.current = controller;
@@ -110,11 +118,13 @@ export function ConnectIntegrationDialog({
       match: { connectId },
       isSettled: () => readSettled(connectId),
       signal: controller.signal,
+      // The provider's own lifetime for the link, which may be shorter than the default.
+      deadlineMs: Math.max(0, Date.parse(started.expiresAt) - Date.now()),
     });
     if (stop.current === controller) stop.current = null;
     if (ended.outcome === "connected") {
       setLink({ phase: "idle" });
-      connected(vendor, name);
+      connected(vendor, name, started.access);
     } else {
       setLink({ phase: "done", outcome: ended.outcome, message: ended.message });
     }
@@ -122,21 +132,22 @@ export function ConnectIntegrationDialog({
 
   const connect = useMutation({
     // A slug the directory lacks (a suggestion's vendor) is Flow C's, not a failure to toast.
-    mutationFn: (input: { target: ConnectTarget; access: ConnectAccess }) =>
+    mutationFn: (input: { target: ConnectTarget; access: ConnectAccess; attempt: number }) =>
       connectIntegration({ slug: input.target.slug, access: input.access }).catch((error) => {
         if (onNotFound && error instanceof ApiError && error.status === 404) {
           return { kind: "missing" as const };
         }
         throw error;
       }),
-    onSuccess: (result, { target: chosen }) => {
+    onSuccess: (result, { target: chosen, access: chose, attempt: made }) => {
+      if (made !== attempt.current) return;
       if (result.kind === "missing") {
         close(false);
         onNotFound?.(chosen);
         return;
       }
       if (result.kind === "connected") {
-        connected(result.connection.vendor, result.connection.displayName);
+        connected(result.connection.vendor, result.connection.displayName, chose);
         return;
       }
       if (result.kind === "form") {
@@ -147,15 +158,21 @@ export function ConnectIntegrationDialog({
       }
       const popup = openConsentPopup(result.url);
       if (!popup) {
-        setLink({ phase: "blocked", url: result.url, connectId: result.connectId });
+        setLink({
+          phase: "blocked",
+          url: result.url,
+          connectId: result.connectId,
+          expiresAt: result.expiresAt,
+        });
         return;
       }
-      void wait(popup, result.connectId, chosen.slug, chosen.name);
+      void wait(popup, { ...result, access: chose }, chosen.slug, chosen.name);
     },
   });
 
   const close = (open: boolean) => {
     if (open) return;
+    attempt.current += 1;
     stop.current?.abort();
     onOpenChange(false);
     setTimeout(() => {
@@ -166,7 +183,8 @@ export function ConnectIntegrationDialog({
   };
 
   if (!entry) return null;
-  const running = connect.isPending || link.phase === "running";
+  // A blocked popup's link carries the access it was minted with, so the choice stays as it was.
+  const running = connect.isPending || link.phase === "running" || link.phase === "blocked";
   const options = accessOptions(entry.name).map((option) => ({
     ...option,
     aside: option.value === "full" ? <Badge variant="secondary">Recommended</Badge> : undefined,
@@ -179,7 +197,8 @@ export function ConnectIntegrationDialog({
           className="contents"
           onSubmit={(event) => {
             event.preventDefault();
-            connect.mutate({ target: entry, access });
+            attempt.current += 1;
+            connect.mutate({ target: entry, access, attempt: attempt.current });
           }}
         >
           <DialogHeader className="items-center text-center">
@@ -210,10 +229,10 @@ export function ConnectIntegrationDialog({
             state={link}
             name={entry.name}
             onCancel={() => stop.current?.abort()}
-            onOpen={(url, connectId) => {
+            onOpen={(blocked) => {
               // A press is a gesture, so the browser lets this one open.
-              const popup = openConsentPopup(url);
-              if (popup) void wait(popup, connectId, entry.slug, entry.name);
+              const popup = openConsentPopup(blocked.url);
+              if (popup) void wait(popup, { ...blocked, access }, entry.slug, entry.name);
             }}
           />
           <DialogFooter>
@@ -258,7 +277,7 @@ function LinkStatus({
   state: LinkPhase;
   name: string;
   onCancel: () => void;
-  onOpen: (url: string, connectId: string) => void;
+  onOpen: (blocked: Extract<LinkPhase, { phase: "blocked" }>) => void;
 }) {
   switch (state.phase) {
     case "idle":
@@ -283,7 +302,7 @@ function LinkStatus({
               type="button"
               variant="link"
               className="h-auto p-0"
-              onClick={() => onOpen(state.url, state.connectId)}
+              onClick={() => onOpen(state)}
             >
               Open {name}'s sign-in
               <OpenInNewIcon className="size-3" />

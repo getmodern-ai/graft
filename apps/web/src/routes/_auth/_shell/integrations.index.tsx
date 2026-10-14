@@ -98,7 +98,8 @@ function IntegrationsRoute() {
             onRetry={() => void integrations.refetch()}
           />
         ) : (
-          <DiscoverTab q={q} custom={custom} />
+          // Keyed by `q`, so a deep link to another search on this route starts from it.
+          <DiscoverTab key={q ?? ""} q={q} custom={custom} />
         )}
       </div>
     </PageContainer>
