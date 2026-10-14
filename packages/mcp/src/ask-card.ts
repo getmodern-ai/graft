@@ -288,6 +288,9 @@ export function scopeAskCard(args: {
     ...(payload.provider !== KEYRING_PROVIDER
       ? { provider: providerDisplayName(payload.provider) }
       : {}),
+    // *Full access* on the card, as on the handoff page (GRA-314, GRA-316): the scope ask's yes
+    // may carry the integration's non-destructive tools, as the connection confirmation's does.
+    vendorTools: vendorToolsOffer(payload.vendor, payload.displayName),
   };
 }
 

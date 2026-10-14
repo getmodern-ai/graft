@@ -1,4 +1,18 @@
 import {
+  type AccessChoice,
+  accessLegend,
+  accessOptions,
+  type ChoiceOption,
+  DEFAULT_ACCESS_CHOICE,
+  defaultToolAllowChoice,
+  type ProposalFinish,
+  proposalLead,
+  proposalSummary,
+  toolAllowAnswer,
+  toolAllowOptions,
+  toolLabel,
+} from "./copy";
+import {
   type AnswerAskAnswer,
   type AnswerOutcome,
   ASK_STATUS_POLL_MS,
@@ -15,21 +29,22 @@ import {
  * The card as DOM — a pure function of the ask's data and its handlers, so the render is tested
  * with a document and no host (`render.test.ts`), and `main.ts` is only the wiring to the host.
  *
- * Six shapes, in Cando's card anatomy (ADR 0017) and the console's voice. Four answer in place:
- * the **build approval** (Allow or Decline); the **tool's first-use approval** (GRA-116: the tool's
- * description in the model's words, its hints, Allow or Decline — the ask-every-call setting stays on
- * the console's page, and the card says when it is on — and, where the server offers it, *Allow
- * every <integration> tool for this agent* beside Allow with a destructive tick off by default,
- * GRA-237); the **connection confirmation** for a
- * scheme that takes no credential (Connect or Decline, with GRA-75's build choice on by default);
- * and the **scope ask** — a connection the person already holds, asked for by an agent that was
- * not given it (GRA-104): Allow or Decline, with the same build choice. Two send the person
- * elsewhere and wait: a **link provider's ask** (GRA-117), where *Connect through <provider>*
- * asks Graft for the provider's sign-in link through `start_link` and opens it, and every ask
- * with a **secret** in it — a scheme with a credential, a credential re-entry — where *Enter the
- * secret in Graft* opens the handoff URL in the console (GRA-118). Secrets are entered in the
- * console and nowhere else (ADR 0004, ADR 0006); the card opens the page and never sees what is
- * typed on it.
+ * Six shapes, in Cando's card anatomy (ADR 0017), asking the handoff page's questions with its
+ * choices (GRA-316; the words are `copy.ts`'s). Four answer in place: the **build approval** (Allow
+ * or Decline); the **tool's first-use approval** (GRA-116: Allow or Deny, and where the server
+ * offers the integration-wide yes, GRA-237, how much it allows, ADR 0008 as amended 2026-10-14:
+ * *Every <integration> tool* pre-selected and never destructive, *Just <tool>* pre-selected on a
+ * tool that can delete, no allow for one call; the ask-every-call setting stays on the console's
+ * page, and the card says when it is on); the **connection confirmation** for a scheme that takes
+ * no credential (Connect or Decline); and the **scope ask**, a connection the person already
+ * holds, asked for by an agent that was not given it (GRA-104): Allow or Decline. Both carry
+ * *Full access / Ask me first* in place of the build choice and the integration's line. Two send
+ * the person elsewhere and wait: a **link provider's ask** (GRA-117), where *Sign in with
+ * <integration>* asks Graft for the provider's sign-in link through `start_link` and opens it,
+ * under the same access choice, and every ask with a **secret** in it (a scheme with a credential,
+ * a credential re-entry), where *Open in Graft* opens the handoff URL in the console (GRA-118).
+ * Secrets are entered in the console and nowhere else (ADR 0004, ADR 0006); the card opens the page
+ * and never sees what is typed on it.
  *
  * Once the person has been sent elsewhere the card polls `ask_status` every few seconds
  * (`ASK_STATUS_POLL_MS`) until the ask is settled — the console page, or the link's return, has
@@ -137,66 +152,104 @@ export function integrationOf(card: AskCard): string {
   return card.integrationName ?? card.vendor;
 }
 
-/** The connection named in a title, with its integration beside it when the two names differ. */
-function connectionWords(card: AskCard): string {
-  const integration = integrationOf(card);
-  return integration.toLowerCase() === card.displayName.toLowerCase()
-    ? card.displayName
-    : `${card.displayName} (${integration})`;
+/** Whether the scheme signs in by OAuth consent, which the console's cards word as a sign-in. */
+function isConsent(card: AskCard): boolean {
+  return card.scheme === "oauth_authorization_code";
 }
 
-/** The title question, as the console's cards phrase it. */
+/** The tool's name as a person reads it ("Create order"), as the handoff page's question has it. */
+function toolWords(card: AskCard): string {
+  return card.toolName ? toolLabel(card.toolName, card.vendor) : "a tool";
+}
+
+/**
+ * The title, the handoff page's question for the kind (GRA-314, GRA-316): the console's focused
+ * cards (`apps/web/src/components/pending/*-ask-card.tsx`) spell each inline, so these are copied
+ * by hand, and `render.test.ts` holds them.
+ */
 export function titleOf(card: AskCard): string {
-  const what = connectionWords(card);
+  const integration = integrationOf(card);
   switch (card.kind) {
     case "build":
-      return `Let ${card.agentName} build tools against ${what}?`;
+      return `Allow ${card.agentName} to build its own ${integration} tools?`;
     case "connection":
-      if (card.widens) return `Also reach ${card.widens.addedHosts.join(", ")} with ${what}?`;
-      return isLinkAsk(card)
-        ? `Connect ${what} through ${card.provider ?? "its provider"}?`
-        : card.answerable
-          ? `Connect ${what}?`
-          : `Connect ${what} in the console`;
+      return card.widens
+        ? `Let ${card.displayName} reach more for ${card.agentName}?`
+        : `Connect ${card.displayName} for ${card.agentName}?`;
     case "credential":
-      return `Re-enter the credential for ${what}`;
+      return isConsent(card)
+        ? `Reconnect ${card.displayName} for ${card.agentName}?`
+        : `Enter a new key for ${card.displayName}?`;
     case "tool":
-      return `Allow ${card.agentName} to run ${card.toolName ?? "a tool"}?`;
+      return `Allow ${card.agentName} to run ${toolWords(card)} in ${integration}?`;
     case "scope":
-      return `Let ${card.agentName} use ${what}?`;
+      return `Let ${card.agentName} use your ${card.displayName} connection?`;
   }
 }
 
-/** The sentence under the title: what a yes means, or what happens in the window that opens. */
+/** How a connection ask finishes, in `proposalLead`'s terms. */
+function finishOf(card: AskCard): ProposalFinish {
+  if (card.widens) return "widen";
+  if (isLinkAsk(card)) return "link";
+  if (isConsent(card)) return "consent";
+  return card.takesCredential ? "key" : "keyless";
+}
+
+/** The line under the title: where the ask came from, and what is left to do. */
 export function descriptionOf(card: AskCard): string {
+  const integration = integrationOf(card);
   switch (card.kind) {
     case "build":
-      return `${card.agentName} asked Graft to author tools against this connection. Reads only, every write previewed, until the first real use, which asks you once.`;
+      return `Graft's model reads from ${card.displayName} while it writes a tool: reads only, with every write previewed and never sent.`;
     case "connection":
-      if (isLinkAsk(card)) {
-        const provider = card.provider ?? "the provider";
-        return `${card.agentName} proposes this connection. You sign in to ${card.displayName} on ${provider}'s page, which opens in a new window; the account's token stays with ${provider}, and nothing is typed here.`;
-      }
-      if (card.widens) {
-        // A widening (GRA-167): the row exists; the yes adds hosts to it and makes nothing new.
-        return `${card.agentName} proposes that the connection you already have to ${card.displayName} also reach ${card.widens.addedHosts.join(", ")}. The integration takes no credential, so there is nothing to enter: confirming adds the hosts to that connection; no new connection is made.`;
-      }
-      return card.answerable
-        ? `${card.agentName} proposes this connection. The integration takes no credential, so there is nothing to enter: confirming makes the connection and gives it to this agent.`
-        : `${card.agentName} proposes this connection. Its credential is entered in Graft's console, which opens in a new window, never here or in the chat; this card updates once it is stored.`;
+      return proposalLead({
+        agentName: card.agentName,
+        integrationName: integration,
+        docsUrl: card.docsUrl,
+        finish: finishOf(card),
+        ...(card.provider ? { provider: card.provider } : {}),
+        ...(card.widens ? { addedHosts: card.widens.addedHosts } : {}),
+      });
     case "credential":
-      return `${card.displayName} refused ${card.agentName}'s calls. The new credential is entered in Graft's console, which opens in a new window, never here or in the chat; this card updates once it is stored.`;
-    case "tool": {
-      const does = card.tool?.destructive
-        ? `can delete or overwrite data in ${card.displayName}`
-        : `changes data in ${card.displayName}`;
-      const holds = card.tool?.askEveryCall
-        ? "You have set this tool to ask every time, so a yes is for this call alone; change that on the agent's page in the console."
-        : "Your answer holds for this agent's next calls, a no as much as a yes, until withdrawn on its page in the console.";
-      return `${card.agentName} wants to run a tool that ${does}. ${holds}`;
-    }
+      return `${integration} refused the key ${card.agentName} was using. ${isConsent(card) ? "Sign in again" : "Enter a new one"} to carry on.`;
+    case "tool":
+      return `Through your ${card.displayName} connection, at ${card.hosts.join(", ")}.`;
     case "scope":
-      return `You already have this connection${card.provider ? `, via ${card.provider}` : ""}; it was made for another of your agents. Allowing adds it to ${card.agentName}'s scope: no new connection, nothing entered, and its approvals stay as they are.`;
+      return "You connected it for another of your agents. Nothing new is made and nothing is entered.";
+  }
+}
+
+/** The tool's mark and sentence: the server's (`@graft/core`'s `toolProvenance`), else an authored tool's. */
+function provenanceOf(tool: NonNullable<AskCard["tool"]>): { badge: string; note: string } {
+  return tool.provenance ?? { badge: MODEL_WORDS_NOTE, note: AUTHORED_PROVENANCE_NOTE };
+}
+
+/**
+ * The muted line above *Details*, as the handoff page draws it: for a tool, the provenance line
+ * (where the tool came from, and where it sends data); for a connection, where it goes, how it
+ * signs in and where the proposal came from.
+ */
+export function summaryOf(card: AskCard): string {
+  const hosts = card.hosts.join(", ");
+  switch (card.kind) {
+    case "build":
+      return hosts;
+    case "connection":
+      if (card.widens) return hosts;
+      return proposalSummary({
+        primaryHost: card.primaryHost ?? card.hosts[0] ?? "",
+        scheme: card.scheme ?? "",
+        integrationName: integrationOf(card),
+        docsUrl: card.docsUrl,
+        ...(isLinkAsk(card) ? { provider: card.provider ?? "the provider" } : {}),
+        schemeLabel,
+      });
+    case "credential":
+      return `${hosts} · approvals stay as they are`;
+    case "tool":
+      return card.tool ? `${provenanceOf(card.tool).badge} · sends data to ${hosts}` : hosts;
+    case "scope":
+      return card.provider ? `${hosts} · through ${card.provider}` : hosts;
   }
 }
 
@@ -206,7 +259,7 @@ export function toolHintsLabel(tool: NonNullable<AskCard["tool"]>): string {
   return tool.destructive ? "Destructive: can delete or overwrite data" : "Changes data";
 }
 
-/** The list of facts under the description; each a label and a value, hosts and URLs in the mono stack. */
+/** The facts behind *Details*; each a label and a value, hosts and URLs in the mono stack. */
 export function factsOf(card: AskCard): Array<{ label: string; value: string; mono?: boolean }> {
   const facts: Array<{ label: string; value: string; mono?: boolean }> = [
     { label: "Agent", value: card.agentName },
@@ -244,14 +297,51 @@ function expiresLabel(iso: string): string {
   return at.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
 }
 
-/** The label of the build choice on a keyless connection card, a link card and a scope card (GRA-75, GRA-104, GRA-117), on by default. */
-export function buildChoiceLabel(card: AskCard): string {
-  return `Also allow ${card.agentName} to build tools against this connection`;
+/**
+ * The console button's label: *Open in Graft* where a secret is typed there (Flow A, frame
+ * 2103:10848), *Open in the console* where the ask is answered there for another reason.
+ */
+export function consoleButtonLabel(card: AskCard): string {
+  return takesSecret(card) ? "Open in Graft" : "Open in the console";
 }
 
-/** The console button's label: a secret is typed there; anything else is answered there. */
-export function consoleButtonLabel(card: AskCard): string {
-  return takesSecret(card) ? "Enter the secret in Graft" : "Open in the console";
+/** The yes button's label, as the handoff page's for the kind. */
+export function approveLabelOf(card: AskCard): string {
+  if (isLinkAsk(card)) return `Sign in with ${card.displayName}`;
+  return card.kind === "connection" ? "Connect" : "Allow";
+}
+
+/** The no button's label: *Deny* on a tool, as the handoff page words it; *Decline* elsewhere. */
+export function declineLabelOf(card: AskCard): string {
+  return card.kind === "tool" ? "Deny" : "Decline";
+}
+
+/**
+ * The access choice's options for this card: the handoff page's, except that a card the server
+ * wrote without the integration's line (`vendorTools`) cannot send that allow, so its *Full access*
+ * promises the build approval alone (Greptile on #266).
+ */
+export function accessOptionsFor(card: AskCard): ChoiceOption<AccessChoice>[] {
+  const options = accessOptions(card.agentName, integrationOf(card));
+  if (card.vendorTools) return options;
+  return options.map((option) =>
+    option.value === "full"
+      ? {
+          ...option,
+          description: `${card.agentName} can build ${integrationOf(card)} tools without asking. A tool that changes data still asks the first time it runs.`,
+        }
+      : option,
+  );
+}
+
+/** The legend over a tool ask's choices, as the handoff page's. */
+export function toolAllowLegend(agentName: string): string {
+  return `How much should ${agentName} get?`;
+}
+
+/** The line a tool set to ask every call carries: the setting is the console's (ADR 0006). */
+export function askEveryCallNote(card: AskCard): string {
+  return `You set ${toolWords(card)} to ask every time it runs, so ${card.agentName} asks again next call. Change that on the agent's page in Graft.`;
 }
 
 /**
@@ -289,6 +379,40 @@ function button(
   return node;
 }
 
+/**
+ * One choice among a few, the console's `ChoiceCards` in plain DOM: a fieldset with its legend,
+ * one label per option holding the radio, the title (with *Recommended* where the option is) and
+ * the description; the label's checked state draws the selected frame. Answers the value checked.
+ */
+function choiceCards<V extends string>(
+  doc: Document,
+  name: string,
+  legend: string,
+  options: readonly ChoiceOption<V>[],
+  initial: V,
+): { node: HTMLFieldSetElement; value: () => V; inputs: HTMLInputElement[] } {
+  const node = el(doc, "fieldset", "ask-choices");
+  node.append(el(doc, "legend", undefined, legend));
+  const inputs: HTMLInputElement[] = [];
+  for (const option of options) {
+    const label = el(doc, "label", "ask-option");
+    const input = el(doc, "input");
+    input.type = "radio";
+    input.name = name;
+    input.value = option.value;
+    input.checked = option.value === initial;
+    inputs.push(input);
+    const words = el(doc, "span", "ask-option-words");
+    const title = el(doc, "span", "ask-option-title", option.title);
+    if (option.recommended) title.append(el(doc, "span", "ask-badge", "Recommended"));
+    words.append(title, el(doc, "span", "ask-option-hint", option.description));
+    label.append(input, words);
+    node.append(label);
+  }
+  const value = () => (inputs.find((input) => input.checked)?.value ?? initial) as V;
+  return { node, value, inputs };
+}
+
 const sleep = (ms: number, signal?: AbortSignal) =>
   new Promise<void>((resolve) => {
     const timer = setTimeout(done, ms);
@@ -304,6 +428,10 @@ const sleep = (ms: number, signal?: AbortSignal) =>
  * Render one ask into a fresh element. The caller mounts it; `main.ts` mounts into `#ask`. The
  * element carries `data-kind` and `data-answerable` so a test — or a stylesheet — can read what
  * was drawn without reading the prose.
+ *
+ * The handoff page's anatomy (GRA-314, GRA-316): the question and its line, the choices, the two
+ * answers side by side, then the summary line with the facts behind a native *Details*
+ * disclosure, which the frame's `ResizeObserver` follows as it opens and closes.
  */
 export function renderAsk(card: AskCard, handlers: CardHandlers, doc: Document): HTMLElement {
   const root = el(doc, "section", "ask");
@@ -319,6 +447,37 @@ export function renderAsk(card: AskCard, handlers: CardHandlers, doc: Document):
   );
   root.append(header);
 
+  const actions = el(doc, "div", "ask-actions");
+  root.append(actions);
+
+  // The summary and the facts behind *Details*, under the answers as on the handoff page. A tool's
+  // description, marked with where the tool came from (GRA-116, GRA-245), and a proposal's
+  // provenance sentence (GRA-28) sit inside it with the facts.
+  const footer = el(doc, "footer", "ask-footer");
+  footer.append(el(doc, "p", "ask-summary", summaryOf(card)));
+  const details = el(doc, "details", "ask-details");
+  details.append(el(doc, "summary", undefined, "Details"));
+  if (card.kind === "tool" && card.tool) {
+    const provenance = provenanceOf(card.tool);
+    const quote = el(doc, "figure", "ask-quote");
+    const caption = el(doc, "figcaption");
+    caption.append(
+      el(doc, "span", "ask-badge", provenance.badge),
+      el(doc, "span", undefined, provenance.note),
+    );
+    quote.append(caption, el(doc, "blockquote", undefined, card.tool.description));
+    details.append(quote);
+  }
+  if (card.kind === "connection") {
+    details.append(
+      el(
+        doc,
+        "p",
+        "ask-note",
+        "The agent proposed this connection, from documentation it read or from a ready-made tool's details. Check the hosts before confirming.",
+      ),
+    );
+  }
   const facts = el(doc, "dl", "ask-facts");
   for (const fact of factsOf(card)) {
     const row = el(doc, "div");
@@ -328,39 +487,9 @@ export function renderAsk(card: AskCard, handlers: CardHandlers, doc: Document):
     );
     facts.append(row);
   }
-  root.append(facts);
-
-  if (card.kind === "connection") {
-    root.append(
-      el(
-        doc,
-        "p",
-        "ask-note",
-        "The agent proposed this connection, from documentation it read or from a ready-made tool's details. Check the hosts before confirming.",
-      ),
-    );
-  }
-
-  // The tool's description, marked with where the tool came from as the console's card marks it
-  // (GRA-116, GRA-245): a person deciding on a write should know whether the sentence was reviewed
-  // by Graft or written by the agent's model.
-  if (card.kind === "tool" && card.tool) {
-    const provenance = card.tool.provenance ?? {
-      badge: MODEL_WORDS_NOTE,
-      note: AUTHORED_PROVENANCE_NOTE,
-    };
-    const quote = el(doc, "figure", "ask-quote");
-    const caption = el(doc, "figcaption");
-    caption.append(
-      el(doc, "span", "ask-badge", provenance.badge),
-      el(doc, "span", undefined, provenance.note),
-    );
-    quote.append(caption, el(doc, "blockquote", undefined, card.tool.description));
-    root.append(quote);
-  }
-
-  const actions = el(doc, "div", "ask-actions");
-  root.append(actions);
+  details.append(facts);
+  footer.append(details);
+  root.append(footer);
 
   /** The line under the buttons while the person is away, and the sentence once they are done. */
   const status = el(doc, "p", "ask-outcome");
@@ -368,8 +497,11 @@ export function renderAsk(card: AskCard, handlers: CardHandlers, doc: Document):
   status.hidden = true;
 
   const buttons: HTMLButtonElement[] = [];
+  /** The choices' radios, frozen with the buttons once an answer or a start is under way. */
+  const controls: HTMLInputElement[] = [];
   const disableAll = () => {
     for (const node of buttons) node.disabled = true;
+    for (const node of controls) node.disabled = true;
   };
 
   /** Replace the actions with the outcome sentence; nothing is clickable afterwards. */
@@ -377,6 +509,7 @@ export function renderAsk(card: AskCard, handlers: CardHandlers, doc: Document):
     status.textContent = outcome.ok ? outcome.sentence : outcome.message;
     status.dataset.tone = outcome.ok ? "answered" : "refused";
     status.hidden = false;
+    for (const node of controls) node.disabled = true;
     actions.replaceWith(status);
   };
 
@@ -471,94 +604,88 @@ export function renderAsk(card: AskCard, handlers: CardHandlers, doc: Document):
     settle(outcome.ok ? outcome : { ok: false, message: outcome.message });
   };
 
-  /**
-   * The line for the integration's tools under the build choice (GRA-239; ADR 0008 as amended
-   * 2026-10-09), ticked, in the server's words; null on a card the server wrote without it, which
-   * then sends exactly what it always sent.
-   */
-  const toolsLine = (): HTMLInputElement | null => {
-    const offer = card.vendorTools;
-    if (!offer) return null;
-    const choice = el(doc, "label", "ask-choice");
-    const box = el(doc, "input");
-    box.type = "checkbox";
-    box.checked = true;
-    box.name = "allowVendor";
-    const words = el(doc, "span");
-    words.append(
-      el(doc, "span", undefined, offer.label),
-      el(doc, "span", "ask-choice-hint", offer.description),
-    );
-    choice.append(box, words);
-    actions.before(choice);
-    return box;
+  /** Mount a choice above the answers and freeze it with them. */
+  const mountChoices = <V extends string>(choices: ReturnType<typeof choiceCards<V>>) => {
+    controls.push(...choices.inputs);
+    actions.before(choices.node);
+    return choices.value;
   };
-  const withLine = (line: HTMLInputElement | null) => (line ? { allowVendor: line.checked } : {});
+
+  /**
+   * *Full access / Ask me first* (ADR 0008 as amended 2026-10-14), in place of the two pre-ticked
+   * lines: Full access is the build approval and, where the server offers the integration's line
+   * (`vendorTools`, GRA-239), the standing allow for its non-destructive tools; Ask me first
+   * records neither. A card the server wrote without the line never sends `allowVendor`.
+   */
+  const accessChoice = () => {
+    const value = mountChoices(
+      choiceCards(
+        doc,
+        `${card.pendingActionId}-access`,
+        accessLegend(card.agentName),
+        accessOptionsFor(card),
+        DEFAULT_ACCESS_CHOICE,
+      ),
+    );
+    return (): { approveBuild: boolean; allowVendor?: boolean } => {
+      const full = value() === "full";
+      return { approveBuild: full, ...(card.vendorTools ? { allowVendor: full } : {}) };
+    };
+  };
+
+  const decline = (answer: AnswerAskAnswer) => {
+    const node = button(doc, declineLabelOf(card), "secondary", () => void submit(answer));
+    buttons.push(node);
+    return node;
+  };
 
   if (isLinkAsk(card)) {
-    // A link provider's ask (GRA-117): the build choice, Decline through `answer_ask`, and the
+    // A link provider's ask (GRA-117): the access choice, Decline through `answer_ask`, and the
     // provider's sign-in minted through `start_link` and opened in the person's browser.
-    const choice = el(doc, "label", "ask-choice");
-    const box = el(doc, "input");
-    box.type = "checkbox";
-    box.checked = true;
-    box.name = "approveBuild";
-    choice.append(box, el(doc, "span", undefined, buildChoiceLabel(card)));
-    actions.before(choice);
-    const line = toolsLine();
-
-    const decline = button(doc, "Decline", "secondary", () => void submit({ decline: true }));
-    const connect = button(
-      doc,
-      `Connect through ${card.provider ?? "the provider"}`,
-      "primary",
-      () => {
-        void (async () => {
-          box.disabled = true;
-          if (line) line.disabled = true;
-          decline.disabled = true;
-          connect.disabled = true;
-          let started: StartLinkOutcome;
-          try {
-            started = await handlers.startLink({
-              pendingActionId: card.pendingActionId,
-              approveBuild: box.checked,
-              ...withLine(line),
-            });
-          } catch (error) {
-            started = {
-              ok: false,
-              reason: "failed",
-              message: `Graft could not start the sign-in (${error instanceof Error ? error.message : String(error)}). The link in the chat opens the same ask in the console.`,
-            };
+    const access = accessChoice();
+    const no = decline({ decline: true });
+    const connect = button(doc, approveLabelOf(card), "primary", () => {
+      void (async () => {
+        disableAll();
+        let started: StartLinkOutcome;
+        try {
+          started = await handlers.startLink({
+            pendingActionId: card.pendingActionId,
+            ...access(),
+          });
+        } catch (error) {
+          started = {
+            ok: false,
+            reason: "failed",
+            message: `Graft could not start the sign-in (${error instanceof Error ? error.message : String(error)}). The link in the chat opens the same ask in the console.`,
+          };
+        }
+        if (!started.ok) {
+          settle({ ok: false, message: started.message });
+          if (started.reason === "card_not_available") {
+            const fallback = el(doc, "div", "ask-actions");
+            status.after(fallback);
+            consoleButton(fallback);
           }
-          if (!started.ok) {
-            settle({ ok: false, message: started.message });
-            if (started.reason === "card_not_available") {
-              const fallback = el(doc, "div", "ask-actions");
-              status.after(fallback);
-              consoleButton(fallback);
-            }
-            return;
-          }
-          try {
-            await handlers.openLink(withFromCard(started.url));
-          } catch {
-            // The host refused to open it: the console's page has the same button (GRA-117).
-            connect.replaceWith(consoleButton(actions));
-            note(
-              `The chat could not open ${card.provider ?? "the provider"}'s sign-in. The console has the same button.`,
-              "refused",
-            );
-            return;
-          }
-          connect.disabled = false;
-          void pollUntilSettled();
-        })();
-      },
-    );
-    buttons.push(decline, connect);
-    actions.append(decline, connect);
+          return;
+        }
+        try {
+          await handlers.openLink(withFromCard(started.url));
+        } catch {
+          // The host refused to open it: the console's page has the same button (GRA-117).
+          connect.replaceWith(consoleButton(actions));
+          note(
+            `The chat could not open ${card.provider ?? "the provider"}'s sign-in. The console has the same button.`,
+            "refused",
+          );
+          return;
+        }
+        connect.disabled = false;
+        void pollUntilSettled();
+      })();
+    });
+    buttons.push(connect);
+    actions.append(no, connect);
     return root;
   }
 
@@ -567,76 +694,72 @@ export function renderAsk(card: AskCard, handlers: CardHandlers, doc: Document):
     return root;
   }
 
-  if (card.kind === "tool" && card.vendorApproval) {
-    // The integration-wide yes beside Allow (GRA-237; ADR 0008 as amended 2026-10-09), in the
-    // server's words, with destructive tools a separate tick, off by default. Allow alone answers
-    // this tool as before and never carries the tick.
+  if (card.kind === "tool") {
+    if (card.tool?.askEveryCall) {
+      header.append(el(doc, "p", "ask-note", askEveryCallNote(card)));
+    }
+    // How much the yes allows (ADR 0008 as amended 2026-10-14): *Every <integration> tool*
+    // pre-selected on a tool that cannot delete, *Just <tool>* on one that can; no allow for one
+    // call. Offered where the server offers the integration-wide yes (GRA-237); a card written
+    // without it answers this tool alone, as it always did.
     const offer = card.vendorApproval;
-    const choice = el(doc, "label", "ask-choice");
-    const box = el(doc, "input");
-    box.type = "checkbox";
-    box.checked = false;
-    box.name = "includesDestructive";
-    const words = el(doc, "span");
-    words.append(
-      el(doc, "span", undefined, offer.destructiveLabel),
-      el(doc, "span", "ask-choice-hint", offer.destructiveDescription),
-    );
-    choice.append(box, words);
-    actions.before(choice);
-
-    const deny = button(doc, "Decline", "secondary", () => void submit({ allow: false }));
-    const every = button(doc, offer.label, "secondary", () => {
-      box.disabled = true;
-      void submit({ allow: true, allowVendor: true, includesDestructive: box.checked });
+    const choice = offer
+      ? mountChoices(
+          choiceCards(
+            doc,
+            `${card.pendingActionId}-allow`,
+            toolAllowLegend(card.agentName),
+            toolAllowOptions({
+              agentName: card.agentName,
+              integrationName: offer.integrationName,
+              tool: toolWords(card),
+              destructive: card.tool?.destructive === true,
+            }),
+            defaultToolAllowChoice(card.tool?.destructive === true),
+          ),
+        )
+      : null;
+    const no = decline({ allow: false });
+    const allow = button(doc, approveLabelOf(card), "primary", () => {
+      void submit(choice ? toolAllowAnswer(choice()) : { allow: true });
     });
-    const allow = button(doc, "Allow", "primary", () => {
-      box.disabled = true;
-      void submit({ allow: true });
-    });
-    buttons.push(deny, every, allow);
-    actions.append(deny, every, allow);
+    buttons.push(allow);
+    actions.append(no, allow);
     return root;
   }
 
-  if (card.kind === "build" || card.kind === "tool") {
-    const deny = button(doc, "Decline", "secondary", () => void submit({ allow: false }));
-    const allow = button(doc, "Allow", "primary", () => void submit({ allow: true }));
-    buttons.push(deny, allow);
-    actions.append(deny, allow);
+  if (card.kind === "build") {
+    const no = decline({ allow: false });
+    const allow = button(doc, approveLabelOf(card), "primary", () => void submit({ allow: true }));
+    buttons.push(allow);
+    actions.append(no, allow);
     return root;
   }
 
-  // A keyless connection, or a scope ask: the build choice above the two buttons, on by default
-  // (GRA-75; GRA-104 for the scope ask, where Allow carries it as `approveBuild` beside `allow`).
-  const choice = el(doc, "label", "ask-choice");
-  const box = el(doc, "input");
-  box.type = "checkbox";
-  box.checked = true;
-  box.name = "approveBuild";
-  choice.append(box, el(doc, "span", undefined, buildChoiceLabel(card)));
-  actions.before(choice);
-
+  // A keyless connection, or a scope ask: the access choice above the two buttons (GRA-75, GRA-104,
+  // GRA-239; on the scope ask Allow carries it beside `allow`).
+  const access = accessChoice();
   if (card.kind === "scope") {
-    const decline = button(doc, "Decline", "secondary", () => void submit({ allow: false }));
-    const allow = button(doc, "Allow", "primary", () => {
-      box.disabled = true;
-      void submit({ allow: true, approveBuild: box.checked });
+    const no = decline({ allow: false });
+    const allow = button(doc, approveLabelOf(card), "primary", () => {
+      const { approveBuild, allowVendor } = access();
+      void submit(
+        allowVendor === undefined
+          ? { allow: true, approveBuild }
+          : { allow: true, approveBuild, allowVendor },
+      );
     });
-    buttons.push(decline, allow);
-    actions.append(decline, allow);
+    buttons.push(allow);
+    actions.append(no, allow);
     return root;
   }
 
-  const line = toolsLine();
-  const decline = button(doc, "Decline", "secondary", () => void submit({ decline: true }));
-  const connect = button(doc, "Connect", "primary", () => {
-    box.disabled = true;
-    if (line) line.disabled = true;
-    void submit({ connect: true, approveBuild: box.checked, ...withLine(line) });
+  const no = decline({ decline: true });
+  const connect = button(doc, approveLabelOf(card), "primary", () => {
+    void submit({ connect: true, ...access() });
   });
-  buttons.push(decline, connect);
-  actions.append(decline, connect);
+  buttons.push(connect);
+  actions.append(no, connect);
   return root;
 }
 

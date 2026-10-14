@@ -299,6 +299,9 @@ importers:
         specifier: 'catalog:'
         version: 3.7.0
     devDependencies:
+      '@graft/ask-card':
+        specifier: workspace:*
+        version: link:../../packages/ask-card
       '@graft/config':
         specifier: workspace:*
         version: link:../../packages/config
