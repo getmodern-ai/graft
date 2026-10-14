@@ -7,6 +7,9 @@ describe("routeEvent", () => {
     expect(routeEvent("POST", "/api/agents")).toBe("agent_created");
     expect(routeEvent("POST", "/agents")).toBe("agent_created");
     expect(routeEvent("POST", "/api/agents/ag_1/revoke")).toBe("agent_revoked");
+    expect(routeEvent("POST", "/api/agents/ag_1/token/rotate")).toBe("agent_token_rotated");
+    // The first issue is not a rotation, and is not counted.
+    expect(routeEvent("POST", "/api/agents/ag_1/token")).toBeNull();
     expect(routeEvent("PUT", "/api/agents/ag_1/scope")).toBe("scope_changed");
     expect(routeEvent("POST", "/api/pending-actions/pa_1/answer?x=1")).toBe("approval_answered");
     expect(routeEvent("PUT", "/api/me/model-key")).toBe("model_key_set");

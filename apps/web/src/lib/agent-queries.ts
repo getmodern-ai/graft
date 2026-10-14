@@ -89,6 +89,18 @@ export function issueAgentToken(agentId: string) {
   });
 }
 
+/**
+ * A new static token for an active agent that has one (`POST /api/agents/:id/token/rotate`,
+ * GRA-306), shown once; the old token is refused from the next request on. The server refuses an
+ * agent a client connected, one awaiting its first token, and a revoked one.
+ */
+export function rotateAgentToken(agentId: string) {
+  return api<{ agent: Agent; token: string }>(
+    `/agents/${encodeURIComponent(agentId)}/token/rotate`,
+    { method: "POST" },
+  );
+}
+
 export type AgentLimitsPatch = {
   name?: string;
   workingSetCap?: number;

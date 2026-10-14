@@ -1182,6 +1182,13 @@ and every row's menu has View agent, revoked rows included; the detail drawer is
 page keeps scope and limit editors, the working set, approvals, history and standalone revocation;
 revoked records are read-only. `GET /api/agents` includes `workingSetCount`, counted against each
 person-scoped agent in the same statement; the table shows count/cap with Cando's status dot.
+**A lost static token is rotated, not a new agent** (GRA-306; ADR 0007 as amended 2026-10-14):
+the page's *Rotate token* (`rotate-token-dialog.tsx`, drawn when `lib/agent-token.ts`'s
+`tokenRotatable` says so) confirms, then calls `POST /api/agents/:id/token/rotate`, `@graft/core`'s
+`rotateAgentToken`, which writes the new hash over the one it read through `issueAgentToken`'s
+`replacing` and answers the token once; an agent a client holds, one awaiting its first token and a
+revoked one are `409 agent_token_not_rotatable`. The door reads the token per request, so the old
+one is refused at once, on its open session too (`mcp.test.ts`), and the new one continues there.
 
 **Setup is one record per person and three routes** (GRA-204; ADR 0024). The `setup` table
 (`packages/db/src/schema/setup.ts`, migration 0012) keys on the person: the step reached, the
