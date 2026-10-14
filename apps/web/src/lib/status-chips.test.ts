@@ -4,6 +4,7 @@ import {
   ACTIVITY_ANSWER_CHIP,
   ACTIVITY_OUTCOME_CHIP,
   AGENT_STATUS_CHIP,
+  ANSWER_CHIP,
   APPROVAL_DECISION_CHIP,
   AWAITING_CLIENT_SECRET_CHIP,
   AWAITING_RECONNECTION_CHIP,
@@ -40,6 +41,7 @@ const EVERY_CHIP: StatusChip[] = [
   NO_PASSING_VERSION_CHIP,
   SIGN_IN_ACCOUNT_CHIP,
   ...Object.values(APPROVAL_DECISION_CHIP),
+  ...Object.values(ANSWER_CHIP),
   ...Object.values(VENDOR_APPROVAL_DESTRUCTIVE_CHIP),
   ...Object.values(WORKING_SET_CHANGE_CHIP),
   ...Object.values(MODEL_KEY_STATUS_CHIP),
@@ -81,6 +83,9 @@ describe("status chips", () => {
     expect(SIGN_IN_ACCOUNT_CHIP.variant).toBe("success");
     expect(MODEL_STATUS_CHIP.included.variant).toBe("success");
     expect(MODEL_STATUS_CHIP.own_key.variant).toBe("success");
+    // GRA-318: an answer under which the agent runs without asking.
+    expect(ANSWER_CHIP.always.variant).toBe("success");
+    expect(ANSWER_CHIP.allowed.variant).toBe("success");
   });
 
   it("gives the refused states the destructive tone", () => {
@@ -91,6 +96,7 @@ describe("status chips", () => {
     expect(APPROVAL_DECISION_CHIP.deny.variant).toBe("destructive");
     expect(MODEL_STATUS_CHIP.needs_key.variant).toBe("destructive");
     expect(MODEL_STATUS_CHIP.unconfigured.variant).toBe("destructive");
+    expect(ANSWER_CHIP.denied.variant).toBe("destructive");
   });
 
   // GRA-319: a run is an event that ended, so the neutral tone; a failure is still destructive.
@@ -121,6 +127,7 @@ describe("status chips", () => {
     expect(MODEL_KEY_STATUS_CHIP.unset.variant).toBe("outline");
     expect(EMAIL_STATUS_CHIP.unverified.variant).toBe("outline");
     expect(AGENT_STATUS_CHIP.awaiting_harness.variant).toBe("outline");
+    expect(ANSWER_CHIP.asks_next_time.variant).toBe("outline");
   });
 
   // Person-facing copy says agent, never harness (CONTEXT.md, *Harness*; GRA-332).

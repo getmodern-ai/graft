@@ -9,6 +9,7 @@ import {
   validateIssuedCredentialFields,
   validateSchemeConfig,
   validateVendor,
+  vendorSlugOf,
 } from "./connection.rules";
 
 /** Total functions over strings; every case is a sentence a person would see, or the normalised value. */
@@ -20,6 +21,15 @@ describe("validateVendor", () => {
     for (const bad of ["", "Unleashed", "google_workspace", "-x", "x".repeat(65)]) {
       expect(validateVendor(bad), bad).not.toBeNull();
     }
+  });
+});
+
+describe("vendorSlugOf", () => {
+  it("slugs a person's name into one validateVendor accepts", () => {
+    expect(vendorSlugOf("Acme Unleashed")).toBe("acme-unleashed");
+    expect(vendorSlugOf("  Ünleashed (Prod) ")).toBe("unleashed-prod");
+    expect(vendorSlugOf("!!!")).toBe("integration");
+    expect(validateVendor(vendorSlugOf("x".repeat(80)))).toBeNull();
   });
 });
 
