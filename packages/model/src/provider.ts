@@ -16,6 +16,7 @@ import {
   wireOf,
 } from "./answer";
 import { type RenderedPage, renderRepair, renderSituation, systemPrompt } from "./prompt";
+import { type ConnectionProposalOptions, proposeConnection } from "./propose-connection";
 import { type GoalProposalOptions, proposeGoals } from "./propose-goals";
 import { type ModelCallTrace, type ModelTelemetry, NO_TELEMETRY } from "./telemetry";
 import {
@@ -114,6 +115,8 @@ export type ProviderModelDeps = {
   models?: ResolvedModels;
   /** The goal proposal's bound, for a test; `GOAL_PROPOSAL_TIMEOUT_MS` when absent. */
   goalProposal?: GoalProposalOptions;
+  /** The connection proposal's bound, for a test; `CONNECTION_PROPOSAL_TIMEOUT_MS` when absent. */
+  connectionProposal?: ConnectionProposalOptions;
 };
 
 export type ProviderModel = ModelAdapter & { readonly settings: ProviderModelSettings };
@@ -179,6 +182,25 @@ export function createProviderModel(
         },
         request,
         deps.goalProposal,
+      ),
+    // The triage model again: reading an address and a sign-in scheme off a page is not code
+    // (`./propose-connection.ts`).
+    proposeConnection: (request) =>
+      proposeConnection(
+        {
+          model: bound.models.triage,
+          modelId: settings.triageModel,
+          telemetry: bound.telemetry,
+          trace: {
+            jobId: request.traceId,
+            personId: request.personId,
+            attempt: 0,
+            situation: "propose_connection",
+            provider: settings.provider,
+          },
+        },
+        request,
+        deps.connectionProposal,
       ),
   };
 }

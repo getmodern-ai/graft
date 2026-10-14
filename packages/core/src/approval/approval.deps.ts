@@ -1,12 +1,14 @@
 import { findAgent } from "@graft/db/repo/agent";
 import {
   deleteApproval,
+  deleteBuildApproval,
   deleteVendorApproval,
   findApproval,
   findBuildApproval,
   findVendorApproval,
   insertBuildApproval,
   listApprovals,
+  listBuildApprovals,
   listVendorApprovals,
   updateAskEveryCall,
   updateVendorApprovalDestructive,
@@ -34,6 +36,9 @@ export type ApprovalDeps = {
   deleteApproval: typeof deleteApproval;
   findBuildApproval: typeof findBuildApproval;
   insertBuildApproval: typeof insertBuildApproval;
+  /** The agent's page lists and withdraws them (ADR 0008 as amended 2026-09-18; GRA-295). */
+  listBuildApprovals: typeof listBuildApprovals;
+  deleteBuildApproval: typeof deleteBuildApproval;
   /** The agent's standing approvals per integration (ADR 0008 as amended 2026-10-09; GRA-237). */
   findVendorApproval: typeof findVendorApproval;
   listVendorApprovals: typeof listVendorApprovals;
@@ -78,6 +83,8 @@ export const defaultApprovalDeps: ApprovalDeps = {
   deleteApproval,
   findBuildApproval,
   insertBuildApproval,
+  listBuildApprovals,
+  deleteBuildApproval,
   findVendorApproval,
   listVendorApprovals,
   upsertVendorApproval,

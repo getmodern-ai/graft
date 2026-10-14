@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
+import { and, asc, count, desc, eq, inArray, isNotNull, sql } from "drizzle-orm";
 
 import type { DbOrTx } from "../index";
 import { stockToolVersion } from "../schema/stock";
@@ -84,6 +84,23 @@ export async function listAuthoredToolsForVendor(
 }
 
 /** One tool by the triple that identifies it — (person, vendor, name). */
+/**
+ * How many live tools the person holds per vendor — a tool with a current version, which is the one
+ * `find_tool` lists and a run reaches (ADR 0012, L0 as amended 2026-09-17). The integrations list's
+ * tool count (GRA-291); a vendor with none answers no row.
+ */
+export async function countLiveToolsByVendor(
+  db: DbOrTx,
+  personId: string,
+): Promise<{ vendor: string; count: number }[]> {
+  return db
+    .select({ vendor: authoredTool.vendor, count: count() })
+    .from(authoredTool)
+    .where(and(eq(authoredTool.personId, personId), isNotNull(authoredTool.currentVersionId)))
+    .groupBy(authoredTool.vendor)
+    .orderBy(asc(authoredTool.vendor));
+}
+
 export async function findAuthoredTool(
   db: DbOrTx,
   personId: string,

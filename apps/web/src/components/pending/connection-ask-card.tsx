@@ -121,6 +121,7 @@ export function ConnectionAskCard({
       queryClient.invalidateQueries({ queryKey: connectionKeys.all });
       queryClient.invalidateQueries({ queryKey: agentKeys.all });
       queryClient.invalidateQueries({ queryKey: approvalKeys.vendorsOfAgent(action.agentId) });
+      queryClient.invalidateQueries({ queryKey: approvalKeys.buildsOfAgent(action.agentId) });
       if (authorizeUrl) {
         toast.message(`${connection.displayName}'s client is saved`, {
           description:

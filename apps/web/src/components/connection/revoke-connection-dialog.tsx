@@ -12,6 +12,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { agentKeys } from "@/lib/agent-queries";
+import { approvalKeys } from "@/lib/approval-queries";
 import {
   type Connection,
   connectionKeys,
@@ -51,6 +52,7 @@ export function RevokeConnectionDialog({
       queryClient.invalidateQueries({ queryKey: connectionKeys.all });
       queryClient.invalidateQueries({ queryKey: toolKeys.all });
       queryClient.invalidateQueries({ queryKey: agentKeys.all });
+      queryClient.invalidateQueries({ queryKey: approvalKeys.builds });
       toast.success(`${connection.displayName} is revoked`, {
         description: `${keyring ? "Credential cleared; " : ""}${count(result.approvalsDeleted, "tool approval")}, ${count(
           result.buildApprovalsDeleted,

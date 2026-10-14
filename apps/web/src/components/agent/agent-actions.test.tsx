@@ -69,7 +69,7 @@ async function mount(value = agent, table = false) {
       <QueryClientProvider client={client}>
         {table ? (
           <AgentsTable
-            agents={[{ ...value, workingSetCount: 5 }]}
+            agents={[{ ...value, workingSetCount: 5, connectionIds: [], lastActiveAt: null }]}
             isPending={false}
             isError={false}
             error={null}

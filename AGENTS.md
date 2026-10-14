@@ -1195,6 +1195,11 @@ and every row's menu has View agent, revoked rows included; the detail drawer is
 page keeps scope and limit editors, the working set, approvals, history and standalone revocation;
 revoked records are read-only. `GET /api/agents` includes `workingSetCount`, counted against each
 person-scoped agent in the same statement; the table shows count/cap with Cando's status dot.
+Since GRA-290 the same one statement also answers each agent's `connectionIds` (the scope as it
+resolves under its mode, `listScopeConnectionIds`'s rule) and `lastActiveAt` (its last ledger row
+that was not a dry run, any outcome), and the answer is `AgentListAnswer`, `{ agents, hasRunTool }`:
+the flag is a per-agent `exists` over ledger rows that are not dry runs and answered `ok`, in the
+same statement, folded across the person's agents in `@graft/core`'s `listAgents`.
 **A lost static token is rotated, not a new agent** (GRA-306; ADR 0007 as amended 2026-10-14):
 the page's *Rotate token* (`rotate-token-dialog.tsx`, drawn when `lib/agent-token.ts`'s
 `tokenRotatable` says so) confirms, then calls `POST /api/agents/:id/token/rotate`, `@graft/core`'s
@@ -1327,6 +1332,45 @@ on the wide event): an hour for a proposal, two minutes from when it settled for
 or a throw, so a timeout does not hide the chips for the hour. It is its own route so the goal step draws at
 once; `components/setup/goal-suggestions.tsx` asks it after, keyed by the connection outside
 `["setup"]`, and draws outline `Button` chips that fill the field, or nothing.
+
+**An integration's page builds a tool for an agent picked before Create** (GRA-303; ADR 0024 as
+amended 2026-10-14; `apps/server/src/connection-acquire.ts`). `POST /api/connections/:id/acquire`
+(`ConnectionAcquireBody`: `{ agentId, goal }`) is `@graft/core`'s `startConsoleAcquire`, one
+transaction with no Setup record: the connection read locked (`findConnectionForNoKeyUpdate`, so a
+revoke's deletion of build approvals cannot interleave and a scope save's foreign-key check is not blocked), then the agent (`findAgentForUpdate`, the
+order a scope answer takes them; revoked is `agent_revoked`), the connection the person's, not
+revoked, usable and in the agent's scope
+(`connection_revoked`, `connection_unusable`, `connection_not_in_scope`), `grantBuildApproval`
+and `createAcquireJob` with Setup's first line and `setupBuildHints`; then the runner is kicked.
+It answers `ConnectionAcquireJob` (`acquire_status`'s shape plus `connectionId`, `agent`, `goal`,
+`createdAt`), 201, and is refused `acquire_unconfigured` with Setup's sentence. Like Build it skips
+`similar_tools_exist`: the person asked for a new tool on a page that lists the integration's tools.
+`GET /api/connections/:id/acquire-jobs` (`ConnectionAcquireJobs`) is the last day's jobs, at most
+twenty, newest first, across the person's agents (`repo/acquire-job.ts`'s
+`listAcquireJobsForConnection`, person-scoped through the agent join); each is polled after through
+the agent's job route. `GET /api/connections/:id/goal-suggestions` (`ConnectionGoalSuggestions`)
+is Setup's proposal keyed by the connection alone (`proposeGoalsForConnection`, the same memo) with
+`build` beside it. Another person's agent or connection is a 404 on all three; Create counts as
+`acquire_started` with `job_id` and `agent_id`.
+
+**A connection can be proposed from an API's docs, for the console's Flow C** (GRA-299). The person
+names an integration and pastes a link to its API docs; `POST /api/connection-proposals`
+(`ConnectionProposalBody`: `{ name, docsUrl }`) starts a short job and answers `{ id }`, `GET
+/api/connection-proposals/:id` answers `ConnectionProposalState` (`status` running, ready or failed;
+`stage` one of `@graft/mcp`'s `DOCS_PROPOSAL_STAGES`, the checklist's four lines; `found` filling in;
+`proposal` in `request_connection`'s shape once ready; `failure` with a reason word once failed), and
+`GET /api/connection-proposals` answers `ConnectionProposalAvailability`, unavailable with the
+variables to set wherever `acquireConfigured` says no. The work is `proposeConnectionFromDocs`
+(`packages/mcp/src/proposal-from-docs.ts`): the pasted page alone through `readWebPage`, bounded in
+windows and characters, then `ModelAdapter.proposeConnection` (`@graft/model`'s
+`propose-connection.ts`: the triage model, strict output, one attempt, a bound, traced as
+`propose_connection` under `connect:<personId>`, routed to the person's own key; the scripted backing
+answers a script's `connectionProposal` or a guess from the docs' host), then `normaliseProposal`, so
+a private host is `host_not_public` as it is for an agent's proposal, then each host resolved once (a
+private answer refused, a name that does not resolve listed in `unresolvedHosts`). The jobs live in
+the process (`apps/server/src/connection-proposals.ts`) for 15 minutes, one in flight per person
+(`proposal_running`); a restart loses one, and another person's id is a 404. The settled job is logged
+as counts and kinds, never the name, the link, the pages or the proposal.
 
 **The result step runs the tool, and the finish step connects the harness** (GRA-208; ADR 0024,
 `apps/server/src/setup-finish.ts` and `tool-run.ts`). `GET /api/setup/tool` answers
@@ -1474,6 +1518,17 @@ Back read it as the *Tool* stage) until its task is chosen, when `POST /api/setu
 `slug` reads the entry from the directory again and proposes it (`directoryProposal`: the slug as the
 vendor, the first host as the primary) through the starter's routing (`connectSetupProposal`). No
 column holds it: a reload on that tool screen returns to the directory.
+
+**The directory answers outside Setup too, beside the person's own suggestions** (ADR 0001 as
+amended 2026-10-14; GRA-305). `GET /api/integrations/directory` and `/search` are Setup's two
+handlers mounted a second time, same answers. `GET /api/integrations/suggested`
+(`IntegrationSuggestions`) is `@graft/core`'s `listSuggestedIntegrations` over
+`repo/pending-action.ts`'s `listSuggestedConnectionAsks`: per vendor, the newest `connection` ask
+of the person's live agents, kept when it was not answered with a connection and the person holds
+no unrevoked connection of that vendor, newest first, at most `SUGGESTED_INTEGRATIONS_LIMIT` (12),
+with the agent, the ask's state (`open`, `declined`, `expired`) and age, and the directory entry's
+`logoUrl` (null under the starters). `directory` and `suggested` are registered before any
+`/integrations/:vendor…` route (`INTEGRATION_RESERVED_SEGMENTS`).
 
 **Setup's words are integration and task** (GRA-216; CONTEXT.md, *Integration*; ADR 0024's
 amendment of 2026-09-24). Person-facing copy says *integration* for the service a person connects

@@ -4,6 +4,7 @@ import { useRef, useState } from "react";
 
 import { AgentConnectionDialog } from "@/components/agent/agent-connection-dialog";
 import { ApprovalsCard } from "@/components/agent/approvals-card";
+import { BuildApprovalsCard } from "@/components/agent/build-approvals-card";
 import { IntegrationApprovalsCard } from "@/components/agent/integration-approvals-card";
 import { LimitsForm } from "@/components/agent/limits-form";
 import { RevokeAgentDialog } from "@/components/agent/revoke-agent-dialog";
@@ -140,6 +141,7 @@ function AgentRoute() {
       <WorkingSetTable agent={agent} />
       <ApprovalsCard agent={agent} />
       <IntegrationApprovalsCard agent={agent} />
+      <BuildApprovalsCard agent={agent} />
       <WorkingSetHistory agentId={agent.id} />
 
       {connecting && !agent.revokedAt ? (

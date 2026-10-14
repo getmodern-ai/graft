@@ -1,7 +1,8 @@
-import { and, desc, eq, gt, inArray, isNotNull, isNull, sql } from "drizzle-orm";
+import { and, desc, eq, gt, inArray, isNotNull, isNull, notExists, sql } from "drizzle-orm";
 
 import type { DbOrTx } from "../index";
 import { agent } from "../schema/agent";
+import { connection } from "../schema/connection";
 import { type NewPendingActionRow, pendingAction } from "../schema/pending-action";
 import { scopedAgentIds } from "./agent";
 import type { AgentScope } from "./scope";
@@ -96,6 +97,90 @@ export async function listOpenPendingActions(
       ),
     )
     .orderBy(desc(pendingAction.createdAt), desc(pendingAction.id));
+}
+
+/**
+ * One suggestion's row (`listSuggestedConnectionAsks`): the latest connection ask of a vendor, the
+ * agent that made it, and the three clocks the caller reads its state from. The payload's
+ * `displayName` and `docsUrl` come out of the JSON; nothing else of it does.
+ */
+export type SuggestedConnectionAskRow = {
+  id: string;
+  agentId: string;
+  agentName: string;
+  vendor: string;
+  displayName: string | null;
+  docsUrl: string | null;
+  createdAt: Date;
+  expiresAt: Date;
+  answeredAt: Date | null;
+  consumedAt: Date | null;
+};
+
+/**
+ * "Your agents asked for these" (ADR 0001 as amended 2026-10-14): per vendor, the newest `connection`
+ * ask any of the person's live agents made, kept when it was not answered with a connection (so it
+ * is open, declined or expired) and the person holds no unrevoked connection of that vendor; newest
+ * first, at most `limit`. One statement under the person on both tables: the ask through
+ * `agent.person_id`, the connection through its own `person_id`. The newest ask decides alone, so a
+ * vendor the person connected from an agent's ask and later revoked is not suggested again from an
+ * older one. The vendor is read off the payload, as `request_connection` wrote it.
+ */
+export async function listSuggestedConnectionAsks(
+  db: DbOrTx,
+  personId: string,
+  limit: number,
+): Promise<SuggestedConnectionAskRow[]> {
+  const vendor = sql<string>`${pendingAction.payload} ->> 'vendor'`;
+  const latest = db
+    .selectDistinctOn([vendor], {
+      id: pendingAction.id,
+      agentId: pendingAction.agentId,
+      agentName: sql<string>`${agent.name}`.as("agent_name"),
+      vendor: vendor.as("vendor"),
+      displayName: sql<string | null>`${pendingAction.payload} ->> 'displayName'`.as(
+        "display_name",
+      ),
+      docsUrl: sql<string | null>`${pendingAction.payload} ->> 'docsUrl'`.as("docs_url"),
+      answeredWith: sql<string | null>`${pendingAction.answer} ->> 'connectionId'`.as(
+        "answered_with",
+      ),
+      createdAt: pendingAction.createdAt,
+      expiresAt: pendingAction.expiresAt,
+      answeredAt: pendingAction.answeredAt,
+      consumedAt: pendingAction.consumedAt,
+    })
+    .from(pendingAction)
+    .innerJoin(agent, eq(agent.id, pendingAction.agentId))
+    .where(
+      and(
+        eq(agent.personId, personId),
+        isNull(agent.revokedAt),
+        eq(pendingAction.kind, "connection"),
+        sql`${vendor} is not null`,
+        notExists(
+          db
+            .select({ id: connection.id })
+            .from(connection)
+            .where(
+              and(
+                eq(connection.personId, personId),
+                eq(connection.vendor, vendor),
+                isNull(connection.revokedAt),
+              ),
+            ),
+        ),
+      ),
+    )
+    .orderBy(vendor, desc(pendingAction.createdAt), desc(pendingAction.id))
+    .as("latest");
+  const rows = await db
+    .select()
+    .from(latest)
+    .where(isNull(latest.answeredWith))
+    .orderBy(desc(latest.createdAt), desc(latest.id))
+    .limit(limit);
+  return rows.map(({ answeredWith: _, ...row }) => row);
 }
 
 /**
