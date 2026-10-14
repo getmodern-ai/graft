@@ -426,6 +426,14 @@ export {
   type SetupHarnessKind,
   setupHarnessOf,
 } from "./setup/harness";
+export {
+  type ReadyMadeCatalogueEntry,
+  readyMadeKey,
+  readyMadeWireName,
+  SETUP_READY_MADE_MAX,
+  type SetupReadyMadeTool,
+  setupReadyMade,
+} from "./setup/ready-made";
 export { defaultSetupDeps, type SetupDeps } from "./setup/setup.deps";
 export {
   type AgentHarnessFields,
@@ -465,12 +473,15 @@ export {
   type SetupOutput,
   type SetupPlanMove,
   type SetupState,
+  type SetupStockDeps,
+  type SetupStockTool,
   type StartSetupAgentInput,
   type StartSetupBuildInput,
   type StartSetupInput,
   skipSetup,
   startSetup,
   startSetupBuild,
+  takeSetupStockTool,
   toSetupOutput,
 } from "./setup/setup.service";
 export {
@@ -489,6 +500,7 @@ export {
   type SetupVendorOption,
   STARTER_VENDOR_IDS,
   STARTER_VENDORS,
+  type StarterReadyMade,
   type StarterRunInput,
   type StarterTask,
   type StarterVendor,

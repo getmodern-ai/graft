@@ -370,3 +370,18 @@ row outside this agent's scope is not, since the scope ask is about a row as it 
 GRA-76's and GRA-104's answers. The person pays one confirmation for the correction instead of a
 second connection.
 
+
+## Amendment 2026-10-14: the person connects an integration with no agent asking
+
+Decided by Aleks (GRA-284). Until now every connection the console made answered an agent's
+proposal, or Setup's acting as its own agent, so a link provider's start hung off a pending action.
+The console may now **connect an integration the person chose** (from the directory, or from an
+API's documentation Graft read for them) with no agent behind it. The keyring's form and a keyless
+row are made as the connection service makes them today; a link provider's start is keyed by a
+short-lived record the console holds instead of an ask (ADR 0019's `start` and `complete` are
+unchanged). The new connection joins the scope of every agent on `all` (ADR 0007), and any access
+the person chose is recorded as ADR 0008's amendment of 2026-10-14 says. The secret is still typed
+on Graft's page alone (ADR 0004).
+
+A connection that needs the person to sign in again is drawn beside the open asks, as a request
+(CONTEXT.md), and counted with them, though it is a connection's state and not a pending action.
