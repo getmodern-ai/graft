@@ -26,17 +26,24 @@ export type ActivityRow = ActivityPage["rows"][number];
 /** How many rows the page's recent activity draws; the Activity screen has the rest. */
 export const RECENT_ACTIVITY_LIMIT = 5;
 
-/** Under the agent's key, so a write that refreshes the agent refreshes its figures too. */
+/**
+ * Under the agent's key, so a write that refreshes the agent refreshes its figures too. Both reads
+ * are stale at once, as `integrationsQuery` is: runs land and asks are answered from places that
+ * know nothing of this page (a chat's card, the inbox, the agent itself), so every visit refetches
+ * rather than drawing what the last one saw.
+ */
 export const agentStatsQuery = (agentId: string) =>
   queryOptions({
     queryKey: [...agentKeys.one(agentId), "stats"] as const,
     queryFn: () => api<AgentStats>(`/agents/${encodeURIComponent(agentId)}/stats`),
+    staleTime: 0,
   });
 
 /** Under `activityKeys.all`, beside the integration page's read of the same stream. */
 export const agentRecentActivityQuery = (agentId: string) =>
   queryOptions({
     queryKey: [...activityKeys.all, "agent", agentId, RECENT_ACTIVITY_LIMIT] as const,
+    staleTime: 0,
     queryFn: () =>
       api<ActivityPage>(
         `/activity?${new URLSearchParams({ agentId, limit: String(RECENT_ACTIVITY_LIMIT) })}`,
