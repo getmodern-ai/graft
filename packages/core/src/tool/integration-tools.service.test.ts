@@ -41,7 +41,7 @@ const stockSource = (name: string): StockToolSource => ({
   description: `stock ${name}`,
   inputSchema: { type: "object", properties: {} },
   hosts: ["gmail.googleapis.com"],
-  files: [{ path: "index.ts", content: `export default async () => (${JSON.stringify(name)});\n` }],
+  files: [{ path: "index.ts", content: "export default async () => ({});\n" }],
   testInput: {},
   sourceHash: `hash-${name}`,
 });
