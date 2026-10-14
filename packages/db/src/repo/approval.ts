@@ -374,3 +374,32 @@ export async function deleteVendorApprovalsForVendor(
     )
     .returning();
 }
+
+/**
+ * Widen or narrow an agent's standing approval for a vendor to its destructive tools, from the
+ * console (ADR 0008 as amended 2026-10-14; GRA-302). Only a row that stands is changed: the
+ * console amends an integration's allow, and recording one is an answer's. `grantedAt` moves, since
+ * the row now holds the answer given at that moment. Null when none stood.
+ */
+export async function updateVendorApprovalDestructive(
+  db: DbOrTx,
+  scope: AgentScope,
+  vendor: string,
+  input: { includesDestructive: boolean; grantedAt: Date },
+): Promise<VendorApprovalRow | null> {
+  const [row] = await db
+    .update(vendorApproval)
+    .set({
+      includesDestructive: input.includesDestructive,
+      grantedAt: input.grantedAt,
+      updatedAt: new Date(),
+    })
+    .where(
+      and(
+        eq(vendorApproval.vendor, vendor),
+        inArray(vendorApproval.agentId, scopedAgentIds(db, scope)),
+      ),
+    )
+    .returning();
+  return row ?? null;
+}

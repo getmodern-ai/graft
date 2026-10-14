@@ -3,8 +3,8 @@ import type * as React from "react";
 import { toast } from "sonner";
 
 import { OpenInNewIcon } from "@/components/icons";
+import { IntegrationMark } from "@/components/marks";
 import { SetupAppCard } from "@/components/setup/setup-app-card";
-import { SetupLogo } from "@/components/setup/setup-logo";
 import { Time } from "@/components/time";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -24,7 +24,7 @@ import {
   isOpen,
   type PendingAction,
   type PendingAnswer,
-  pendingKeys,
+  settleAnsweredAsk,
 } from "@/lib/pending-action-queries";
 import { proposalDocsLabel, proposalSourceBadge } from "@/lib/proposal-source";
 import { cachedDirectoryLogo } from "@/lib/setup-queries";
@@ -46,8 +46,8 @@ export function useAnswerAsk(
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (answer: PendingAnswer) => answerPendingAction(action.id, answer),
-    onSuccess: (_result, answer) => {
-      queryClient.invalidateQueries({ queryKey: pendingKeys.all });
+    onSuccess: (result, answer) => {
+      settleAnsweredAsk(queryClient, action.id, result);
       queryClient.invalidateQueries({ queryKey: agentKeys.all });
       queryClient.invalidateQueries({ queryKey: approvalKeys.ofAgent(action.agentId) });
       queryClient.invalidateQueries({ queryKey: approvalKeys.vendorsOfAgent(action.agentId) });
@@ -111,10 +111,11 @@ export function AskCard({
     return (
       <SetupAppCard
         media={
-          <SetupLogo
-            starterId={compact.vendor}
-            url={cachedDirectoryLogo(queryClient, compact.vendor)}
-            tile={false}
+          <IntegrationMark
+            slug={compact.vendor}
+            name={compact.name}
+            logoUrl={cachedDirectoryLogo(queryClient, compact.vendor)}
+            tile="none"
             className="size-8"
           />
         }

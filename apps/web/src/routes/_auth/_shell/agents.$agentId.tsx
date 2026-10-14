@@ -8,6 +8,7 @@ import { BuildApprovalsCard } from "@/components/agent/build-approvals-card";
 import { IntegrationApprovalsCard } from "@/components/agent/integration-approvals-card";
 import { LimitsForm } from "@/components/agent/limits-form";
 import { RevokeAgentDialog } from "@/components/agent/revoke-agent-dialog";
+import { RotateTokenDialog } from "@/components/agent/rotate-token-dialog";
 import { ScopeEditor } from "@/components/agent/scope-editor";
 import { WorkingSetHistory } from "@/components/agent/working-set-history";
 import { WorkingSetTable } from "@/components/agent/working-set-table";
@@ -25,6 +26,7 @@ import { StatusChip } from "@/components/status-chip";
 import { Time } from "@/components/time";
 import { Button } from "@/components/ui/button";
 import { agentQuery, workingSetChangesQuery, workingSetQuery } from "@/lib/agent-queries";
+import { tokenRotatable } from "@/lib/agent-token";
 import { approvalsQuery, vendorApprovalsQuery } from "@/lib/approval-queries";
 import { connectionsQuery, toolsQuery } from "@/lib/connection-queries";
 import { agentStatusChip } from "@/lib/status-chips";
@@ -58,6 +60,7 @@ function AgentRoute() {
   const { data } = useSuspenseQuery(agentQuery(agentId));
   const { data: connectionData } = useSuspenseQuery(connectionsQuery);
   const [revoking, setRevoking] = useState(false);
+  const [rotating, setRotating] = useState(false);
   const [connecting, setConnecting] = useState(false);
   const connectionTrigger = useRef<HTMLButtonElement>(null);
   const { agent, connectionIds } = data;
@@ -106,6 +109,11 @@ function AgentRoute() {
             <Button ref={connectionTrigger} variant="outline" onClick={() => setConnecting(true)}>
               Connect a harness
             </Button>
+            {tokenRotatable(agent) ? (
+              <Button variant="outline" onClick={() => setRotating(true)}>
+                Rotate token
+              </Button>
+            ) : null}
             <Button variant="destructive" onClick={() => setRevoking(true)}>
               {agent.tokenPrefix === null ? "Revoke agent" : "Revoke token"}
             </Button>
@@ -144,6 +152,7 @@ function AgentRoute() {
         />
       ) : null}
       <RevokeAgentDialog agent={agent} open={revoking} onOpenChange={setRevoking} />
+      <RotateTokenDialog agent={agent} open={rotating} onOpenChange={setRotating} />
     </PageContainer>
   );
 }

@@ -5,9 +5,10 @@ import type {
   ScopeAskPayload,
 } from "@graft/mcp/connection-request";
 import type { AnswerBody, PendingActionCard } from "@graft/server/api";
-import { queryOptions } from "@tanstack/react-query";
+import { type QueryClient, queryOptions } from "@tanstack/react-query";
 
 import { api, type Jsonified } from "./api";
+import { handoffReadIsQuiet } from "./handoff-page";
 
 /**
  * Pending actions and handoffs as the console sees them (ADR 0006, ADR 0008), on GRA-23's routes
@@ -123,13 +124,53 @@ export const pendingActionQuery = (id: string, token: string) =>
     // tabs in one day (GRA-164). The page's own answer path updates the cache without a refetch.
     refetchOnWindowFocus: false,
     refetchOnReconnect: false,
+    // The page draws every refusal itself and a Retry cannot reopen a link (GRA-334).
+    meta: { quietError: handoffReadIsQuiet },
   });
 
-export function answerPendingAction(id: string, answer: PendingAnswer) {
-  return api<{ pendingAction: PendingAction }>(
-    `/pending-actions/${encodeURIComponent(id)}/answer`,
-    { method: "POST", body: answer },
+/** Whether a query key is a link read (`pendingActionQuery`) rather than the list. */
+export function isLinkReadKey(queryKey: readonly unknown[], id?: string): boolean {
+  return (
+    queryKey.length === 3 &&
+    queryKey[0] === pendingKeys.all[0] &&
+    (id === undefined || queryKey[1] === id)
   );
+}
+
+/**
+ * The answer route's record: the row, not the card, so only the answer's own fields are read off
+ * it (`recordApprovalAnswer` in `@graft/mcp`'s `ask-answer.ts`).
+ */
+export type AnswerRecord = {
+  pendingAction: Pick<PendingAction, "answeredAt" | "answer" | "consumedAt">;
+};
+
+export function answerPendingAction(id: string, answer: PendingAnswer) {
+  return api<AnswerRecord>(`/pending-actions/${encodeURIComponent(id)}/answer`, {
+    method: "POST",
+    body: answer,
+  });
+}
+
+/**
+ * After an answer through the answer route: the link reads of this ask take the recorded answer
+ * from the reply, and every other pending read is refetched. A link read is never refetched here,
+ * because the answer route consumes a tool ask's answer in the same transaction and the agent
+ * takes the rest, so the read would answer `409 consumed` for an answer just given (GRA-334).
+ */
+export function settleAnsweredAsk(queryClient: QueryClient, id: string, record: AnswerRecord) {
+  const { answeredAt, answer, consumedAt } = record.pendingAction;
+  queryClient.setQueriesData<{ pendingAction: PendingAction }>(
+    { queryKey: pendingKeys.one(id) },
+    (current) =>
+      current
+        ? { pendingAction: { ...current.pendingAction, answeredAt, answer, consumedAt } }
+        : current,
+  );
+  void queryClient.invalidateQueries({
+    queryKey: pendingKeys.all,
+    predicate: (query) => !isLinkReadKey(query.queryKey, id),
+  });
 }
 
 /** Whether the action can still be answered from here. */

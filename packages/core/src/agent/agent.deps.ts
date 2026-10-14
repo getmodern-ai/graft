@@ -9,6 +9,7 @@ import {
   listAgents,
   listAllActiveAgents,
   listScopeConnectionIds,
+  removeAgentConnection,
   replaceAgentConnections,
   revokeAgent,
   setAgentConnectedVia,
@@ -42,6 +43,8 @@ export type AgentDeps = {
   replaceAgentConnections: typeof replaceAgentConnections;
   /** The one-connection grant, idempotent on the scope's key — never a read and a rewrite of the list. */
   addAgentConnection: typeof addAgentConnection;
+  /** The one-connection removal, one delete on the scope's key — the grant's counterpart (GRA-294). */
+  removeAgentConnection: typeof removeAgentConnection;
   /** The list under `listed` — what a scope write edits; the scope as read is `listScopeConnectionIds`. */
   listAgentConnectionIds: typeof listAgentConnectionIds;
   /** The scope resolved for either mode in one statement (ADR 0007 as amended 2026-09-19) — what `getAgentScope` answers. */
@@ -70,6 +73,7 @@ export const defaultAgentDeps: AgentDeps = {
   setAgentConnectedVia,
   replaceAgentConnections,
   addAgentConnection,
+  removeAgentConnection,
   listAgentConnectionIds,
   listScopeConnectionIds,
   findConnectionsByIds,

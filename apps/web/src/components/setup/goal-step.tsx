@@ -3,11 +3,11 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 
 import { WarningIcon } from "@/components/icons";
+import { IntegrationMark } from "@/components/marks";
 import { RetryNotice } from "@/components/retry-notice";
 import { DiscardJobDialog } from "@/components/setup/discard-job-dialog";
 import { ReadyMadePicker } from "@/components/setup/ready-made-picker";
 import { SetupFooter } from "@/components/setup/setup-footer";
-import { SetupLogo } from "@/components/setup/setup-logo";
 import { SetupStepHeader } from "@/components/setup/setup-step-header";
 import { TaskPicker } from "@/components/setup/task-picker";
 import { useSetupMutation } from "@/components/setup/use-setup-mutation";
@@ -63,7 +63,7 @@ export function GoalStep({ state }: { state: SetupStateData }) {
       <SetupStepHeader
         media={
           goal.data?.starterId ? (
-            <SetupLogo starterId={goal.data.starterId} tile={false} className="size-9" />
+            <IntegrationMark slug={goal.data.starterId} tile="none" className="size-9" />
           ) : null
         }
         title={`What should your first tool do in ${name}?`}

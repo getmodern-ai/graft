@@ -19,7 +19,7 @@ import {
   answerPendingAction,
   isOpen,
   type PendingAnswer,
-  pendingKeys,
+  settleAnsweredAsk,
 } from "@/lib/pending-action-queries";
 import { providerLabel as providerName } from "@/lib/provider-name";
 
@@ -52,8 +52,8 @@ export function ScopeAskCard({
 
   const answer = useMutation({
     mutationFn: (value: PendingAnswer) => answerPendingAction(action.id, value),
-    onSuccess: (_result, submitted) => {
-      queryClient.invalidateQueries({ queryKey: pendingKeys.all });
+    onSuccess: (result, submitted) => {
+      settleAnsweredAsk(queryClient, action.id, result);
       queryClient.invalidateQueries({ queryKey: agentKeys.all });
       queryClient.invalidateQueries({ queryKey: approvalKeys.ofAgent(action.agentId) });
       queryClient.invalidateQueries({ queryKey: approvalKeys.buildsOfAgent(action.agentId) });
