@@ -19,6 +19,7 @@ import {
   proposalChecklist,
   proposalSummary,
   readStartRefusal,
+  usableDocsUrl,
   validateNameStep,
 } from "./custom-api";
 
@@ -144,6 +145,15 @@ describe("readStartRefusal", () => {
       readStartRefusal(new ApiError(409, "CONFLICT", "Busy", { reason: "proposals_busy" })),
     ).toEqual({ kind: "other", message: "Busy" });
     expect(readStartRefusal(new TypeError("fetch failed")).kind).toBe("other");
+  });
+});
+
+describe("usableDocsUrl", () => {
+  it("carries a link that passes the docs checks, and drops one the form cannot fix", () => {
+    expect(usableDocsUrl(" https://docs.acme.com/auth ")).toBe("https://docs.acme.com/auth");
+    expect(usableDocsUrl("docs.acme.com")).toBeNull();
+    expect(usableDocsUrl("https://10.0.0.1/docs")).toBeNull();
+    expect(usableDocsUrl("")).toBeNull();
   });
 });
 

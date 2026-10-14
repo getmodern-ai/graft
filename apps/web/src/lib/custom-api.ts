@@ -132,6 +132,16 @@ export function validateNameStep(input: NameStepInput): NameStepErrors {
   return errors;
 }
 
+/**
+ * The docs link as the plain form carries it to `/connect`: the link typed when it passes the
+ * name step's checks, else none, since the form has no field to fix it in.
+ */
+export function usableDocsUrl(link: string): string | null {
+  const trimmed = link.trim();
+  if (!trimmed) return null;
+  return validateNameStep({ name: "x", docsUrl: trimmed }).docsUrl ? null : trimmed;
+}
+
 /** What a refused `POST /api/connection-proposals` means for the dialog. */
 export type StartRefusal =
   /** The person's own job still runs (another tab, an earlier try): follow it rather than wait. */
