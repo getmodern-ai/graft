@@ -67,7 +67,7 @@ const CONNECTING_KINDS = new Set(["connection", "credential", "scope"]);
  * may do (a scope ask's, GRA-314), the access line the page offers to change.
  */
 export function handoffAnswered(ask: AnsweredAsk | null): HandoffAnswered {
-  if (!ask || !ask.answer) return { ...HANDOFF_ANSWERED, access: null };
+  if (!ask?.answer) return { ...HANDOFF_ANSWERED, access: null };
   const agent = ask.agentName ?? "Your agent";
   const integration = ask.integrationName ?? "The integration";
   const backTo = `Go back to ${agent}. It picks up where it left off.`;
