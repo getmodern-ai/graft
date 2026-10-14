@@ -1770,3 +1770,179 @@ describe("an approval is for the version the person was shown", () => {
     expect(await run()).toEqual({ isError: false, answer: { version: 2 } });
   }, 60_000);
 });
+
+/**
+ * GRA-301: the ledger line says how the call ended in the console's words — `reason` on a refusal
+ * or a failure, `asked` once the gate decided, and the connection the call resolved to — and holds
+ * nothing the call carried in or out. One agent of its own, so no other block's answers stand.
+ */
+describe("the ledger line records the reason, the ask and the connection", () => {
+  const AGENT_M = "agent_m";
+  const TOKEN_M = "grft_approval_token_m_000000000000000000000000";
+  const BROKEN_ITEMS = authoredToolName("demo", "broken-items");
+  const EXECUTE = executeToolName(CONN_DEMO);
+  const line = () => store.usage.at(-1);
+
+  beforeAll(async () => {
+    store.addAgent({
+      scopeMode: "listed",
+      id: AGENT_M,
+      personId: PERSON,
+      token: TOKEN_M,
+      name: "ledger Hermes",
+      connectionIds: [CONN_DEMO],
+    });
+    for (const tool of TOOLS) store.promote(AGENT_M, tool.id);
+    // A read-only tool whose module throws, for a failure's line.
+    const dir = join(sandbox.toolboxRoot(PERSON), "tools/demo/broken-items/v1");
+    await mkdir(dir, { recursive: true });
+    await writeFile(
+      join(dir, "index.ts"),
+      'export default async () => { throw new Error("Widget went missing"); };\n',
+    );
+    store.addTool({
+      id: "tool_broken",
+      personId: PERSON,
+      vendor: "demo",
+      name: "broken-items",
+      description: "broken-items at Demo Orders.",
+      inputSchema: { type: "object", properties: { limit: { type: "integer" } } },
+      readOnly: true,
+      destructive: false,
+      defaultConnectionId: CONN_DEMO,
+      path: "tools/demo/broken-items/v1",
+    });
+    store.promote(AGENT_M, "tool_broken");
+  });
+
+  it("a read runs without asking: ok, no reason, asked false, on the tool's connection", async () => {
+    const m = await connect(TOKEN_M);
+    try {
+      const ran = await m.call(LIST_ITEMS, { limit: 1 });
+      expect(ran.isError).toBeFalsy();
+      expect(line()).toMatchObject({
+        agentId: AGENT_M,
+        toolId: "tool_list",
+        outcome: "ok",
+        reason: null,
+        asked: false,
+        connectionId: CONN_DEMO,
+      });
+    } finally {
+      await m.close();
+    }
+  });
+
+  it("a write asks, is approved on the next call, then runs on the standing answer", async () => {
+    const m = await connect(TOKEN_M);
+    try {
+      const first = awaiting(await m.call(CREATE_ITEM, { limit: 1 }));
+      expect(line()).toMatchObject({
+        toolId: "tool_create",
+        outcome: "refused",
+        reason: "awaiting_approval",
+        asked: true,
+        connectionId: CONN_DEMO,
+      });
+      await answer(first.action.id, { allow: true });
+
+      expect((await m.call(CREATE_ITEM, { limit: 1 })).isError).toBeFalsy();
+      expect(line()).toMatchObject({ outcome: "ok", reason: null, asked: true });
+
+      expect((await m.call(CREATE_ITEM, { limit: 1 })).isError).toBeFalsy();
+      expect(line()).toMatchObject({ outcome: "ok", reason: null, asked: false });
+    } finally {
+      await m.close();
+    }
+  });
+
+  it("a person's no on this call is asked, and the standing deny after it is not", async () => {
+    const m = await connect(TOKEN_M);
+    try {
+      const first = awaiting(await m.call(UPDATE_ITEM, { limit: 1 }));
+      await answer(first.action.id, { allow: false });
+
+      await m.call(UPDATE_ITEM, { limit: 1 });
+      expect(line()).toMatchObject({
+        toolId: "tool_update",
+        outcome: "refused",
+        reason: "approval_declined",
+        asked: true,
+        connectionId: CONN_DEMO,
+      });
+
+      await m.call(UPDATE_ITEM, { limit: 1 });
+      expect(line()).toMatchObject({ outcome: "refused", reason: "tool_denied", asked: false });
+    } finally {
+      await m.close();
+    }
+  });
+
+  it("a refusal before the gate names its reason and leaves the ask unknown", async () => {
+    const m = await connect(TOKEN_M);
+    try {
+      await m.call(LIST_ITEMS, { limit: "five" });
+      expect(line()).toMatchObject({
+        toolId: "tool_list",
+        outcome: "refused",
+        reason: "input_invalid",
+        asked: null,
+        connectionId: CONN_DEMO,
+      });
+    } finally {
+      await m.close();
+    }
+  });
+
+  it("a failure names its kind, and nothing the module said", async () => {
+    const m = await connect(TOKEN_M);
+    try {
+      const failed = await m.call(BROKEN_ITEMS, { limit: 1 });
+      expect(failed.isError).toBe(true);
+      expect(line()).toMatchObject({
+        toolId: "tool_broken",
+        outcome: "error",
+        reason: "threw",
+        asked: false,
+        connectionId: CONN_DEMO,
+      });
+      expect(JSON.stringify(line())).not.toContain("Widget");
+    } finally {
+      await m.close();
+    }
+  });
+
+  it("execute asks for the build approval once, then runs without asking, and names an exit", async () => {
+    const m = await connect(TOKEN_M);
+    try {
+      const first = awaiting(await m.call(EXECUTE, { command: RUN_LIST_ITEMS }));
+      expect(line()).toMatchObject({
+        toolName: EXECUTE,
+        toolId: null,
+        outcome: "refused",
+        reason: "awaiting_approval",
+        asked: true,
+        connectionId: CONN_DEMO,
+      });
+      await answer(first.action.id, { allow: true });
+
+      expect(body(await m.call(EXECUTE, { command: RUN_LIST_ITEMS })).exitCode).toBe(0);
+      expect(line()).toMatchObject({ outcome: "ok", reason: null, asked: true });
+
+      expect(body(await m.call(EXECUTE, { command: RUN_LIST_ITEMS })).exitCode).toBe(0);
+      expect(line()).toMatchObject({ outcome: "ok", reason: null, asked: false });
+
+      await m.call(EXECUTE, { command: "echo Widget; exit 3" });
+      expect(line()).toMatchObject({
+        outcome: "error",
+        reason: "exit_nonzero",
+        asked: false,
+        connectionId: CONN_DEMO,
+      });
+      // Neither the command nor its output reaches a column.
+      expect(JSON.stringify(line())).not.toMatch(/Widget|GRAFT_RUNNER|echo/);
+    } finally {
+      await m.close();
+    }
+  }, 30_000);
+});
