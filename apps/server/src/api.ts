@@ -88,6 +88,7 @@ import {
   type ConnectionRoutingDeps,
   CREDENTIAL_ASK_KIND,
   confirmConnectionAsk,
+  type DocsProposalDeps,
   HANDOFF_TOKEN_PARAM,
   type HandoffConfig,
   handoffUrl,
@@ -104,12 +105,14 @@ import {
 import { executeToolName } from "@graft/mcp/tool-names";
 import { type Analytics, NO_ANALYTICS } from "@graft/observability";
 import { AUTH_SCHEMES } from "@graft/proxy";
+import { log } from "evlog";
 import { useLogger } from "evlog/hono";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { z } from "zod";
 
 import { trackedRoute } from "./analytics-routes";
+import { createConnectionProposalStore } from "./connection-proposals";
 import {
   createStarterDirectory,
   directoryProposal,
@@ -169,6 +172,11 @@ import {
 } from "./setup-stock";
 import { runAgentTool } from "./tool-run";
 
+export type {
+  ConnectionProposalAvailability,
+  ConnectionProposalStarted,
+  ConnectionProposalState,
+} from "./connection-proposals";
 export type {
   SetupDirectoryEntry,
   SetupDirectoryHome,
@@ -353,6 +361,12 @@ export type ApiOptions = {
    * `mcp`; absent, the run route refuses with a sentence saying so.
    */
   run?: McpDeps;
+  /**
+   * The model and the page reader a connection proposal from an API's docs runs on (GRA-299,
+   * Flow C; `connection-proposals.ts`): `acquire`'s, so the same model check gates both.
+   * `index.ts` binds `mcp`; absent, the flow answers unavailable with the variables to set.
+   */
+  connectionProposal?: DocsProposalDeps;
   /**
    * The rate-limit seam's backing (GRA-149; `rate-limit.ts`), for the two doors under `/api`:
    * `sign_in` over Better Auth's writes and `api` over this app's mutations. `createServer` hands
@@ -606,6 +620,17 @@ const credentialSubmitBody = z.object({ credential: credentialFields });
 export type ConnectionSubmitBody = z.input<typeof connectionSubmitBody>;
 /** The link button's wire shape, as the console posts it. */
 export type LinkStartBody = z.input<typeof linkStartBody>;
+
+/**
+ * `POST /connection-proposals` (GRA-299): the integration's name as the person typed it and the
+ * link to its API docs they pasted, judged by `readDocsProposalInput` before anything is read.
+ */
+const connectionProposalBody = z.strictObject({
+  name: z.string(),
+  docsUrl: z.string(),
+});
+/** The start's wire shape, as the console posts it. */
+export type ConnectionProposalBody = z.input<typeof connectionProposalBody>;
 
 const modelKeyBody = z.object({
   provider: z.string(),
@@ -1238,6 +1263,39 @@ export function createApi(options: ApiOptions): Hono {
     });
     const body: SetupGoalSuggestions = { suggestions };
     return c.json(body);
+  });
+
+  /**
+   * A connection proposal from an API's docs (GRA-299, Flow C): a short job the console starts
+   * and polls, held in this process (`connection-proposals.ts`). The wide events carry the job's
+   * id, status, stage and counts; never the name, the link, the pages or the proposal.
+   */
+  const connectionProposals = createConnectionProposalStore({
+    deps: options.connectionProposal ?? null,
+    onSettled: ({ personId, ...event }) =>
+      log.info({ connectionProposal: { ...event, personId, message: `proposal ${event.status}` } }),
+  });
+
+  api.get("/connection-proposals", async (c) => {
+    const principal = await principalOf(c.req.raw.headers);
+    return c.json(connectionProposals.availability(principal.personId));
+  });
+
+  api.post("/connection-proposals", async (c) => {
+    const principal = await principalOf(c.req.raw.headers);
+    const body = await parseBody(c.req.raw, connectionProposalBody);
+    const started = connectionProposals.start(principal.personId, body);
+    useLogger().set({ connectionProposal: { id: started.id } });
+    return c.json(started);
+  });
+
+  api.get("/connection-proposals/:id", async (c) => {
+    const principal = await principalOf(c.req.raw.headers);
+    const state = connectionProposals.get(principal.personId, c.req.param("id"));
+    useLogger().set({
+      connectionProposal: { id: state.id, status: state.status, stage: state.stage },
+    });
+    return c.json(state);
   });
 
   /** Build: the build approval, the job, the record on `building`, and the runner woken. */

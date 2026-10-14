@@ -18,10 +18,11 @@ import type { ModelSituationKind } from "./types";
 export type ModelRole = "authoring" | "triage";
 
 /**
- * What a call is about: one of a job's situations, or `propose_goals`, Setup's goal suggestions
- * (GRA-209), the one call made outside a job.
+ * What a call is about: one of a job's situations, or one of the two calls made outside a job:
+ * `propose_goals`, Setup's goal suggestions (GRA-209), and `propose_connection`, a connection read
+ * off an API's documentation (GRA-299).
  */
-export type ModelCallSituation = ModelSituationKind | "propose_goals";
+export type ModelCallSituation = ModelSituationKind | "propose_goals" | "propose_connection";
 
 /** What one provider call is about — every field a trace carries, decided before the call. */
 export type ModelCallTrace = {
