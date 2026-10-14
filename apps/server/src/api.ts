@@ -8,10 +8,12 @@ import {
   answerPendingAction,
   type ConnectionDeps,
   createAgent,
+  createIntegrationDeps,
   defaultAcquireJobDeps,
   defaultIntegrationToolsDeps,
   defaultSetupDeps,
   defaultStockDeps,
+  defaultSuggestedIntegrationDeps,
   deletePersonModelKey,
   GOAL_MAX_LENGTH,
   getAgent,
@@ -20,6 +22,7 @@ import {
   getPendingActionForPerson,
   getPersonModelKey,
   getSetupState,
+  type IntegrationDeps,
   type IntegrationDirectory,
   type IntegrationTool,
   type IntegrationToolsDeps,
@@ -29,8 +32,10 @@ import {
   listAgents,
   listApprovals,
   listConnections,
+  listIntegrations,
   listIntegrationTools,
   listOpenPendingActions,
+  listSuggestedIntegrations,
   listTools,
   listToolVersionOrigins,
   listVendorApprovals,
@@ -62,6 +67,8 @@ import {
   STARTER_VENDOR_IDS,
   type StockDeps,
   type StockLineage,
+  type SuggestedIntegration,
+  type SuggestedIntegrationDeps,
   setAgentScope,
   setApprovalFromConsole,
   setAskEveryCall,
@@ -108,7 +115,7 @@ import { type Analytics, NO_ANALYTICS } from "@graft/observability";
 import { AUTH_SCHEMES } from "@graft/proxy";
 import { log } from "evlog";
 import { useLogger } from "evlog/hono";
-import { Hono } from "hono";
+import { type Context, Hono } from "hono";
 import { cors } from "hono/cors";
 import { z } from "zod";
 
@@ -191,6 +198,15 @@ export type {
 export type { SetupFinishOutput, SetupToolContext } from "./setup-finish";
 export type { SetupReadyMade } from "./setup-stock";
 export type { AgentToolRunOutput } from "./tool-run";
+
+/** `GET /api/integrations/suggested`'s answer (GRA-305): newest ask first, at most twelve. */
+export type IntegrationSuggestions = { suggestions: SuggestedIntegration[] };
+
+/**
+ * The second segments under `/api/integrations` that are routes of their own (GRA-305): a route
+ * keyed by a vendor slug at that position cannot reach a vendor slugged one of these.
+ */
+export const INTEGRATION_RESERVED_SEGMENTS = ["directory", "suggested"] as const;
 
 /**
  * `GET /me/model` (GRA-297): the deployment's model as `model.ts` chose it at boot, and whether
@@ -281,6 +297,11 @@ export type ApiDeps = {
   /** The person's own model key (GRA-31, ADR 0014) — the vault's encrypt half rides inside. */
   modelKey: ModelKeyDeps;
   /**
+   * The integrations list's four reads (GRA-291). Optional, and the real reads under
+   * `connection.providers` when absent; a suite that reaches `/integrations` passes fakes.
+   */
+  integration?: IntegrationDeps;
+  /**
    * The person's Setup record (ADR 0024; GRA-204). Optional, and `defaultSetupDeps` when absent,
    * so a harness that never reaches `/setup` binds nothing; a suite that does passes fakes.
    */
@@ -296,6 +317,11 @@ export type ApiDeps = {
    * fake catalogue its tool source copies from.
    */
   stock?: StockDeps;
+  /**
+   * "Your agents asked for these" (GRA-305; ADR 0001 as amended 2026-10-14). Optional, and
+   * `defaultSuggestedIntegrationDeps` when absent, as `setup` is.
+   */
+  suggested?: SuggestedIntegrationDeps;
 };
 
 export type ApiOptions = {
@@ -349,8 +375,9 @@ export type ApiOptions = {
    */
   connectionRouting?: ConnectionRoutingDeps;
   /**
-   * The integration directory Setup's integration step searches (`directory.ts`; ADR 0001 as
-   * amended 2026-10-10): the private package's, bound by `index.ts` from `Backings.directory`.
+   * The integration directory Setup's integration step and the console's Integrations screen
+   * search (`directory.ts`; ADR 0001 as amended 2026-10-10 and 2026-10-14): the private package's,
+   * bound by `index.ts` from `Backings.directory`.
    * Absent, the starters this deployment connects (`createStarterDirectory`).
    */
   directory?: IntegrationDirectory;
@@ -1395,19 +1422,21 @@ export function createApi(options: ApiOptions): Hono {
   });
 
   /**
-   * Setup v2's integration directory (`directory.ts`): the first view (`SetupDirectoryHome`) and a
-   * search (`SetupDirectoryPage`), both reads. The backing is the private package's when it has one
-   * and the starters this deployment connects otherwise.
+   * The integration directory (`directory.ts`): the first view (`SetupDirectoryHome`) and a search
+   * (`SetupDirectoryPage`), both reads. The backing is the private package's when it has one and
+   * the starters this deployment connects otherwise. One handler each, mounted twice: under
+   * `/setup` for Setup v2's integration step, and under `/integrations` for the console's
+   * Integrations screen, search and home (ADR 0001 as amended 2026-10-14), with the same answers.
    */
   const starterDirectory = createStarterDirectory(() => listSetupVendors(connectionDeps.providers));
-  const setupDirectory = () => options.directory ?? starterDirectory;
+  const integrationDirectory = () => options.directory ?? starterDirectory;
 
-  api.get("/setup/directory", async (c) => {
+  const directoryHome = async (c: Context) => {
     await principalOf(c.req.raw.headers);
-    return c.json(await setupDirectoryHome(setupDirectory()));
-  });
+    return c.json(await setupDirectoryHome(integrationDirectory()));
+  };
 
-  api.get("/setup/directory/search", async (c) => {
+  const directorySearch = async (c: Context) => {
     await principalOf(c.req.raw.headers);
     const query = c.req.query("q") ?? "";
     const category = c.req.query("category");
@@ -1416,13 +1445,41 @@ export function createApi(options: ApiOptions): Hono {
     const cursor = c.req.query("cursor");
     const limit = Number.parseInt(c.req.query("limit") ?? "", 10);
     return c.json(
-      await searchSetupDirectory(setupDirectory(), {
+      await searchSetupDirectory(integrationDirectory(), {
         query: query.slice(0, 200),
         ...(category ? { category: category.slice(0, 100) } : {}),
         ...(cursor ? { cursor: cursor.slice(0, 500) } : {}),
         limit: Number.isFinite(limit) ? limit : 24,
       }),
     );
+  };
+
+  api.get("/setup/directory", directoryHome);
+  api.get("/setup/directory/search", directorySearch);
+
+  // `directory` and `suggested` are fixed second segments under `/integrations`
+  // (`INTEGRATION_RESERVED_SEGMENTS`), registered ahead of any `/integrations/:vendor…` route,
+  // which Hono tries in registration order. A vendor slugged either word keeps every route of
+  // three segments or more (`/integrations/directory/tools`); only a bare `/integrations/:vendor`
+  // would be shadowed, and a route of that shape is to refuse the two words itself.
+  api.get("/integrations/directory", directoryHome);
+  api.get("/integrations/directory/search", directorySearch);
+
+  /**
+   * "Your agents asked for these" (GRA-305; ADR 0001 as amended 2026-10-14): the integrations the
+   * person's agents asked to connect and the person has not, with the asking agent and the ask's
+   * age, and the directory's mark where it has one (`IntegrationSuggestions`).
+   */
+  api.get("/integrations/suggested", async (c) => {
+    const principal = await principalOf(c.req.raw.headers);
+    const suggestions = await listSuggestedIntegrations(
+      ctx,
+      principal,
+      integrationDirectory(),
+      options.deps.suggested ?? defaultSuggestedIntegrationDeps,
+    );
+    useLogger().set({ suggested: { count: suggestions.length } });
+    return c.json({ suggestions } satisfies IntegrationSuggestions);
   });
 
   api.post("/setup/starter", async (c) => {
@@ -1438,7 +1495,7 @@ export function createApi(options: ApiOptions): Hono {
     // Which integration the task is for, never the task's words (the person's own sentence).
     useLogger().set({ setup: { slug: body.slug ?? null, taskLength: body.goal.length } });
     if (body.slug) {
-      const entry = await setupDirectory().get(body.slug);
+      const entry = await integrationDirectory().get(body.slug);
       if (!entry) throw new ServiceError("NOT_FOUND", "The directory has no such integration");
       const starterId = withStarter(entry).starterId;
       if (starterId) {
@@ -1598,7 +1655,7 @@ export function createApi(options: ApiOptions): Hono {
 
   api.get("/agents", async (c) => {
     const principal = await principalOf(c.req.raw.headers);
-    return c.json({ agents: await listAgents(ctx, principal, agentDeps) });
+    return c.json(await listAgents(ctx, principal, agentDeps));
   });
 
   api.post("/agents", async (c) => {
@@ -1849,6 +1906,23 @@ export function createApi(options: ApiOptions): Hono {
   api.get("/connections", async (c) => {
     const principal = await principalOf(c.req.raw.headers);
     return c.json({ connections: await listConnections(ctx, principal, connectionDeps) });
+  });
+
+  /**
+   * The integrations list (GRA-291): one row per vendor the person holds a live connection of, with
+   * its connections and their states, the active agents whose scope reaches any of them, the live
+   * tool count, the last call and the worst connection's reason for needing the person
+   * (`@graft/core`'s `IntegrationOutput`). Four statements whatever the person holds.
+   */
+  api.get("/integrations", async (c) => {
+    const principal = await principalOf(c.req.raw.headers);
+    const integrations = await listIntegrations(
+      ctx,
+      principal,
+      { executeToolName },
+      options.deps.integration ?? createIntegrationDeps(connectionDeps.providers),
+    );
+    return c.json({ integrations });
   });
 
   /**

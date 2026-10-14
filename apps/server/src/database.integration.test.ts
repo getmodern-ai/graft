@@ -17,6 +17,7 @@ import {
   defaultApprovalDeps,
   defaultSetupDeps,
   defaultStockDeps,
+  defaultSuggestedIntegrationDeps,
   defaultToolDeps,
   defaultWorkingSetDeps,
   deletePersonModelKey,
@@ -35,6 +36,7 @@ import {
   listAgents,
   listConnections,
   listStockToolsForVendor,
+  listSuggestedIntegrations,
   listToolVersionOrigins,
   listToolVersions,
   listWorkingSet,
@@ -59,8 +61,10 @@ import { createDb, type Database } from "@graft/db";
 import { applyMigrations } from "@graft/db/migrate";
 import { upsertVendorApproval } from "@graft/db/repo/approval";
 import { addConnectionHosts } from "@graft/db/repo/connection";
+import { insertPendingAction, listSuggestedConnectionAsks } from "@graft/db/repo/pending-action";
 import { markPersonEmailVerified } from "@graft/db/repo/person";
 import { findSetup, lockSetup, saveSetup } from "@graft/db/repo/setup";
+import { insertUsage } from "@graft/db/repo/usage";
 import type { ProxyEvent, UpstreamRequest } from "@graft/proxy";
 import { advanceStockCopy, copyStockVersion } from "@graft/publish";
 import { checkStockTool, readStockWorkspace } from "@graft/stock";
@@ -616,12 +620,15 @@ describe.skipIf(!adminUrl)("the schema, the account and the services over a real
       defaultWorkingSetDeps,
     );
     expect(own.map((entry) => entry.tool.name)).toEqual(["list-items"]);
-    const agents = await listAgents(ctx, { personId: alice }, defaultAgentDeps);
+    const { agents } = await listAgents(ctx, { personId: alice }, defaultAgentDeps);
     expect(agents.map(({ id, workingSetCount }) => ({ id, workingSetCount }))).toEqual([
       { id: a1.agent.id, workingSetCount: 1 },
       { id: a2.agent.id, workingSetCount: 0 },
     ]);
-    expect(await listAgents(ctx, { personId: bob }, defaultAgentDeps)).toEqual([]);
+    expect(await listAgents(ctx, { personId: bob }, defaultAgentDeps)).toEqual({
+      agents: [],
+      hasRunTool: false,
+    });
     // The other agent of the same person: nothing.
     expect(
       await listWorkingSet(ctx, { personId: alice, agentId: a2.agent.id }, defaultWorkingSetDeps),
@@ -648,6 +655,105 @@ describe.skipIf(!adminUrl)("the schema, the account and the services over a real
     expect(
       await getConnection(ctx, { personId: bob }, aliceRows[0]?.id ?? "", connectionDeps),
     ).toBeNull();
+  });
+
+  /**
+   * GRA-290: the console's list carries each agent's scope as it resolves under its mode, its last
+   * call that was not a dry run whatever the outcome, and whether the person has had one answer
+   * `ok`, from one statement, against Postgres's own evaluation of the correlated subqueries the
+   * rendered-SQL test in `packages/db` pins.
+   */
+  it("lists each agent's resolved scope and last activity, an agent on all beside one on listed", async () => {
+    const alice = await signUp("list-alice@example.com");
+    const bob = await signUp("list-bob@example.com");
+    const ctx: ServiceContext = { db };
+    const connect = (personId: string, displayName: string, host: string) =>
+      registerConnection(
+        ctx,
+        { personId },
+        { vendor: "demo", displayName, scheme: "none", primaryHost: host },
+        connectionDeps,
+      );
+    const first = await connect(alice, "First", "https://one.demo.example");
+    const second = await connect(alice, "Second", "https://two.demo.example");
+    const bobs = await connect(bob, "Bob's", "https://three.demo.example");
+
+    const everything = await createAgent(
+      ctx,
+      { personId: alice },
+      { name: "all" },
+      defaultAgentDeps,
+    );
+    const narrow = await createAgent(
+      ctx,
+      { personId: alice },
+      { name: "listed", scopeMode: "listed", connectionIds: [second.id] },
+      defaultAgentDeps,
+    );
+    const bobsAgent = await createAgent(ctx, { personId: bob }, { name: "b" }, defaultAgentDeps);
+
+    // The narrow agent's real call is older than its dry run; the dry run must not count.
+    const ranAt = new Date("2026-10-01T10:00:00.000Z");
+    const usage = (
+      agentId: string,
+      dryRun: boolean,
+      createdAt: Date,
+      outcome: "ok" | "error" | "refused" = "ok",
+    ) =>
+      insertUsage(db, {
+        id: `usage_${randomBytes(6).toString("hex")}`,
+        agentId,
+        toolName: "demo__list",
+        outcome,
+        dryRun,
+        latencyMs: 5,
+        createdAt,
+      });
+    await usage(narrow.agent.id, false, ranAt);
+    await usage(narrow.agent.id, true, new Date("2026-10-02T10:00:00.000Z"));
+    await usage(bobsAgent.agent.id, true, ranAt);
+
+    const listed = await listAgents(ctx, { personId: alice }, defaultAgentDeps);
+    expect(
+      listed.agents.map(({ id, scopeMode, connectionIds, lastActiveAt }) => ({
+        id,
+        scopeMode,
+        connectionIds,
+        lastActiveAt,
+      })),
+    ).toEqual([
+      {
+        id: everything.agent.id,
+        scopeMode: "all",
+        connectionIds: [first.id, second.id].sort(),
+        lastActiveAt: null,
+      },
+      { id: narrow.agent.id, scopeMode: "listed", connectionIds: [second.id], lastActiveAt: ranAt },
+    ]);
+    expect(listed.hasRunTool).toBe(true);
+
+    // Bob's agent on `all` reaches Bob's connection alone, and a dry run alone is not a run.
+    expect(await listAgents(ctx, { personId: bob }, defaultAgentDeps)).toMatchObject({
+      agents: [{ id: bobsAgent.agent.id, connectionIds: [bobs.id], lastActiveAt: null }],
+      hasRunTool: false,
+    });
+
+    // Carol's agent was refused and then failed, and its one `ok` was a dry run: active, never run.
+    const carol = await signUp("list-carol@example.com");
+    const carolsAgent = await createAgent(
+      ctx,
+      { personId: carol },
+      { name: "c" },
+      defaultAgentDeps,
+    );
+    const failedAt = new Date("2026-10-03T10:00:00.000Z");
+    await usage(carolsAgent.agent.id, false, ranAt, "refused");
+    await usage(carolsAgent.agent.id, false, failedAt, "error");
+    await usage(carolsAgent.agent.id, true, new Date("2026-10-04T10:00:00.000Z"));
+    expect(await listAgents(ctx, { personId: carol }, defaultAgentDeps)).toMatchObject({
+      agents: [{ id: carolsAgent.agent.id, lastActiveAt: failedAt }],
+      hasRunTool: false,
+    });
   });
 
   /** ADR 0007: a revoke clears the credential and the approvals for every agent, and leaves the tool. */
@@ -961,7 +1067,7 @@ describe.skipIf(!adminUrl)("the schema, the account and the services over a real
       startSetup(ctx, principal, { harness: "claude" }, defaultSetupDeps, defaultAgentDeps),
       startSetup(ctx, principal, { harness: "claude" }, defaultSetupDeps, defaultAgentDeps),
     ]);
-    const agents = await listAgents(ctx, principal, defaultAgentDeps);
+    const { agents } = await listAgents(ctx, principal, defaultAgentDeps);
     expect(agents).toHaveLength(1);
     expect(agents[0]).toMatchObject({ name: "Claude", tokenPrefix: null, connectedVia: null });
     expect(first.setup?.agentId).toBe(agents[0]?.id);
@@ -993,6 +1099,126 @@ describe.skipIf(!adminUrl)("the schema, the account and the services over a real
       setup: { harness: "hermes", skippedAt: null },
       agent: { name: "Hermes" },
     });
+  });
+
+  /**
+   * GRA-305 (ADR 0001 as amended 2026-10-14): the suggestions statement over real rows. The newest
+   * ask per vendor decides, one answered with a connection hides an older one, a connected vendor,
+   * a revoked agent's ask and another person's are left out, and the row's fields and dates come
+   * back typed.
+   */
+  it("suggests the integrations the person's own agents asked for and the person has not connected", async () => {
+    const personId = await signUp("suggested-owner@example.com");
+    const other = await signUp("suggested-other@example.com");
+    const ctx: ServiceContext = { db };
+    const principal = { personId };
+    const hermes = await createAgent(ctx, principal, { name: "Hermes" }, defaultAgentDeps);
+    const claude = await createAgent(ctx, principal, { name: "Claude" }, defaultAgentDeps);
+    const gone = await createAgent(ctx, principal, { name: "Gone" }, defaultAgentDeps);
+    const theirs = await createAgent(
+      ctx,
+      { personId: other },
+      { name: "Theirs" },
+      defaultAgentDeps,
+    );
+
+    const base = new Date("2026-10-14T10:00:00Z");
+    const at = (minutes: number) => new Date(base.getTime() + minutes * 60_000);
+    let n = 0;
+    const ask = async (
+      agentId: string,
+      vendor: string,
+      minutes: number,
+      extra: { answer?: Record<string, unknown>; expiresAt?: Date } = {},
+    ) => {
+      n += 1;
+      await insertPendingAction(db, {
+        id: `pa_suggest_${n}`,
+        agentId,
+        kind: "connection",
+        payload: {
+          vendor,
+          displayName: `${vendor} display`,
+          docsUrl: `https://docs.${vendor}.example`,
+          note: "The agent proposed this connection.",
+        },
+        expiresAt: extra.expiresAt ?? at(24 * 60),
+        createdAt: at(minutes),
+        ...(extra.answer ? { answer: extra.answer, answeredAt: at(minutes + 1) } : {}),
+      });
+      return `pa_suggest_${n}`;
+    };
+
+    await ask(hermes.agent.id, "acme", 0);
+    const newest = await ask(claude.agent.id, "acme", 10);
+    // An older decline, then a newer ask answered with a connection since revoked: not suggested.
+    await ask(hermes.agent.id, "beta", 0, { answer: { decline: true } });
+    await ask(hermes.agent.id, "beta", 5, { answer: { connectionId: "conn_since_revoked" } });
+    const declined = await ask(hermes.agent.id, "gamma", 2, { answer: { decline: true } });
+    // A vendor the person holds a live connection of.
+    await ask(hermes.agent.id, "connected-vendor", 3);
+    await registerConnection(
+      ctx,
+      principal,
+      {
+        vendor: "connected-vendor",
+        displayName: "Connected",
+        scheme: "none",
+        primaryHost: "https://api.connected-vendor.example",
+      },
+      connectionDeps,
+    );
+    // A revoked connection does not count as connected.
+    const revoked = await registerConnection(
+      ctx,
+      principal,
+      {
+        vendor: "delta",
+        displayName: "Delta",
+        scheme: "none",
+        primaryHost: "https://api.delta.example",
+      },
+      connectionDeps,
+    );
+    await revokeConnection(ctx, principal, revoked.id, connectionDeps);
+    const expired = await ask(hermes.agent.id, "delta", 1, { expiresAt: at(30) });
+    await ask(gone.agent.id, "revoked-agent-vendor", 4);
+    await revokeAgent(ctx, principal, gone.agent.id, defaultAgentDeps);
+    await ask(theirs.agent.id, "their-vendor", 6);
+
+    const rows = await listSuggestedConnectionAsks(db, personId, 12);
+    expect(rows).toEqual([
+      {
+        id: newest,
+        agentId: claude.agent.id,
+        agentName: "Claude",
+        vendor: "acme",
+        displayName: "acme display",
+        docsUrl: "https://docs.acme.example",
+        createdAt: at(10),
+        expiresAt: at(24 * 60),
+        answeredAt: null,
+        consumedAt: null,
+      },
+      expect.objectContaining({ id: declined, vendor: "gamma", answeredAt: at(3) }),
+      expect.objectContaining({ id: expired, vendor: "delta", expiresAt: at(30) }),
+    ]);
+    expect(rows[0]?.createdAt).toBeInstanceOf(Date);
+    expect(await listSuggestedConnectionAsks(db, personId, 1)).toHaveLength(1);
+    expect((await listSuggestedConnectionAsks(db, other, 12)).map((r) => r.vendor)).toEqual([
+      "their-vendor",
+    ]);
+
+    const suggestions = await listSuggestedIntegrations(ctx, principal, null, {
+      ...defaultSuggestedIntegrationDeps,
+      now: () => at(60),
+    });
+    expect(suggestions.map((s) => [s.vendor, s.ask.state, s.agent.name])).toEqual([
+      ["acme", "open", "Claude"],
+      ["gamma", "declined", "Hermes"],
+      ["delta", "expired", "Hermes"],
+    ]);
+    expect(suggestions[0]?.ask.ageSeconds).toBe(50 * 60);
   });
 
   /** GRA-208: the finish issues a token harness's token once, in the statement's own guard. */
