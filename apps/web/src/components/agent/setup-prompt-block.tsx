@@ -18,7 +18,8 @@ export function SetupPromptBlock({
   tool,
 }: {
   harness: SetupPromptHarness;
-  agentName: string;
+  /** Absent on Home's checklist for a person with no agent: the prompt keeps "A new agent". */
+  agentName?: string;
   connection?: { displayName: string };
   tool?: { goal: string; wireName?: string };
 }) {
@@ -27,7 +28,7 @@ export function SetupPromptBlock({
     harness,
     mcpUrl: mcpEndpointUrl(origin),
     consoleUrl: origin,
-    agent: { name: agentName },
+    ...(agentName ? { agent: { name: agentName } } : {}),
     ...(connection ? { connection } : {}),
     ...(tool ? { tool } : {}),
   });
