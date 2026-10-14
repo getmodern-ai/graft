@@ -2,7 +2,6 @@ import { useQuery } from "@tanstack/react-query";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useState } from "react";
 
-import { AddConnectionDialog } from "@/components/connection/add-connection-dialog";
 import { ConnectionCard } from "@/components/connection/connection-card";
 import {
   AddIcon,
@@ -11,6 +10,7 @@ import {
   KeyboardArrowUpIcon,
   SearchIcon,
 } from "@/components/icons";
+import { AddCustomApiDialog } from "@/components/integration/add-custom-api-dialog";
 import { IntegrationsTable } from "@/components/integration/integrations-table";
 import { SuggestedBanner } from "@/components/integration/suggested-banner";
 import { PageContainer } from "@/components/page/page-container";
@@ -50,8 +50,8 @@ import { cn } from "@/lib/utils";
 /**
  * The Integrations screen (GRA-321; Figma 2059:7655): what the person has connected, one row per
  * integration (GRA-291), with Connected and Discover tabs. Discover is GRA-322's; until it lands
- * `?tab=discover` is a placeholder that keeps Add connection, so the banner's link and the tab
- * have somewhere to go. `/connections` redirects here.
+ * `?tab=discover` is a placeholder, so the banner's link and the tab have somewhere to go. The
+ * header's Add a custom API is Flow C's dialog (GRA-323). `/connections` redirects here.
  *
  * Revoked connections are on no row (GRA-291), and this is still where one is reconnected or its
  * provider's release retried (ADR 0007, ADR 0019), so they stay below the table as the connection
@@ -88,10 +88,10 @@ function IntegrationsRoute() {
           </PageHeaderDescription>
         </PageHeaderContent>
         <PageHeaderActions>
-          {/* Until Discover lands (GRA-322), the way to connect one with no agent asking. */}
+          {/* Flow C (GRA-323): an integration from its API docs, or by hand, with no agent asking. */}
           <Button onClick={() => setAdding(true)}>
             <AddIcon />
-            Add connection
+            Add a custom API
           </Button>
         </PageHeaderActions>
       </PageHeader>
@@ -110,12 +110,12 @@ function IntegrationsRoute() {
         ) : (
           <p className="text-muted-foreground text-sm">
             The integrations you can connect, and the ones your agents asked about, will be listed
-            here. Until then, Add connection connects one by its address.
+            here. Until then, Add a custom API connects one from its API docs.
           </p>
         )}
       </div>
 
-      <AddConnectionDialog open={adding} onOpenChange={setAdding} />
+      <AddCustomApiDialog open={adding} onOpenChange={setAdding} />
     </PageContainer>
   );
 }

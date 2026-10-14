@@ -48,6 +48,22 @@ export function validateVendor(vendor: string): string | null {
   return null;
 }
 
+/**
+ * The person's name as a vendor slug: the docs proposal's for a model that answered none the rules
+ * take (GRA-299), and the console's for the form a refused proposal falls back to (GRA-323).
+ */
+export function vendorSlugOf(name: string): string {
+  const slug = name
+    .normalize("NFKD")
+    .replace(/\p{M}/gu, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, VENDOR_MAX_LENGTH)
+    .replace(/-+$/, "");
+  return slug === "" ? "integration" : slug;
+}
+
 export function validateDisplayName(name: string): string | null {
   const trimmed = name.trim();
   if (trimmed.length === 0 || trimmed.length > DISPLAY_NAME_MAX_LENGTH) {

@@ -1535,6 +1535,19 @@ being the person's. `full` is `recordFullAccess`: each active agent whose scope 
 that moment gets `grantBuildApproval` and `allowVendorWhenConnecting`. Counted as
 `connection_started` (`kind`, `access`, `created`).
 
+**The console's *Add a custom API* is Flow C over those two** (GRA-323;
+`apps/web/src/components/integration/add-custom-api-dialog.tsx`, exported as `AddCustomApiDialog`
+with an optional `initialName` and `initialDocsUrl`, opened from the Integrations header). The name
+step requires the docs link; the job is polled every second and drawn as the four lines
+(`lib/custom-api.ts`'s `proposalChecklist`); `proposal_running` follows the person's own job; a
+`host_not_public` or `input_invalid` failure, and a deployment with no model, open the same check
+step as the form (`draftFromFailure`, `draftByHand`). Connect posts `POST /api/connect` with the
+checked proposal and the access, then on `form` `POST /api/connections` with the key and the same
+access, runs the consent popup for an OAuth client, or on `link` opens the provider's page and polls
+`GET /api/connections/:connectId`; a connection lands on `/integrations/$vendor` with a toast. The
+fields are `ConnectionFormFields` and `CredentialFields`, the agent's proposal's, so the key is
+entered here and nowhere else.
+
 **The directory answers outside Setup too, beside the person's own suggestions** (ADR 0001 as
 amended 2026-10-14; GRA-305). `GET /api/integrations/directory` and `/search` are Setup's two
 handlers mounted a second time, same answers. `GET /api/integrations/suggested`

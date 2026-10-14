@@ -204,6 +204,7 @@ export {
   validateIssuedCredentialFields,
   validateSchemeConfig,
   validateVendor,
+  vendorSlugOf,
 } from "./connection/connection.rules";
 export {
   type ConnectionOutput,
