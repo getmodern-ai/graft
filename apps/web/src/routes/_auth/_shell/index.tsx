@@ -1,9 +1,10 @@
 import { useQuery } from "@tanstack/react-query";
 import { createFileRoute, Link } from "@tanstack/react-router";
+import { useState } from "react";
 
 import { ActivityPanel } from "@/components/home/activity-panel";
 import { AgentsPanel } from "@/components/home/agents-panel";
-import { GetStartedPanel } from "@/components/home/get-started-panel";
+import { GetStartedPanel, HomeCreateAgentDialog } from "@/components/home/get-started-panel";
 import { GoodFirstPanel } from "@/components/home/good-first-panel";
 import { IntegrationsPanel } from "@/components/home/integrations-panel";
 import { NeedsYouPanel } from "@/components/home/needs-you-panel";
@@ -68,8 +69,13 @@ function HomeRoute() {
   const view = homeView(checklist);
   const integrationOpen = checklist?.steps.some((step) => step.id === "integration" && !step.done);
 
-  if (view === "start" && checklist) {
-    return (
+  // One create dialog for both views, mounted beside them rather than inside either: the agent it
+  // creates is step one done, which can swap the view, and the token it shows once must outlive it.
+  const [creating, setCreating] = useState(false);
+  const openCreate = () => setCreating(true);
+
+  const body =
+    view === "start" && checklist ? (
       <PageContainer size="large" className="gap-8">
         <PageHeader>
           <PageHeaderContent>
@@ -85,53 +91,57 @@ function HomeRoute() {
 
         {/* The panels would each say they are empty; the frame shows what they will hold. */}
         <div className="grid gap-8 lg:grid-cols-[minmax(0,1fr)_22.5rem] lg:gap-6">
-          <GetStartedPanel checklist={checklist} />
+          <GetStartedPanel checklist={checklist} onCreateAgent={openCreate} />
           <WhatYouSeePanel />
         </div>
 
         <GoodFirstPanel />
       </PageContainer>
+    ) : (
+      // `large`: the frame's 1120 column; `gap-8` is the frame's between the bands.
+      <PageContainer size="large" className="gap-8">
+        <PageHeader className="flex-wrap items-center gap-4">
+          <PageHeaderContent>
+            <PageHeaderTitle className="text-2xl tracking-tight md:text-3xl">
+              {homeGreeting(new Date(), session?.user.name)}
+            </PageHeaderTitle>
+          </PageHeaderContent>
+          <PageHeaderActions>
+            <Button
+              nativeButton={false}
+              render={<Link to="/integrations" search={{ tab: "discover" }} />}
+            >
+              <AddIcon />
+              Connect an integration
+            </Button>
+          </PageHeaderActions>
+        </PageHeader>
+
+        {view === "partial" && checklist ? (
+          <>
+            <GetStartedPanel checklist={checklist} emphasis={false} onCreateAgent={openCreate} />
+            {integrationOpen ? <GoodFirstPanel /> : null}
+          </>
+        ) : null}
+
+        <div className="grid gap-8 lg:grid-cols-[minmax(0,1fr)_22.5rem] lg:gap-6">
+          <NeedsYouPanel />
+          <AgentsPanel />
+        </div>
+
+        <div className="grid gap-8 lg:grid-cols-2 lg:gap-6">
+          <IntegrationsPanel />
+          <ActivityPanel />
+        </div>
+
+        <SuggestedPanel />
+      </PageContainer>
     );
-  }
 
   return (
-    // `large`: the frame's 1120 column; `gap-8` is the frame's between the bands.
-    <PageContainer size="large" className="gap-8">
-      <PageHeader className="flex-wrap items-center gap-4">
-        <PageHeaderContent>
-          <PageHeaderTitle className="text-2xl tracking-tight md:text-3xl">
-            {homeGreeting(new Date(), session?.user.name)}
-          </PageHeaderTitle>
-        </PageHeaderContent>
-        <PageHeaderActions>
-          <Button
-            nativeButton={false}
-            render={<Link to="/integrations" search={{ tab: "discover" }} />}
-          >
-            <AddIcon />
-            Connect an integration
-          </Button>
-        </PageHeaderActions>
-      </PageHeader>
-
-      {view === "partial" && checklist ? (
-        <>
-          <GetStartedPanel checklist={checklist} emphasis={false} />
-          {integrationOpen ? <GoodFirstPanel /> : null}
-        </>
-      ) : null}
-
-      <div className="grid gap-8 lg:grid-cols-[minmax(0,1fr)_22.5rem] lg:gap-6">
-        <NeedsYouPanel />
-        <AgentsPanel />
-      </div>
-
-      <div className="grid gap-8 lg:grid-cols-2 lg:gap-6">
-        <IntegrationsPanel />
-        <ActivityPanel />
-      </div>
-
-      <SuggestedPanel />
-    </PageContainer>
+    <>
+      {body}
+      <HomeCreateAgentDialog open={creating} onOpenChange={setCreating} />
+    </>
   );
 }

@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import type * as React from "react";
-import { useId, useState } from "react";
+import { useId } from "react";
 
 import { ConnectItsAgent } from "@/components/agent/agent-card";
 import { CreateAgentDialog } from "@/components/agent/create-agent-dialog";
@@ -26,6 +26,8 @@ import type { HarnessMarkId } from "@/lib/marks";
 import { setupQuery, setupVendorsQuery } from "@/lib/setup-queries";
 import { cn } from "@/lib/utils";
 
+type StepProps = { step: HomeChecklistStep; onCreateAgent: () => void };
+
 /** The agents the first step's marks name, in the sentence's order. */
 const AGENT_MARKS: readonly HarnessMarkId[] = [
   "claude",
@@ -45,10 +47,13 @@ const AGENT_MARKS: readonly HarnessMarkId[] = [
 export function GetStartedPanel({
   checklist,
   emphasis = true,
+  onCreateAgent,
 }: {
   checklist: HomeChecklist;
   /** False above the panels, where the header's *Connect an integration* is the screen's primary. */
   emphasis?: boolean;
+  /** Opens Home's `HomeCreateAgentDialog`, which lives above the views. */
+  onCreateAgent: () => void;
 }) {
   const id = useId();
   const setup = useQuery(setupQuery);
@@ -56,7 +61,7 @@ export function GetStartedPanel({
     const Body = STEP_BODIES[row.id];
     return (
       <ChecklistRow key={row.id} number={index + 1} done={row.done}>
-        <Body step={{ ...row, primary: emphasis && row.primary }} />
+        <Body step={{ ...row, primary: emphasis && row.primary }} onCreateAgent={onCreateAgent} />
       </ChecklistRow>
     );
   };
@@ -166,12 +171,9 @@ function MarkRow({ children }: { children: React.ReactNode }) {
   );
 }
 
-function AgentStep({ step }: { step: HomeChecklistStep }) {
+function AgentStep({ step, onCreateAgent }: StepProps) {
   const agents = useQuery(agentsQuery);
   const setup = useQuery(setupQuery);
-  const [creating, setCreating] = useState(false);
-  // The create dialog's scope; read only once it is opened, as *Your agents* reads it.
-  const connections = useQuery({ ...connectionsQuery, enabled: creating });
   const action = agentStepAction(agents.data?.agents ?? [], setup.data);
   const variant = step.primary ? "default" : "outline";
 
@@ -194,7 +196,7 @@ function AgentStep({ step }: { step: HomeChecklistStep }) {
           ) : action.kind === "dialog" ? (
             <ConnectItsAgent agent={action.agent} variant={variant} />
           ) : (
-            <Button variant={variant} size="sm" onClick={() => setCreating(true)}>
+            <Button variant={variant} size="sm" onClick={onCreateAgent}>
               <AddIcon />
               Add to an agent
             </Button>
@@ -208,25 +210,43 @@ function AgentStep({ step }: { step: HomeChecklistStep }) {
           ))}
         </MarkRow>
       )}
-      <CreateAgentDialog
-        open={creating}
-        onOpenChange={setCreating}
-        connections={connections.data?.connections}
-        connectionsFailed={
-          connections.isError
-            ? {
-                error: connections.error,
-                onRetry: () => void connections.refetch(),
-                retrying: connections.isFetching,
-              }
-            : undefined
-        }
-      />
     </>
   );
 }
 
-function IntegrationStep({ step }: { step: HomeChecklistStep }) {
+/**
+ * The create dialog the agent step opens. Home mounts it above its views, never inside the
+ * checklist: the agent it creates is step one done, which swaps the empty Home for the panels, and
+ * a dialog inside the swapped tree would take the token it shows once with it.
+ */
+export function HomeCreateAgentDialog({
+  open,
+  onOpenChange,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}) {
+  // The dialog's scope; read only once it is opened, as *Your agents* reads it.
+  const connections = useQuery({ ...connectionsQuery, enabled: open });
+  return (
+    <CreateAgentDialog
+      open={open}
+      onOpenChange={onOpenChange}
+      connections={connections.data?.connections}
+      connectionsFailed={
+        connections.isError
+          ? {
+              error: connections.error,
+              onRetry: () => void connections.refetch(),
+              retrying: connections.isFetching,
+            }
+          : undefined
+      }
+    />
+  );
+}
+
+function IntegrationStep({ step }: StepProps) {
   // Only the marks need it, and a step already done draws none.
   const vendors = useQuery({ ...setupVendorsQuery, enabled: !step.done });
   const marks = (vendors.data?.vendors ?? []).slice(0, INTEGRATION_STEP_MARKS);
@@ -264,7 +284,7 @@ function IntegrationStep({ step }: { step: HomeChecklistStep }) {
   );
 }
 
-function AskStep({ step }: { step: HomeChecklistStep }) {
+function AskStep({ step }: StepProps) {
   const agents = useQuery(agentsQuery);
   const setup = useQuery(setupQuery);
   const integrations = useQuery(integrationsQuery);
@@ -292,10 +312,7 @@ function AskStep({ step }: { step: HomeChecklistStep }) {
   );
 }
 
-const STEP_BODIES: Record<
-  HomeChecklistStep["id"],
-  (props: { step: HomeChecklistStep }) => React.ReactNode
-> = {
+const STEP_BODIES: Record<HomeChecklistStep["id"], (props: StepProps) => React.ReactNode> = {
   agent: AgentStep,
   integration: IntegrationStep,
   ask: AskStep,
