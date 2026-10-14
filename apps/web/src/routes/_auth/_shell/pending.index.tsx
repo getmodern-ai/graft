@@ -18,7 +18,7 @@ import {
 import { RetryNotice } from "@/components/retry-notice";
 import { useScreenTitle } from "@/components/shell/screen-title";
 import { Badge } from "@/components/ui/badge";
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { agentsQuery } from "@/lib/agent-queries";
 import { harnessMark } from "@/lib/marks";
 import { pendingActionsQuery } from "@/lib/pending-action-queries";
@@ -70,11 +70,13 @@ function RequestsRoute() {
           </TabsTrigger>
         </TabsList>
 
-        <div className="flex flex-col gap-4">
+        <TabsContent value="open" className="flex flex-col gap-4 text-sm">
           <RequestList aria-label="Open requests" aria-busy={requests.isPending}>
             {requests.isPending ? (
               <RequestListLoading />
-            ) : requests.isError ? (
+            ) : requests.isError && !requests.data ? (
+              // Only a first read that failed replaces the rows: a failed background refetch keeps
+              // them, and any dialog open on one with what the person typed (the toast says it).
               <RequestListNote>
                 <RetryNotice
                   error={requests.error}
@@ -103,7 +105,7 @@ function RequestsRoute() {
             Allow lets you pick how much: every tool for that integration, or just that tool. Change
             it any time on the agent's page.
           </p>
-        </div>
+        </TabsContent>
       </Tabs>
     </PageContainer>
   );

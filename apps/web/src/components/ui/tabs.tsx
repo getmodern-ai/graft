@@ -6,9 +6,12 @@ import { cn } from "@/lib/utils";
 
 function Tabs({ className, orientation = "horizontal", ...props }: TabsPrimitive.Root.Props) {
   return (
+    // Graft's deviation from Cando's file (Greptile on #246): the orientation reaches the root as
+    // well as the data attribute, so a vertical list gets the vertical arrow keys.
     <TabsPrimitive.Root
       data-slot="tabs"
       data-orientation={orientation}
+      orientation={orientation}
       className={cn("group/tabs flex gap-2 data-horizontal:flex-col", className)}
       {...props}
     />
