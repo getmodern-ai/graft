@@ -4,6 +4,7 @@ import { useEffect } from "react";
 
 import { GraftWordmark } from "@/components/graft-wordmark";
 import { AccountMenu } from "@/components/shell/account-menu";
+import { CommandPaletteTrigger } from "@/components/shell/command-palette";
 import { SidebarToggle } from "@/components/shell/sidebar-toggle";
 import {
   Sidebar,
@@ -23,7 +24,8 @@ import { NAV_ITEMS } from "@/lib/main-sidebar-nav-items";
 import { pendingActionsQuery } from "@/lib/pending-action-queries";
 
 /**
- * The console's sidebar: the wordmark, the four destinations, and the account menu.
+ * The console's sidebar: the wordmark, the Search row that opens the command palette (GRA-289),
+ * the four destinations, and the account menu.
  *
  * Cando's `apps/web/src/components/shell/main-sidebar.tsx` reduced to what Graft has. Left out,
  * each because there is no such thing here (ADR 0017): the agent rail and its `mobileLeading`
@@ -55,6 +57,11 @@ export function MainSidebar() {
           </Link>
           <SidebarToggle />
         </div>
+        <SidebarMenu>
+          <SidebarMenuItem>
+            <CommandPaletteTrigger />
+          </SidebarMenuItem>
+        </SidebarMenu>
       </SidebarHeader>
 
       <SidebarContent>

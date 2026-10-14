@@ -174,6 +174,7 @@ function harness(session: { user: { id: string } } | null = { user: { id: "perso
     setAgentConnectedVia: vi.fn(async () => null),
     replaceAgentConnections: vi.fn(async () => {}),
     addAgentConnection: vi.fn(async () => {}),
+    removeAgentConnection: vi.fn(async () => {}),
     listAgentConnectionIds: vi.fn(async () => []),
     listScopeConnectionIds: vi.fn(async () => []),
     findConnectionsByIds: vi.fn(async () => []),
