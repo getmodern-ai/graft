@@ -36,6 +36,7 @@ import {
 import { toolsQuery } from "@/lib/connection-queries";
 import { pendingKeys } from "@/lib/pending-action-queries";
 import {
+  buildApprovalSentence,
   type ChangeTargets,
   standingBuild,
   standingTool,
@@ -298,7 +299,7 @@ export function ChangeAnswerDialog({
                 <ItemContent>
                   <ItemTitle>Build its own tools</ItemTitle>
                   <ItemDescription>
-                    Anything it builds still asks before changing data
+                    {buildApprovalSentence(targets.vendor?.integrationName ?? null, vendor)}
                   </ItemDescription>
                 </ItemContent>
                 <ItemActions>

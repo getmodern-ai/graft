@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  buildApprovalSentence,
   changeDialogTitle,
   type DoneRequest,
   doneRowCopy,
@@ -127,7 +128,11 @@ describe("doneRowCopy: build, scope and connection asks", () => {
   it("says a build approval and offers its withdrawal", () => {
     const copy = doneRowCopy(card("build", build), true);
     expect(copy.title).toBe("Codex can build its own Gmail tools");
-    expect(copy.change).toEqual({ tool: null, vendor: null, buildConnectionId: "con_1" });
+    expect(copy.change).toEqual({
+      tool: null,
+      vendor: { slug: "gmail", integrationName: "Gmail" },
+      buildConnectionId: "con_1",
+    });
   });
 
   it("says a declined build with nothing to change", () => {
@@ -354,6 +359,21 @@ describe("what stands now", () => {
         toolChangeView({ ...write, currentVersionId: null }, allow(false), null),
       ).toMatchObject({ allow: false, deny: false, withdraw: true });
     });
+  });
+
+  it("says whether what the agent builds asks, by the integration's approval beside it", () => {
+    expect(buildApprovalSentence("Gmail", null)).toBe(
+      "Anything it builds still asks before changing data",
+    );
+    expect(buildApprovalSentence("Gmail", { includesDestructive: false })).toBe(
+      "Tools it builds that change data run without asking, because every Gmail tool is allowed. Ones that delete still ask",
+    );
+    expect(buildApprovalSentence("Gmail", { includesDestructive: true })).toBe(
+      "Tools it builds run without asking, because every Gmail tool is allowed",
+    );
+    expect(buildApprovalSentence(null, { includesDestructive: true })).toBe(
+      "Anything it builds still asks before changing data",
+    );
   });
 
   it("titles the dialog by what stands, not the row's past", () => {

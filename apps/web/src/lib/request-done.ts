@@ -169,7 +169,9 @@ export function doneRowCopy(card: DoneRequest, agentActive: boolean): DoneRowCop
             ...base,
             title: `${agent} can build its own ${integration} tools`,
             detail: null,
-            change: agentActive ? buildTargets(ask.payload.connectionId) : null,
+            change: agentActive
+              ? buildTargets(ask.payload.connectionId, ask.payload.vendor, integration)
+              : null,
           }
         : {
             ...base,
@@ -260,8 +262,31 @@ export function changeDialogTitle(agentName: string, integrationName: string | n
     : `What ${agentName} can do`;
 }
 
-function buildTargets(connectionId: string): ChangeTargets {
-  return { tool: null, vendor: null, buildConnectionId: connectionId };
+/**
+ * A build allow's targets: the build approval, and the integration's approval beside it, since
+ * that one decides whether the tools it builds ask (ADR 0008 as amended 2026-10-09: every tool of
+ * the integration, future ones included).
+ */
+function buildTargets(
+  connectionId: string,
+  vendor: string,
+  integrationName: string,
+): ChangeTargets {
+  return { tool: null, vendor: { slug: vendor, integrationName }, buildConnectionId: connectionId };
+}
+
+/**
+ * The build approval's line in Change: whether what the agent builds asks before changing data,
+ * which an integration's approval standing beside it decides, since that covers future tools too.
+ */
+export function buildApprovalSentence(
+  integrationName: string | null,
+  vendor: { includesDestructive: boolean } | null,
+): string {
+  if (!vendor || !integrationName) return "Anything it builds still asks before changing data";
+  return vendor.includesDestructive
+    ? `Tools it builds run without asking, because every ${integrationName} tool is allowed`
+    : `Tools it builds that change data run without asking, because every ${integrationName} tool is allowed. Ones that delete still ask`;
 }
 
 function sentenceCase(text: string): string {
