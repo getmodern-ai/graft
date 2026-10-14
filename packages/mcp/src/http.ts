@@ -351,8 +351,10 @@ export function createMcpHttpApp(deps: McpDeps, options: McpHttpOptions = {}): H
       if (!reopens)
         return refused(jsonRpcError(404, -32001, "Session not found"), "Session not found", -32001);
       // Two agents presenting one unknown id at once share the one re-open, and the second finds
-      // a session that is not its own: the same refusal as on a session it never opened.
-      return handleAs(await reopen(sessionId), request);
+      // a session that is not its own: the same refusal as on a session it never opened. The
+      // re-opened session negotiated its own version in its synthetic `initialize`, so a header the
+      // SDK lacks is dropped here as on a fresh one (GRA-162 follow-up).
+      return handleAs(await reopen(sessionId), withoutUnsupportedProtocolVersion(request));
     }
 
     if (request.method !== "POST") {
@@ -364,7 +366,13 @@ export function createMcpHttpApp(deps: McpDeps, options: McpHttpOptions = {}): H
       // A chat product's client asking without a session: a session is opened for it and the
       // answer carries the id, so a client that adopts it continues.
       const id = generateSessionId();
-      return handleAs(await reopen(id), withSessionId(request, id));
+      // Claude.ai's client sends this request with the header of a revision the SDK lacks, and the
+      // transport refused it before the body — 95 times in the first week of October with GRA-162's
+      // fresh-`initialize` fix deployed. The re-opened session speaks the SDK's latest.
+      return handleAs(
+        await reopen(id),
+        withSessionId(withoutUnsupportedProtocolVersion(request), id),
+      );
     }
 
     // No session yet: this must be an `initialize`. The transport says so if it is not, in which
