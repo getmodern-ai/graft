@@ -50,6 +50,14 @@ that one; a merge you make locally is yours and `git merge --signoff` signs it.
   backing lives in the private package. Before adding a dependency or a `GRAFT_*` variable, ask
   whether it is a vendor's.
 
+## Stock tools are maintainer-built for now
+
+The ready-made tools under `packages/stock/tools/` (ADR 0025) are built by Graft's maintainers with
+the repository's build command, against Graft's own test accounts, and reviewed before release.
+Pull requests adding or changing a stock tool are not yet accepted; open an issue describing the
+tool you want instead. Every stock tool passes the harness in `packages/stock` on every pull
+request, and `packages/stock/RECORDING.md` describes what it replays.
+
 ## Tickets, reports and review
 
 The tickets are in Linear, which is private, so a ticket identifier such as `GRA-123` is a name

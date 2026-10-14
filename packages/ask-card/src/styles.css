@@ -344,6 +344,13 @@ body {
   color: var(--foreground);
 }
 
+/* The sentence under a choice's label (GRA-237's destructive tick): muted, on its own line. */
+.ask-choice span.ask-choice-hint {
+  display: block;
+  color: var(--muted-foreground);
+  font-size: 0.875em;
+}
+
 .ask-actions {
   display: flex;
   flex-wrap: wrap;

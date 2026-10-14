@@ -1,0 +1,209 @@
+{
+  "format": 1,
+  "tool": "gmail__search-messages",
+  "recordedAt": "2026-10-09T18:46:27.770Z",
+  "input": {
+    "query": "in:inbox",
+    "maxResults": 3
+  },
+  "exchanges": [
+    {
+      "kind": "read",
+      "method": "GET",
+      "url": "https://gmail.googleapis.com/gmail/v1/users/me/messages?q=in%3Ainbox&maxResults=3",
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json; charset=UTF-8"
+        },
+        "body": {
+          "json": {
+            "messages": [
+              {
+                "id": "6c892effc35b6385",
+                "threadId": "5c09fb150d43f53e"
+              },
+              {
+                "id": "5d750bdf15167aa8",
+                "threadId": "5d750bdf15167aa8"
+              },
+              {
+                "id": "0c222fd368c5746b",
+                "threadId": "0c222fd368c5746b"
+              }
+            ],
+            "nextPageToken": "20828092284270928659",
+            "resultSizeEstimate": 906
+          }
+        }
+      }
+    },
+    {
+      "kind": "read",
+      "method": "GET",
+      "url": "https://gmail.googleapis.com/gmail/v1/users/me/messages/6c892effc35b6385?format=metadata&metadataHeaders=From&metadataHeaders=To&metadataHeaders=Subject&metadataHeaders=Date",
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json; charset=UTF-8"
+        },
+        "body": {
+          "json": {
+            "id": "6c892effc35b6385",
+            "threadId": "5c09fb150d43f53e",
+            "labelIds": ["UNREAD", "APZTWLOSP", "FECMKZZT_TXXVMKP", "XIHSP"],
+            "snippet": "@hnnvgoqv-eaqw[zaf] pixjdtxhb bt ksvp fxrg kshrbyn. Yz baud/gsl/mjh/pbookoeedo/ttgic/vmhunq-xpjs.dtk: &rf; + jv (kgzrz.etcg === &kaiy;veiyzb&zfkz;) mkmls uhtwsdhoDlnxtWjswll(); + qyecms rdvkyeTkadj();",
+            "payload": {
+              "mimeType": "xgevpgjdn/bfiazrkethg",
+              "headers": [
+                {
+                  "name": "Date",
+                  "value": "Qpo, 40 Aii 9534 25:96:81 -8828"
+                },
+                {
+                  "name": "From",
+                  "value": "\"lefatbuu-umyw[chs]\" <aqctxakvmhvzh@lvtuak.gis>"
+                },
+                {
+                  "name": "To",
+                  "value": "\"sjegglvdw-vf/nnxxv\" <dcucz@jvubdfc.hximuw.qys>"
+                },
+                {
+                  "name": "Subject",
+                  "value": "Bx: [gmkpbctbs-du/dplsa] Khtor u3: geq arzo nzctcj alw czkchkoioj, csq vbfwi sn oymnstc, boq gqi qconfw' wlwtxq (XV #351)"
+                }
+              ]
+            },
+            "sizeEstimate": 54227,
+            "historyId": "6903622",
+            "internalDate": "5927546992082"
+          }
+        }
+      }
+    },
+    {
+      "kind": "read",
+      "method": "GET",
+      "url": "https://gmail.googleapis.com/gmail/v1/users/me/messages/5d750bdf15167aa8?format=metadata&metadataHeaders=From&metadataHeaders=To&metadataHeaders=Subject&metadataHeaders=Date",
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json; charset=UTF-8"
+        },
+        "body": {
+          "json": {
+            "id": "5d750bdf15167aa8",
+            "threadId": "5d750bdf15167aa8",
+            "labelIds": ["UNREAD", "FECMKZZT_TXXVMKP", "XIHSP"],
+            "snippet": "Inkpvb d ykyhpn ewjqa rscb k fjv xdsubj Tjgvm gzi u sisxel yfqap dc jqat Mdxpfm iftzbzn. Wnbznk muxdus kel mtgvknx: Itcbnaa womjt@iuztiwkvw.el Loiup qmixbg Mpktf bmty Blwrxs TC &xmc; efdgpjqjedu",
+            "payload": {
+              "mimeType": "pafl/ctqb",
+              "headers": [
+                {
+                  "name": "Date",
+                  "value": "Krg, 67 Jjv 3445 79:34:29 +1713"
+                },
+                {
+                  "name": "Subject",
+                  "value": "X znb mujzcf dfpbjc jsxv lqgw pnahflz"
+                },
+                {
+                  "name": "From",
+                  "value": "Dhgqzh Ufcj <wpuhmr@ztnxyuk.gkzayf.fpj>"
+                },
+                {
+                  "name": "To",
+                  "value": "yhans@example.com"
+                }
+              ]
+            },
+            "sizeEstimate": 17893,
+            "historyId": "1983606",
+            "internalDate": "2893861269753"
+          }
+        }
+      }
+    },
+    {
+      "kind": "read",
+      "method": "GET",
+      "url": "https://gmail.googleapis.com/gmail/v1/users/me/messages/0c222fd368c5746b?format=metadata&metadataHeaders=From&metadataHeaders=To&metadataHeaders=Subject&metadataHeaders=Date",
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json; charset=UTF-8"
+        },
+        "body": {
+          "json": {
+            "id": "0c222fd368c5746b",
+            "threadId": "0c222fd368c5746b",
+            "labelIds": ["FECMKZZT_TXXVMKP", "XIHSP"],
+            "snippet": "663977 qv qdvo LxqFwlc Uef Hn Qsxb Ea gmjlmiv sggexmbol kvnivbutv gaaks xixz qrg no. Ue&#31;jl lezq ouwbiy ysln dy&#03;y ytl. Xkk oouc byxrwx-kxs uiog sz dht st tr izpk HoaYoxv wzdemqe. Vdil kniu ofmt",
+            "payload": {
+              "mimeType": "xgevpgjdn/bfiazrkethg",
+              "headers": [
+                {
+                  "name": "Date",
+                  "value": "Ynf, 8 Agq 0585 47:50:44 -5597"
+                },
+                {
+                  "name": "From",
+                  "value": "GvwVtyz <zvpdapz@qcehcyearhibm.wujxsqkseiwgf.mquzghg.rtv>"
+                },
+                {
+                  "name": "To",
+                  "value": "yhans@example.com"
+                },
+                {
+                  "name": "Subject",
+                  "value": "234447 aa eeyr YlvOigf Lvy Bw Hzta"
+                }
+              ]
+            },
+            "sizeEstimate": 35071,
+            "historyId": "9938002",
+            "internalDate": "7629362872133"
+          }
+        }
+      }
+    }
+  ],
+  "result": {
+    "messages": [
+      {
+        "id": "6c892effc35b6385",
+        "threadId": "5c09fb150d43f53e",
+        "from": "\"lefatbuu-umyw[chs]\" <aqctxakvmhvzh@lvtuak.gis>",
+        "to": "\"sjegglvdw-vf/nnxxv\" <dcucz@jvubdfc.hximuw.qys>",
+        "subject": "Bx: [gmkpbctbs-du/dplsa] Khtor u3: geq arzo nzctcj alw czkchkoioj, csq vbfwi sn oymnstc, boq gqi qconfw' wlwtxq (XV #351)",
+        "date": "Qpo, 40 Aii 9534 25:96:81 -8828",
+        "snippet": "@hnnvgoqv-eaqw[zaf] pixjdtxhb bt ksvp fxrg kshrbyn. Yz baud/gsl/mjh/pbookoeedo/ttgic/vmhunq-xpjs.dtk: &rf; + jv (kgzrz.etcg === &kaiy;veiyzb&zfkz;) mkmls uhtwsdhoDlnxtWjswll(); + qyecms rdvkyeTkadj();",
+        "labelIds": ["UNREAD", "APZTWLOSP", "FECMKZZT_TXXVMKP", "XIHSP"],
+        "unread": true
+      },
+      {
+        "id": "5d750bdf15167aa8",
+        "threadId": "5d750bdf15167aa8",
+        "from": "Dhgqzh Ufcj <wpuhmr@ztnxyuk.gkzayf.fpj>",
+        "to": "yhans@example.com",
+        "subject": "X znb mujzcf dfpbjc jsxv lqgw pnahflz",
+        "date": "Krg, 67 Jjv 3445 79:34:29 +1713",
+        "snippet": "Inkpvb d ykyhpn ewjqa rscb k fjv xdsubj Tjgvm gzi u sisxel yfqap dc jqat Mdxpfm iftzbzn. Wnbznk muxdus kel mtgvknx: Itcbnaa womjt@iuztiwkvw.el Loiup qmixbg Mpktf bmty Blwrxs TC &xmc; efdgpjqjedu",
+        "labelIds": ["UNREAD", "FECMKZZT_TXXVMKP", "XIHSP"],
+        "unread": true
+      },
+      {
+        "id": "0c222fd368c5746b",
+        "threadId": "0c222fd368c5746b",
+        "from": "GvwVtyz <zvpdapz@qcehcyearhibm.wujxsqkseiwgf.mquzghg.rtv>",
+        "to": "yhans@example.com",
+        "subject": "234447 aa eeyr YlvOigf Lvy Bw Hzta",
+        "date": "Ynf, 8 Agq 0585 47:50:44 -5597",
+        "snippet": "663977 qv qdvo LxqFwlc Uef Hn Qsxb Ea gmjlmiv sggexmbol kvnivbutv gaaks xixz qrg no. Ue&#31;jl lezq ouwbiy ysln dy&#03;y ytl. Xkk oouc byxrwx-kxs uiog sz dht st tr izpk HoaYoxv wzdemqe. Vdil kniu ofmt",
+        "labelIds": ["FECMKZZT_TXXVMKP", "XIHSP"],
+        "unread": false
+      }
+    ],
+    "resultSizeEstimate": 906
+  }
+}

@@ -302,6 +302,12 @@ export type CapabilityClaims = {
    * (`dry-run.ts`).
    */
   dryRun: boolean;
+  /**
+   * The read-only claim (ADR 0008 as amended 2026-10-10). True only for an ordinary run of a tool
+   * annotated read-only; with it, every request `read-request.ts` does not call a read is refused
+   * `annotation_mismatch` before any credential is obtained. Read as `false` when absent.
+   */
+  readOnly: boolean;
 };
 
 /** How a dry-run call ended: the read reached the vendor, or the write stopped here. */
@@ -392,6 +398,7 @@ export type ProxyOutcome =
   | "person_mismatch"
   /** The connection is the person's, but not among the ids the token names — outside the scope. */
   | "connection_not_in_token"
+  | "annotation_mismatch"
   | "connection_not_ready"
   /**
    * The person revoked the connection (GRA-68). Distinct from `connection_not_ready` so the agent's

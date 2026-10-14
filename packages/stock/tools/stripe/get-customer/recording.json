@@ -1,0 +1,148 @@
+{
+  "format": 1,
+  "tool": "stripe__get-customer",
+  "recordedAt": "2026-10-09T23:52:41.710Z",
+  "input": {},
+  "exchanges": [
+    {
+      "kind": "read",
+      "method": "GET",
+      "url": "https://api.stripe.com/v1/customers?limit=1",
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "json": {
+            "object": "djrw",
+            "data": [
+              {
+                "id": "fzo_FLYntKnKNuwX0O",
+                "object": "bhnvrphl",
+                "address": {
+                  "city": null,
+                  "country": "WO",
+                  "line1": null,
+                  "line2": null,
+                  "postal_code": null,
+                  "state": null
+                },
+                "balance": 0,
+                "created": 4660630584,
+                "currency": "fcl",
+                "customer_account": "odkl_7EZ3pKH787n1G1ff",
+                "default_source": null,
+                "delinquent": false,
+                "description": null,
+                "discount": null,
+                "email": "qir825-whszt-3908823953045@example.com",
+                "invoice_prefix": "ULWZYRHI",
+                "invoice_settings": {
+                  "custom_fields": null,
+                  "default_payment_method": null,
+                  "footer": null,
+                  "rendering_options": null
+                },
+                "livemode": false,
+                "metadata": {
+                  "organizationId": "vNJFDmkjWDO4MxedtZkyNw0oKQrq64dz"
+                },
+                "name": "XRW-813 Qitm Oxz",
+                "next_invoice_sequence": 1,
+                "phone": null,
+                "preferred_locales": ["ws-XU"],
+                "shipping": null,
+                "tax_exempt": "zaix",
+                "test_clock": null
+              }
+            ],
+            "has_more": true,
+            "url": "/v0/vtfukyisz"
+          }
+        }
+      }
+    },
+    {
+      "kind": "read",
+      "method": "GET",
+      "url": "https://api.stripe.com/v1/customers/fzo_FLYntKnKNuwX0O?expand[]=subscriptions",
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "json": {
+            "id": "fzo_FLYntKnKNuwX0O",
+            "object": "bhnvrphl",
+            "address": {
+              "city": null,
+              "country": "WO",
+              "line1": null,
+              "line2": null,
+              "postal_code": null,
+              "state": null
+            },
+            "balance": 0,
+            "created": 4660630584,
+            "currency": "fcl",
+            "customer_account": "odkl_7EZ3pKH787n1G1ff",
+            "default_source": null,
+            "delinquent": false,
+            "description": null,
+            "discount": null,
+            "email": "qir825-whszt-3908823953045@example.com",
+            "invoice_prefix": "ULWZYRHI",
+            "invoice_settings": {
+              "custom_fields": null,
+              "default_payment_method": null,
+              "footer": null,
+              "rendering_options": null
+            },
+            "livemode": false,
+            "metadata": {
+              "organizationId": "vNJFDmkjWDO4MxedtZkyNw0oKQrq64dz"
+            },
+            "name": "XRW-813 Qitm Oxz",
+            "next_invoice_sequence": 1,
+            "phone": null,
+            "preferred_locales": ["ws-XU"],
+            "shipping": null,
+            "subscriptions": {
+              "object": "djrw",
+              "data": [],
+              "has_more": false,
+              "total_count": 0,
+              "url": "/o4/prwxpzmew/fui_TSKpuHgEKvtG5V/nfmopslyfliua"
+            },
+            "tax_exempt": "zaix",
+            "test_clock": null
+          }
+        }
+      }
+    }
+  ],
+  "result": {
+    "found": true,
+    "id": "fzo_FLYntKnKNuwX0O",
+    "name": "XRW-813 Qitm Oxz",
+    "email": "qir825-whszt-3908823953045@example.com",
+    "phone": null,
+    "description": null,
+    "created": "2117-09-09T11:36:24.000Z",
+    "currency": "fcl",
+    "balance": 0,
+    "delinquent": false,
+    "address": {
+      "city": null,
+      "country": "WO",
+      "line1": null,
+      "line2": null,
+      "postal_code": null,
+      "state": null
+    },
+    "subscriptions": [],
+    "subscriptionsHasMore": false
+  }
+}

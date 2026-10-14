@@ -1,0 +1,58 @@
+{
+  "format": 1,
+  "tool": "apollo__search-contacts",
+  "recordedAt": "2026-10-10T17:39:59.341Z",
+  "input": {
+    "query": "keeew-urpgo-chfkq-go-kjzct",
+    "perPage": 1
+  },
+  "exchanges": [
+    {
+      "kind": "read",
+      "method": "POST",
+      "url": "https://api.apollo.io/api/v1/contacts/search",
+      "body": {
+        "json": {
+          "page": 1,
+          "per_page": 1,
+          "q_keywords": "keeew-urpgo-chfkq-go-kjzct"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json; charset=utf-8"
+        },
+        "body": {
+          "json": {
+            "contacts": [],
+            "model_ids": [],
+            "breadcrumbs": [
+              {
+                "label": "Zprcccrg Mfimrbcl",
+                "signal_field_name": "e_pcvmertz",
+                "value": "keeew-urpgo-chfkq-go-kjzct",
+                "display_name": "keeew-urpgo-chfkq-go-kjzct"
+              }
+            ],
+            "partial_results_only": false,
+            "has_join": false,
+            "disable_eu_prospecting": false,
+            "partial_results_limit": 35552,
+            "pagination": {
+              "page": 1,
+              "per_page": 1,
+              "total_entries": 0,
+              "total_pages": 0
+            },
+            "num_fetch_result": null
+          }
+        }
+      }
+    }
+  ],
+  "result": {
+    "total_entries": 0,
+    "contacts": []
+  }
+}

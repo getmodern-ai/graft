@@ -1,0 +1,24 @@
+{
+  "name": "post-message",
+  "description": "Posts a message in Slack mrkdwn to a channel, by its name or id (list-channels lists them). Answers the posted message's ts, which reply-in-thread and add-reaction take.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "channel": {
+        "type": "string",
+        "description": "A channel name, with or without the leading #, or a channel id from list-channels."
+      },
+      "text": {
+        "type": "string",
+        "description": "The message in Slack mrkdwn."
+      }
+    },
+    "required": ["channel", "text"],
+    "additionalProperties": false
+  },
+  "hosts": ["slack.com"],
+  "annotations": {
+    "readOnly": false,
+    "destructive": false
+  }
+}

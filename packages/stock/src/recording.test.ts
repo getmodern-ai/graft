@@ -1,0 +1,253 @@
+import { describe, expect, it } from "vitest";
+
+import {
+  parseRecording,
+  recordedResponseOf,
+  redactRecording,
+  type StockRecording,
+} from "./recording";
+
+const RECORDING: StockRecording = {
+  format: 1,
+  tool: "demo__list-items",
+  recordedAt: "2026-10-09T00:00:00Z",
+  input: { q: "red" },
+  exchanges: [
+    {
+      kind: "read",
+      method: "GET",
+      url: "https://api.example.com/v1/items?q=red",
+      response: { status: 200, headers: {}, body: { json: { items: [] } } },
+    },
+  ],
+};
+
+describe("parseRecording", () => {
+  it("reads a recording in the format", () => {
+    expect(parseRecording(JSON.stringify(RECORDING), "demo/list-items/recording.json")).toEqual(
+      RECORDING,
+    );
+  });
+
+  it("reads a POST the proxy's reviewed table calls a read, with the body the module sent (GRA-260)", () => {
+    const search: StockRecording = {
+      ...RECORDING,
+      exchanges: [
+        {
+          kind: "read",
+          method: "POST",
+          url: "https://api.notion.com/v1/search",
+          body: { json: { page_size: 5 } },
+          response: { status: 200, headers: {}, body: { json: { results: [] } } },
+        },
+      ],
+    };
+    expect(parseRecording(JSON.stringify(search), "notion/search/recording.json")).toEqual(search);
+  });
+
+  it("reads a GraphQL query as a read, with the body the module sent (GRA-260)", () => {
+    const graphql: StockRecording = {
+      ...RECORDING,
+      exchanges: [
+        {
+          kind: "read",
+          method: "POST",
+          url: "https://api.example.com/graphql",
+          body: { json: { query: "query Items($first: Int) { items(first: $first) { id } }" } },
+          response: { status: 200, headers: {}, body: { json: { data: { items: [] } } } },
+        },
+      ],
+    };
+    expect(parseRecording(JSON.stringify(graphql), "demo/list-items/recording.json")).toEqual(
+      graphql,
+    );
+  });
+
+  it("refuses with a sentence naming the file and the first thing wrong", () => {
+    const where = "demo/list-items/recording.json";
+    expect(() => parseRecording("nope", where)).toThrow(
+      /^demo\/list-items\/recording\.json is not JSON/,
+    );
+    expect(() =>
+      parseRecording(
+        JSON.stringify({
+          ...RECORDING,
+          exchanges: [{ ...RECORDING.exchanges[0], method: "POST" }],
+        }),
+        where,
+      ),
+    ).toThrow(
+      `${where} exchange 1 is a read, so it is a GET or HEAD or a request the proxy's classifier calls a read`,
+    );
+    // A GraphQL mutation is a write whatever the recording calls it, and a query is a read.
+    const graphql = (query: string) => ({ json: { query } });
+    expect(() =>
+      parseRecording(
+        JSON.stringify({
+          ...RECORDING,
+          exchanges: [
+            {
+              ...RECORDING.exchanges[0],
+              method: "POST",
+              url: "https://api.example.com/graphql",
+              body: graphql("mutation { archive(id: 1) { ok } }"),
+            },
+          ],
+        }),
+        where,
+      ),
+    ).toThrow(
+      `${where} exchange 1 is a read, so it is a GET or HEAD or a request the proxy's classifier calls a read`,
+    );
+    expect(() =>
+      parseRecording(
+        JSON.stringify({
+          ...RECORDING,
+          exchanges: [
+            {
+              kind: "write",
+              method: "POST",
+              url: "https://api.notion.com/v1/search",
+              body: { json: {} },
+            },
+          ],
+        }),
+        where,
+      ),
+    ).toThrow(
+      `${where} exchange 1 is a write, so it is not a request the proxy's classifier calls a read`,
+    );
+    expect(() =>
+      parseRecording(
+        JSON.stringify({
+          ...RECORDING,
+          exchanges: [{ ...RECORDING.exchanges[0], body: { a: 1 } }],
+        }),
+        where,
+      ),
+    ).toThrow(`${where} exchange 1's body must carry exactly one of json, text or base64`);
+    expect(() =>
+      parseRecording(
+        JSON.stringify({
+          ...RECORDING,
+          exchanges: [{ kind: "write", method: "POST", url: "/v1/notes" }],
+        }),
+        where,
+      ),
+    ).toThrow(`${where} exchange 1's url is not an absolute URL`);
+    expect(() =>
+      parseRecording(
+        JSON.stringify({
+          ...RECORDING,
+          exchanges: [
+            { kind: "write", method: "POST", url: "https://a.example.com/", body: { a: 1 } },
+          ],
+        }),
+        where,
+      ),
+    ).toThrow(`${where} exchange 1's body must carry exactly one of json, text or base64`);
+  });
+});
+
+describe("a read POST (GRA-260, GRA-270)", () => {
+  const search = (over: Record<string, unknown>) =>
+    JSON.stringify({
+      ...RECORDING,
+      tool: "apollo__search-contacts",
+      exchanges: [
+        {
+          kind: "read",
+          method: "POST",
+          url: "https://api.apollo.io/api/v1/contacts/search",
+          body: { json: { per_page: 2 } },
+          response: { status: 200, headers: {}, body: { json: { contacts: [] } } },
+          ...over,
+        },
+      ],
+    });
+
+  it("is a read where the reviewed table admits it, with the body the module sent", () => {
+    const parsed = parseRecording(search({}), "apollo/search-contacts/recording.json");
+    expect(parsed.exchanges[0]).toMatchObject({
+      kind: "read",
+      method: "POST",
+      body: { json: { per_page: 2 } },
+    });
+  });
+
+  it("is refused as a read off the table, and its body is held to the body rule", () => {
+    const where = "apollo/search-contacts/recording.json";
+    expect(() =>
+      parseRecording(search({ url: "https://api.apollo.io/api/v1/contacts" }), where),
+    ).toThrow(`${where} exchange 1 is a read, so it is a GET or HEAD`);
+    expect(() => parseRecording(search({ body: { per_page: 2 } }), where)).toThrow(
+      `${where} exchange 1's body must carry exactly one of json, text or base64`,
+    );
+  });
+});
+
+describe("redactRecording", () => {
+  it("redacts the credential by value wherever it appears, and by shape and field name", () => {
+    const leaky: StockRecording = {
+      ...RECORDING,
+      exchanges: [
+        {
+          kind: "read",
+          method: "GET",
+          url: "https://api.example.com/v1/items?key=k3y-v4lue-0001&q=red",
+          response: {
+            status: 401,
+            headers: {},
+            body: {
+              json: {
+                echoed: "you sent k3y-v4lue-0001",
+                header: "Authorization: Bearer abcdefghijkl",
+                session: { access_token: "opaque" },
+              },
+            },
+          },
+        },
+      ],
+    };
+    const { recording, redacted } = redactRecording(leaky, { secretValues: ["k3y-v4lue-0001"] });
+    expect(redacted).toBe(true);
+    const text = JSON.stringify(recording);
+    expect(text).not.toContain("k3y-v4lue-0001");
+    expect(text).not.toContain("abcdefghijkl");
+    expect(text).not.toContain("opaque");
+    expect(recording.exchanges[0]).toMatchObject({
+      url: "https://api.example.com/v1/items?key=[redacted]&q=red",
+      response: { body: { json: { session: { access_token: "[redacted]" } } } },
+    });
+    // A committed recording is a fixed point: redacting it again changes nothing.
+    expect(redactRecording(recording)).toEqual({ recording, redacted: false });
+  });
+
+  it("leaves a recording with nothing secret alone", () => {
+    expect(redactRecording(RECORDING)).toEqual({ recording: RECORDING, redacted: false });
+  });
+});
+
+describe("recordedResponseOf", () => {
+  it("keeps the status, the listed headers and the body as JSON, text or base64", async () => {
+    const json = new Response('{"a":1}', {
+      status: 200,
+      headers: { "content-type": "application/json", "set-cookie": "s=1", link: "<x>; rel=next" },
+    });
+    expect(await recordedResponseOf(json)).toEqual({
+      status: 200,
+      headers: { "content-type": "application/json", link: "<x>; rel=next" },
+      body: { json: { a: 1 } },
+    });
+    expect(await recordedResponseOf(new Response("plain"))).toMatchObject({
+      body: { text: "plain" },
+    });
+    expect(await recordedResponseOf(new Response(new Uint8Array([0xff, 0x00])))).toMatchObject({
+      body: { base64: "/wA=" },
+    });
+    expect(await recordedResponseOf(new Response(null, { status: 204 }))).toEqual({
+      status: 204,
+      headers: {},
+    });
+  });
+});

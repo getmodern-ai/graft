@@ -1,3 +1,5 @@
+import { randomBytes } from "node:crypto";
+
 import {
   type Diagnostic,
   type ModuleCheck,
@@ -9,8 +11,6 @@ import {
 import {
   addToolVersion,
   createTool,
-  nextVersionNumber,
-  orNotFound,
   rebindToolIfConnectionDead,
   publishToolVersion as recordPublishedVersion,
   type ServiceContext,
@@ -26,7 +26,7 @@ import {
   type ToolboxFile,
   type ToolboxMirror,
   type ToolboxStore,
-  versionPath as versionPathOf,
+  writePath,
 } from "@graft/toolbox";
 
 import { sha256Hex, sourceHashOf } from "./hash";
@@ -61,8 +61,9 @@ import {
  *     every name the first two rules did not already refuse — an allowlisted one included, since
  *     the allowlist waives provenance alone (GRA-176). Every failing package is a diagnostic, all
  *     of them at once, so the model fixes the manifest in one edit.
- *  6. The version directory `tools/<vendor>/<name>/v<N>` is written from the draft's files, the
- *     manifest carrying `"type": "module"` (`normaliseManifest`).
+ *  6. A fresh version directory of this write's own, `tools/<vendor>/<name>/w-<writeId>`
+ *     (`@graft/toolbox`'s `writePath`), is written from the draft's files, the manifest carrying
+ *     `"type": "module"` (`normaliseManifest`).
  *  7. When packages are declared, the sandbox backend's `install` runs — ADR 0013's build step, the
  *     one place that reaches the registry — and its lockfile is hashed. A failed install is a
  *     refusal with npm's words in it.
@@ -85,12 +86,15 @@ import {
  *     first publish, with no current version at all.
  *  9. The mirror is asked to copy the version, and the publish returns without waiting.
  *
- * A directory written and then not recorded (a failed install, a database down at step 8) stays on
- * disk with no row; the next publish of the tool computes the same version number and writes over
- * it, then installs again. Nothing under `tools/` is removed, by the publish or by anything
- * (ADR 0009). Two publishes of one tool racing both compute the same number; the unique constraint
- * on (tool, version) refuses the second's row, and the second's files may have overwritten the
- * first's — `acquire` runs one job per tool at a time (GRA-29), which is what keeps that theoretical.
+ * Nothing is held across steps 6 and 7, and the install above all (Greptile on #184: a transaction
+ * held through an install holds a pooled connection for minutes). Step 8 is one short transaction
+ * under the person's lock on the tool's name (`ToolDeps.lockToolName`), which a stock copy of the
+ * name takes too, and numbers the version there, so two publishes of one tool racing take two
+ * numbers, and a publish and a first copy of one name make one tool. No writer ever shares a
+ * directory (GRA-238, GRA-265): the directory never depends on who records first. A directory
+ * written and then not recorded (a failed install, a database down at step 8) stays on disk as an
+ * orphan with no row, and the next publish writes a directory of its own. Nothing under `tools/` is
+ * removed, by the publish or by anything (ADR 0009). Versions written before GRA-238 are `v<N>`.
  *
  * Copied in shape from Cando's `publishAuthoredTool` and re-read (ADR 0011): the sandbox no longer
  * does the copy — the server holds the toolbox — and the package policy, the install step and the
@@ -180,6 +184,8 @@ export type PublishDeps = {
   now: () => Date;
   /** Where the mirror's outcome goes — a wide event in the server. Never on the publish's path. */
   onMirror: (event: MirrorEvent) => void;
+  /** The id of one write's version directory; `newWriteId` unless a test fixes it. */
+  writeId?: (now: Date) => string;
 };
 
 /** How much of npm's stderr a failed install's diagnostic carries. The end is where the reason is. */
@@ -238,24 +244,24 @@ export async function publishToolVersion(
   const policyRefusals = await applyPolicy(dependencies, deps);
   if (policyRefusals.length > 0) return refusal(policyRefusals, check);
 
-  // 6. The version directory.
-  const existing = await deps.tool.findAuthoredTool(ctx.db, args.personId, {
-    vendor: args.vendor,
-    name: args.name,
-  });
-  const versionNumber = existing
-    ? orNotFound(await nextVersionNumber(ctx, principal, existing.id, deps.tool), "Tool not found")
-    : 1;
-  const versionPath = versionPathOf(args.vendor, args.name, versionNumber);
+  // 6. The version directory, the writer's own (GRA-238, GRA-265; Greptile on #184): a fresh
+  // directory per write (`writePath`), so no other publish and no stock copy of the name ever writes
+  // into it, and nothing is held while it is written or installed into. Whatever the outcome, it is
+  // never written again; one whose rows never land stays as an orphan, since nothing under `tools/`
+  // is removed (ADR 0009).
+  const versionPath = writePath(args.vendor, args.name, (deps.writeId ?? newWriteId)(deps.now()));
   const written = normaliseManifest(sources.files);
   await deps.store.writeTree(args.toolboxId, versionPath, written);
   const sourceHash = sourceHashOf(written);
 
-  // 7. The build step.
+  // 7. The build step, outside any transaction: a transaction held through an install would hold a
+  // pooled connection for minutes (Greptile on #184).
   let lockfileHash: string | null = null;
   if (dependencies.length > 0) {
     const result = await deps.sandbox.install({ toolboxId: args.toolboxId, versionPath });
-    if (result.status !== "completed") return refusal([installFailure(result, versionPath)], check);
+    if (result.status !== "completed") {
+      return refusal([installFailure(result, versionPath)], check);
+    }
     const lockfile = await deps.store
       .read(args.toolboxId, `${versionPath}/package-lock.json`)
       .catch(() => null);
@@ -273,7 +279,11 @@ export async function publishToolVersion(
     lockfileHash = sha256Hex(lockfile);
   }
 
-  // 8. The rows.
+  // 8. The rows, in one short transaction holding the person's lock on the tool's name
+  // (`ToolDeps.lockToolName`, which a stock copy of the name takes too): the tool created if this is
+  // its first publish, and the version numbered here, the tool's next, so two publishes of one tool
+  // racing take two numbers and each keeps its own directory.
+  const key = { vendor: args.vendor, name: args.name };
   const definition = {
     description: args.description,
     inputSchema: args.inputSchema,
@@ -290,14 +300,10 @@ export async function publishToolVersion(
   };
   const recorded = await ctx.db.transaction(async (tx) => {
     const scoped: ServiceContext = { db: tx };
+    await deps.tool.lockToolName(tx, args.personId, key);
+    const existing = await deps.tool.findAuthoredTool(tx, args.personId, key);
     const tool =
-      existing ??
-      (await createTool(
-        scoped,
-        principal,
-        { vendor: args.vendor, name: args.name, ...definition },
-        deps.tool,
-      ));
+      existing ?? (await createTool(scoped, principal, { ...key, ...definition }, deps.tool));
     if (args.activate === false) {
       const version = await addToolVersion(scoped, principal, tool.id, versionInput, deps.tool);
       // A dead binding follows the connection this publish names (step 8; GRA-122); a live one,
@@ -331,6 +337,15 @@ export async function publishToolVersion(
     annotations: check.annotations,
     dependencies: dependencies.map((dependency) => dependency.name),
   };
+}
+
+/**
+ * The id of one write's version directory (`@graft/toolbox`'s `writePath`): the time, so a tool's
+ * directories list in the order they were written, and a random part, so two writes in one
+ * millisecond never share one.
+ */
+export function newWriteId(now: Date): string {
+  return `${now.getTime().toString(36)}-${randomBytes(4).toString("hex")}`;
 }
 
 /**
@@ -462,10 +477,11 @@ function refusal(refusals: PublishDiagnostic[], check?: ModuleCheckResult): Publ
  * Ask the mirror and return at once. Whatever it does — resolve, reject, throw synchronously — ends
  * in one `onMirror` event and nothing else; a reporter that throws is swallowed too, because a
  * dropped promise that rejects is an unhandled rejection in a process that just answered a caller.
+ * A stock copy (`copy-stock.ts`) asks it the same way, since its version is a toolbox version too.
  */
-function startMirror(
+export function startMirror(
   deps: Pick<PublishDeps, "mirror" | "onMirror" | "now">,
-  args: PublishArgs,
+  args: Pick<PublishArgs, "personId" | "agentId" | "toolboxId">,
   recorded: { tool: AuthoredToolRow; version: ToolVersionRow },
   versionPath: string,
 ): void {

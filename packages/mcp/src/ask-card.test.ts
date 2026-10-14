@@ -1,6 +1,7 @@
 import { readAskCardHtml } from "@graft/ask-card";
 import { FROM_CARD, FROM_CARD_PARAM, withFromCard } from "@graft/ask-card/shape";
 import {
+  allowVendorOffer,
   FROM_CARD as CORE_FROM_CARD,
   FROM_CARD_PARAM as CORE_FROM_CARD_PARAM,
   openedFromCard,
@@ -96,6 +97,7 @@ describe("what the card may answer", () => {
       kind: "build",
       agentName: "Claude",
       vendor: "demo",
+      integrationName: "Demo Orders",
       displayName: "Demo Orders",
       primaryHost: "https://api.demo.example",
       hosts: ["api.demo.example"],
@@ -122,8 +124,16 @@ describe("what the card may answer", () => {
         url,
         toolName: "demo__create-order",
         tool,
+        vendorApproval: allowVendorOffer("demo", "Demo Orders"),
       }),
-    ).toMatchObject({ kind: "tool", answerable: true, toolName: "demo__create-order", tool });
+    ).toMatchObject({
+      kind: "tool",
+      answerable: true,
+      toolName: "demo__create-order",
+      tool,
+      // GRA-237: the integration-wide offer beside Allow, in the shared helper's words.
+      vendorApproval: { label: "Allow every Demo Orders tool for this agent" },
+    });
     expect(
       credentialAskCard({
         action: { ...action, kind: "credential" },
@@ -147,7 +157,7 @@ describe("what the card may answer", () => {
         url,
         payload: proposal({ providerConnect: "link", provider: "broker" }),
       }),
-    ).toMatchObject({ providerConnect: "link", provider: "broker", answerable: false });
+    ).toMatchObject({ providerConnect: "link", provider: "Broker", answerable: false });
   });
 
   it("marks a scope ask answerable, with the row's facts and the provider when it is not the keyring (GRA-104)", () => {
@@ -169,6 +179,7 @@ describe("what the card may answer", () => {
       kind: "scope",
       agentName: "Claude",
       vendor: "gmail",
+      integrationName: "Gmail",
       displayName: "Gmail",
       primaryHost: "https://gmail.googleapis.com",
       hosts: ["gmail.googleapis.com"],
@@ -178,7 +189,7 @@ describe("what the card may answer", () => {
       expiresAt: action.expiresAt.toISOString(),
       url,
       answerable: true,
-      provider: "broker",
+      provider: "Broker",
     });
     expect(
       scopeAskCard({

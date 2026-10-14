@@ -6,6 +6,7 @@ import {
   describeFailure,
   guardHostDeps,
   HostDependencyError,
+  PROXY_REFUSED_HEADER,
   REFUSAL_HEADER,
   refusalBody,
   refuse,
@@ -389,6 +390,8 @@ describe("refuseUpstreamFailure", () => {
     expect(refused.unreached).toEqual({ host: HOST, code: "ENOTFOUND" });
     expect(VENDOR_UNREACHED_REASONS).toContain(refused.reason);
     expect(REFUSAL_HEADER).toBe("x-graft-refusal");
+    // The runner holds the same two names (`runner-source.ts`); both are spelled here.
+    expect(PROXY_REFUSED_HEADER).toBe("x-graft-refused");
   });
 
   it("is the only constructor that marks: a refusal made after the vendor answered carries no unreached", () => {

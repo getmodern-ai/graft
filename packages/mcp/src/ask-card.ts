@@ -1,5 +1,12 @@
-import type { AskCard, AskCardTool } from "@graft/ask-card/shape";
-import { type ConnectionOutput, takesCredential } from "@graft/core";
+import type { AskCard, AskCardTool, AskCardVendorApproval } from "@graft/ask-card/shape";
+import {
+  type ConnectionOutput,
+  integrationNameFor,
+  KEYRING_PROVIDER,
+  providerDisplayName,
+  takesCredential,
+  vendorToolsOffer,
+} from "@graft/core";
 import type { PendingActionRow } from "@graft/db/repo/pending-action";
 import type { ConnectionScheme } from "@graft/db/schema/connection";
 import type { Resource, Tool } from "@modelcontextprotocol/sdk/types.js";
@@ -162,7 +169,15 @@ export function approvalAskCard(
     agentName: string;
     connection: ConnectionOutput;
     url: string;
-  } & ({ kind: "build" } | { kind: "tool"; toolName: string; tool: AskCardTool }),
+  } & (
+    | { kind: "build" }
+    | {
+        kind: "tool";
+        toolName: string;
+        tool: AskCardTool;
+        vendorApproval: AskCardVendorApproval;
+      }
+  ),
 ): AskCard {
   const { action, connection } = args;
   return {
@@ -170,6 +185,7 @@ export function approvalAskCard(
     kind: args.kind,
     agentName: args.agentName,
     vendor: connection.vendor,
+    integrationName: integrationNameFor(connection.vendor, connection.displayName),
     displayName: connection.displayName,
     primaryHost: connection.primaryHost,
     hosts: connection.hosts,
@@ -179,8 +195,12 @@ export function approvalAskCard(
     expiresAt: action.expiresAt.toISOString(),
     url: args.url,
     answerable: true,
-    ...(connection.provider !== "keyring" ? { provider: connection.provider } : {}),
-    ...(args.kind === "tool" ? { toolName: args.toolName, tool: args.tool } : {}),
+    ...(connection.provider !== KEYRING_PROVIDER
+      ? { provider: providerDisplayName(connection.provider) }
+      : {}),
+    ...(args.kind === "tool"
+      ? { toolName: args.toolName, tool: args.tool, vendorApproval: args.vendorApproval }
+      : {}),
   };
 }
 
@@ -198,7 +218,12 @@ export function connectionAskAnswerable(
   return connect === "form" && !takesCredential(payload.scheme as ConnectionScheme);
 }
 
-/** The card for a `connection` ask (`connection-request.ts`): the proposal as the agent made it. */
+/**
+ * The card for a `connection` ask (`connection-request.ts`): the proposal as the agent made it,
+ * and the line for the integration's tools the confirmation offers under the build choice
+ * (GRA-239), in the server's words. A credential's form never reaches the card, but the line
+ * rides every connection card: the keyless confirm and the link's start both carry it.
+ */
 export function connectionAskCard(args: {
   action: PendingActionRow;
   agentName: string;
@@ -212,6 +237,7 @@ export function connectionAskCard(args: {
     kind: "connection",
     agentName: args.agentName,
     vendor: payload.vendor,
+    integrationName: integrationNameFor(payload.vendor, payload.displayName),
     displayName: payload.displayName,
     primaryHost: payload.primaryHost,
     hosts: payload.hosts,
@@ -221,9 +247,14 @@ export function connectionAskCard(args: {
     expiresAt: action.expiresAt.toISOString(),
     url: args.url,
     answerable: connectionAskAnswerable(payload),
-    provider: payload.provider,
+    // The keyring's name stays the identifier the card compares against; any other is drawn.
+    provider:
+      payload.provider === KEYRING_PROVIDER
+        ? payload.provider
+        : providerDisplayName(payload.provider),
     providerConnect,
     ...(payload.widens ? { widens: payload.widens } : {}),
+    vendorTools: vendorToolsOffer(payload.vendor, payload.displayName),
   };
 }
 
@@ -244,6 +275,7 @@ export function scopeAskCard(args: {
     kind: "scope",
     agentName: args.agentName,
     vendor: payload.vendor,
+    integrationName: integrationNameFor(payload.vendor, payload.displayName),
     displayName: payload.displayName,
     primaryHost: payload.primaryHost,
     hosts: payload.hosts,
@@ -253,7 +285,9 @@ export function scopeAskCard(args: {
     expiresAt: action.expiresAt.toISOString(),
     url: args.url,
     answerable: true,
-    ...(payload.provider !== "keyring" ? { provider: payload.provider } : {}),
+    ...(payload.provider !== KEYRING_PROVIDER
+      ? { provider: providerDisplayName(payload.provider) }
+      : {}),
   };
 }
 
@@ -270,6 +304,7 @@ export function credentialAskCard(args: {
     kind: "credential",
     agentName: args.agentName,
     vendor: payload.vendor,
+    integrationName: integrationNameFor(payload.vendor, payload.connectionName),
     displayName: payload.connectionName,
     primaryHost: null,
     hosts: payload.hosts,

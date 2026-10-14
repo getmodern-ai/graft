@@ -1,0 +1,63 @@
+{
+  "name": "save-contact",
+  "description": "Saves a prospect (a lead) as a contact in your Apollo team (creates the contact), from a first and last name and optionally an email, title, company name, account (an id from apollo__search-accounts), website, labels, stage and phone. Spends no Apollo credits and enriches nothing. Given an email the team already holds, Apollo answers that contact rather than making a duplicate. The last name must be the real one, from the person or another source: apollo__search-people answers only an obfuscated last name (such as Sm***h), which is not a name to save.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "firstName": {
+        "type": "string",
+        "minLength": 1,
+        "description": "Contact's first name."
+      },
+      "lastName": {
+        "type": "string",
+        "minLength": 1,
+        "description": "Contact's last name."
+      },
+      "email": {
+        "type": "string",
+        "format": "email",
+        "description": "Contact's email address."
+      },
+      "title": {
+        "type": "string",
+        "description": "Contact's job title."
+      },
+      "organizationName": {
+        "type": "string",
+        "description": "Contact's organization name."
+      },
+      "accountId": {
+        "type": "string",
+        "description": "An account's id, from apollo__search-accounts."
+      },
+      "websiteUrl": {
+        "type": "string",
+        "format": "uri",
+        "description": "Contact or organization website URL."
+      },
+      "labelNames": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "description": "Apollo label names to apply."
+      },
+      "contactStageId": {
+        "type": "string",
+        "description": "Apollo contact stage ID."
+      },
+      "phone": {
+        "type": "string",
+        "description": "Direct phone number."
+      }
+    },
+    "required": ["firstName", "lastName"],
+    "additionalProperties": false
+  },
+  "hosts": ["api.apollo.io"],
+  "annotations": {
+    "readOnly": false,
+    "destructive": false
+  }
+}

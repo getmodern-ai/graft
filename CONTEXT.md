@@ -94,8 +94,8 @@ _Avoid_: container, VM, worker, isolate (as the name of the thing)
 ### Tools and the toolbox
 
 **Tool**:
-A single capability the harness sees as an MCP tool. Everything in an agent's list is either a
-meta-tool or an authored tool. On the wire an authored tool is `<vendor>__<name>` — the two
+A single capability the harness sees as an MCP tool. Everything in an agent's list is a meta-tool,
+an authored tool or a stock tool. On the wire an authored tool is `<vendor>__<name>` — the two
 kebab-case halves joined by a double underscore, which neither can contain — and a connection's
 execute tool is `execute__<connection id>`.
 _Avoid_: function, action, capability, skill
@@ -112,6 +112,28 @@ A tool Graft's model wrote: a small module of code making one call against a con
 of the vendor's API than the task needs. Versioned in the toolbox, bound to a connection's vendor
 rather than a connection row, and promoted per agent.
 _Avoid_: custom tool, generated tool, function, script
+
+**Stock tool**:
+A tool every person has without acquiring it: a vendor's basic read or write, there as soon as the
+integration is connected, over any connection of that integration. Graft authors its own stock
+ahead of time with the same loop, verified before it ships; a later tool source may add more.
+Found and promoted like an authored tool, and like one it reaches an agent's list only when
+reached for. Its first promote or run puts a copy in the person's toolbox under the same name,
+which follows stock's new versions until the person remixes it. A person's own authored tool of
+the same name shadows it. Person-facing copy calls it ready-made.
+_Avoid_: catalogue tool, prebuilt tool, upstream tool, provided tool, action (a source's word)
+
+**Remix**:
+A person's own version of a stock tool, published from it under the same name, after which stock's
+new versions no longer reach that tool until the person, or their agent, goes back to stock.
+_Avoid_: fork, customise, override, variation (a tool that does a different job is a new authored
+tool, not a remix)
+
+**Tool source**:
+Where stock tools come from: the seam that lists and describes them and puts one in a person's
+reach. Graft's own stock is the first source, copied into the toolbox when reached for; a later
+source, a broker or a vendor's MCP server, would run its tools itself.
+_Avoid_: catalogue, registry, gateway, marketplace
 
 **Toolbox**:
 A person's store of authored tools, every version kept, demoted ones included. Nothing is ever
@@ -131,8 +153,8 @@ deletes.
 _Avoid_: file store, scratch, cache, bucket
 
 **Working set**:
-The authored tools currently promoted for one agent, and therefore present in its MCP tool list.
-Bounded by a cap and an idle window per agent.
+The authored and stock tools currently promoted for one agent, and therefore present in its MCP
+tool list. Bounded by a cap and an idle window per agent.
 _Avoid_: active tools, loaded tools, context, enabled tools
 
 **Promote** / **Demote**:
@@ -161,11 +183,12 @@ job acquires)
 **Check**:
 The static pass over a module: types against the input schema and the context, banned surface,
 imports outside the module, a literal foreign host, an SDK not bound to the proxy. Also the source
-of a tool's read-only and destructive annotations, derived from the methods it uses.
+of a tool's read-only and destructive annotations, derived from the reads and writes it makes
+(ADR 0008 as amended 2026-10-10).
 _Avoid_: lint, validate, compile
 
 **Dry run**:
-A run in which reads reach the vendor and every other method stops at the proxy, which answers
+A run in which reads reach the vendor and every other request stops at the proxy, which answers
 with a preview of the request that would have left. Exists for the model, which fixes the tool on
 what it learns; a person is never shown one.
 _Avoid_: test run, preview (that is what a dry run returns for a write), simulation
@@ -197,19 +220,23 @@ _Avoid_: link, redirect, elicitation (which is a different mechanism, used only 
 
 **Approval**:
 A person's answer to a tool's ask. Reads never ask. Any other tool, destructive included, asks once
-and the answer holds; the person may set a tool to ask every time, and back. `acquire` asks once
-per agent per connection. Answerable later through the console.
+and the answer holds; the person may set a tool to ask every time, and back. The person may also
+allow every tool of an integration for an agent at once, destructive ones only if they say so. The
+answer is for the version it was given for: a new version of a write asks again once, except a
+ready-made tool's update that does not widen what it may do. `acquire` asks once per agent per
+connection. Answerable later through the console.
 _Avoid_: grant, permission, consent (fine in prose, not as the noun for the record)
 
 **Setup**:
 The console's guided first run: a person names the harness they run, connects a first
-integration, names the task for a first tool, has Graft acquire it and run it, and leaves with the
-prompt that connects that harness.
+integration, takes one of its ready-made stock tools or names the task for a first tool and has
+Graft acquire it, runs it, and leaves with the prompt that connects that harness.
 It runs as the person's first agent, and every step is one the console offers on its own.
 _Avoid_: onboarding (the word for the effort, in tickets), wizard, tour, getting started
 
 **Starter integration**:
 One of a short list of integrations Setup offers first, each connected in one click and with a
-read-only task known to acquire cleanly. A convenience for the first tool, never a catalogue (ADR
-0001); an integration not on it is connected the way any other is.
+read-only task known to acquire cleanly, and its curated read-only stock tools offered before it.
+A convenience for the first tool, never a catalogue (ADR 0001); an integration not on it is
+connected the way any other is.
 _Avoid_: starter vendor, app, catalogue, supported integration, template

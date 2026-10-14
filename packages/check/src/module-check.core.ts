@@ -4,14 +4,17 @@ import { posix } from "node:path";
 import ts from "typescript6";
 
 import { type ToolAnnotations, UNKNOWN_ANNOTATIONS } from "./annotations.ts";
+import { requiredWithDefault } from "./input-schema.ts";
+import { declarationsOf, isDestructiveCall, isReadCall, stringifyTampered } from "./read-call.ts";
 
 /**
  * The static check of an authored module (`CONTEXT.md`, "Check"). Pure: files in, diagnostics and
  * annotations out, no sandbox and no network. `module-check.ts` is the door — it runs this in a worker
  * thread under a size and time budget — and `module-check.worker.ts` is the thread's entry. Nothing
  * here may import from the rest of the package: this file and its imports are the whole of what the
- * worker loads, and Node resolves them natively (so `.ts` siblings need their extension, and nothing
- * here reaches `@graft/*`).
+ * worker loads, and Node resolves them natively (so `.ts` siblings need their extension). The one
+ * reach into `@graft/*` is `read-call.ts`'s import of `@graft/proxy/read-request`, the classifier
+ * the proxy's dry run judges with, a single file of erasable syntax written for this loader.
  *
  * `typescript6`, not `typescript`: the catalog's TypeScript 7 is the Go-native compiler and its npm
  * package ships `tsc` alone — `createProgram`, `createSourceFile` and the rest of the JS API are not in
@@ -40,7 +43,9 @@ import { type ToolAnnotations, UNKNOWN_ANNOTATIONS } from "./annotations.ts";
  * nothing else in either slot. `import-not-vendored` (ADR 0013): a package import resolves only into
  * the version's own `node_modules`, so it is allowed only when the module's `package.json` declares
  * it. And the **annotations** (ADR 0008): `readOnly` and `destructive` are read off the HTTP methods
- * the module's calls use, never off anything the module says about itself — `deriveAnnotations`.
+ * the module's calls use, and for a POST off what the proxy's classifier makes of the call as the
+ * source states it (`read-call.ts`), never off anything the module says about itself —
+ * `deriveAnnotations`.
  *
  * `.ts` is the contract's entry; `.mjs` is still accepted and checked as JavaScript (`checkJs`), with
  * the same in-place typing through a JSDoc cast. Node 24 runs `.ts` by stripping types, which is
@@ -85,6 +90,7 @@ export const REFUSAL_RULES = [
   "entry-missing",
   "budget",
   "check-failed",
+  "schema-required-default",
 ] as const;
 
 export const ADVICE_RULES = [
@@ -306,9 +312,6 @@ function bannedModuleDiagnostic(rel: string, specifier: string): { message: stri
 const CREDENTIAL_OPTIONS: ReadonlySet<string> = new Set(SDK_CREDENTIAL_OPTIONS);
 const BASE_OPTIONS: ReadonlySet<string> = new Set(SDK_BASE_OPTIONS);
 
-/** The methods the proxy forwards in a dry run and the annotations count as reads (ADR 0008). */
-const READ_METHODS: ReadonlySet<string> = new Set(["GET", "HEAD"]);
-
 /**
  * TypeScript's "implicitly has an 'any' type" family. Advice, not refusal: `strict` reports them and
  * the module still runs, but a value nothing knows the shape of is exactly where a typo hides.
@@ -350,6 +353,9 @@ const OPTIONS: ts.CompilerOptions = {
 
 /* -------------------------------------- the check -------------------------------------- */
 
+/** The `file` a diagnostic about the input schema names: it is no file of the module's. */
+export const INPUT_SCHEMA_FILE = "inputSchema";
+
 /**
  * The whole check, synchronously, in whichever thread calls it. `module-check.ts` calls it from a
  * worker so a pathological module cannot hold the server; the tests call it directly.
@@ -372,6 +378,15 @@ export function checkModuleSync(input: ModuleCheckInput): ModuleCheckResult {
 
   const schema = objectOrNull(input.inputSchema);
   const declaredFields = schema ? Object.keys(propertiesOf(schema)) : [];
+  // A rule over the schema, not the code: the validator refuses a call that omits a required
+  // field before its default could apply, and nothing fills a default in (`input-schema.ts`).
+  for (const found of requiredWithDefault(schema)) {
+    const fallback = `input.${found.path.replaceAll("[]", "[i]").replaceAll(".<key>", "[key]")} ?? ${JSON.stringify(found.default)}`;
+    bag.plain("schema-required-default", INPUT_SCHEMA_FILE, {
+      message: `The input schema lists ${found.path} as required and gives it a default of ${JSON.stringify(found.default)}, so a call that leaves it out is refused before the default can apply; nothing fills a default in for the module.`,
+      hint: `Drop ${found.field} from required, and apply the default where the module reads it: ${fallback}.`,
+    });
+  }
   const entryIsTs = TS_EXTENSIONS.some((ext) => entryRel.endsWith(ext));
   const exported = analyseDefaultExport(entrySource);
   const exportPos = exported?.pos ?? 0;
@@ -388,9 +403,10 @@ export function checkModuleSync(input: ModuleCheckInput): ModuleCheckResult {
   }
   // The SDK rules and the annotations read the same bindings: which identifiers reach a package.
   const bindings = analyseSdkBindings(module);
-  const tally: MethodTally = { writes: 0, deletes: 0 };
+  const tally: MethodTally = { writes: 0, destructive: 0 };
+  const bodiesUnknown = [...module.originals.values()].some(stringifyTampered);
   for (const [abs, source] of module.originals) {
-    scanSdk(source, abs, bag, bindings.get(abs) ?? new Map(), tally);
+    scanSdk(source, abs, bag, bindings.get(abs) ?? new Map(), tally, bodiesUnknown);
   }
   const annotations = deriveAnnotations(tally);
 
@@ -1195,7 +1211,7 @@ function rootPackageOf(expression: ts.Expression, locals: SdkBindings): string |
 }
 
 /** What the annotations are decided on; a read leaves no mark, so only the two that do are counted. */
-type MethodTally = { writes: number; deletes: number };
+type MethodTally = { writes: number; destructive: number };
 
 /** What of `ctx` the tool's function calls (`ModuleCheckResult.contextMembersUsed`, `blobReadFields`). */
 type ContextUse = { members: Set<string>; blobReadFields: Set<string> };
@@ -1376,7 +1392,9 @@ function inputFieldOf(
  * One walk per file for the two SDK-aware rules. Every `new X(…)` of a bound identifier — and every
  * call of one that carries an options object with a credential or base slot, the factory form — is
  * held to the binding (`checkSdkConstruction`). Every call rooted in a binding is tallied as a write;
- * every other `.fetch(…)` is tallied by its `method`.
+ * every other `.fetch(…)` is tallied by the proxy's classifiers on what the source states
+ * (`read-call.ts`): destructive (a `DELETE` or a reviewed destructive endpoint), else not at all
+ * when it is a read, else a write.
  */
 function scanSdk(
   sf: ts.SourceFile,
@@ -1384,7 +1402,9 @@ function scanSdk(
   bag: DiagnosticBag,
   locals: SdkBindings,
   tally: MethodTally,
+  bodiesUnknown: boolean,
 ): void {
+  const declarations = declarationsOf(sf);
   const visit = (node: ts.Node): void => {
     if (ts.isNewExpression(node)) {
       const pkg = rootPackageOf(node.expression, locals);
@@ -1399,8 +1419,9 @@ function scanSdk(
         (ts.isIdentifier(node.expression) && node.expression.text === "fetch")
       ) {
         const method = fetchMethod(node.arguments[1]);
-        if (method === "DELETE") tally.deletes += 1;
-        else if (method === null || !READ_METHODS.has(method)) tally.writes += 1;
+        if (method === null) tally.writes += 1;
+        else if (isDestructiveCall(node, method, declarations)) tally.destructive += 1;
+        else if (!isReadCall(node, method, declarations, bodiesUnknown)) tally.writes += 1;
       }
     }
     ts.forEachChild(node, visit);
@@ -1445,8 +1466,8 @@ function fetchMethod(init: ts.Expression | undefined): string | null {
 /** The annotations, from the tally — ADR 0008's rule, and the type's doc comment. */
 function deriveAnnotations(tally: MethodTally): ToolAnnotations {
   return {
-    readOnly: tally.writes === 0 && tally.deletes === 0,
-    destructive: tally.deletes > 0,
+    readOnly: tally.writes === 0 && tally.destructive === 0,
+    destructive: tally.destructive > 0,
   };
 }
 

@@ -71,10 +71,38 @@ export const TRACKED_ROUTES: ReadonlyArray<TrackedRoute> = [
   // The goal step completes when Build is pressed (GRA-207); the building step's completion is
   // counted where the record learns the tool, since that is a read, as the connect step's is.
   {
+    // Setup v2: the integration chosen before connecting; a cleared one is the tool screen's Back.
+    method: "POST",
+    path: /^\/setup\/starter$/,
+    event: "setup_step_completed",
+    properties: (answer) => {
+      const setup =
+        typeof answer === "object" && answer !== null
+          ? (answer as { setup?: { starterId?: unknown } }).setup
+          : null;
+      return setupStepProperties(setup?.starterId ? "vendor" : "vendor_cleared")(answer);
+    },
+  },
+  {
+    // Setup v2: the task chosen, which connects the integration or builds at once.
+    method: "POST",
+    path: /^\/setup\/task$/,
+    event: "setup_step_completed",
+    properties: setupStepProperties("goal"),
+  },
+  {
     method: "POST",
     path: /^\/setup\/build$/,
     event: "setup_step_completed",
     properties: setupStepProperties("goal"),
+  },
+  {
+    // A ready-made tool chosen instead of a task to build (GRA-276): the same step, told apart by
+    // `readyMade`.
+    method: "POST",
+    path: /^\/setup\/stock$/,
+    event: "setup_step_completed",
+    properties: (answer) => ({ ...setupStepProperties("goal")(answer), readyMade: true }),
   },
   // The result step completes on its Continue; the finish completes Setup (GRA-208).
   {

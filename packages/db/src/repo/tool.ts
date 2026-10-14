@@ -1,6 +1,7 @@
-import { and, asc, desc, eq, inArray } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
 
 import type { DbOrTx } from "../index";
+import { stockToolVersion } from "../schema/stock";
 import {
   authoredTool,
   type NewAuthoredTool,
@@ -29,6 +30,22 @@ function ownedToolIds(db: DbOrTx, personId: string, toolId: string) {
     .select({ id: authoredTool.id })
     .from(authoredTool)
     .where(and(eq(authoredTool.id, toolId), eq(authoredTool.personId, personId)));
+}
+
+/**
+ * Serialise the making of one person's tool of one name for the transaction: a transaction-scoped
+ * advisory lock on the hash of `person:vendor:name`, so two first copies of a stock tool
+ * (`@graft/publish`'s `copyStockVersion`, GRA-238) cannot both find no tool and both write its
+ * first version directory. Released with the transaction; a hash collision costs a wait only.
+ */
+export async function lockAuthoredToolName(
+  db: DbOrTx,
+  personId: string,
+  key: { vendor: string; name: string },
+): Promise<void> {
+  await db.execute(
+    sql`select pg_advisory_xact_lock(hashtext(${`authored-tool:${personId}:${key.vendor}:${key.name}`}))`,
+  );
 }
 
 export async function insertAuthoredTool(
@@ -82,6 +99,25 @@ export async function findAuthoredToolById(
   return row ?? null;
 }
 
+/**
+ * One tool locked for the caller's transaction (`SELECT … FOR UPDATE`): the stock advance reads it
+ * so two reaches of one copy at once serialise, and the second decides over the first's version
+ * (`@graft/publish`'s `advanceStockCopy`, GRA-242).
+ */
+export async function findAuthoredToolForUpdate(
+  db: DbOrTx,
+  personId: string,
+  id: string,
+): Promise<AuthoredToolRow | null> {
+  const [row] = await db
+    .select()
+    .from(authoredTool)
+    .where(and(eq(authoredTool.id, id), eq(authoredTool.personId, personId)))
+    .limit(1)
+    .for("update");
+  return row ?? null;
+}
+
 /** A republish's changes to the tool itself: the prose, the schema, the derived annotations. */
 export async function updateAuthoredTool(
   db: DbOrTx,
@@ -117,6 +153,56 @@ export async function listToolVersions(
     .from(toolVersion)
     .where(inArray(toolVersion.toolId, ownedToolIds(db, personId, toolId)))
     .orderBy(desc(toolVersion.versionNumber));
+}
+
+/**
+ * One version's origin, for the stock advance and the console's history (ADR 0025; GRA-242): the
+ * stock tool and version it was copied from, with that stock version's number, or nulls for a
+ * version the agent published.
+ */
+export type ToolVersionOrigin = {
+  toolId: string;
+  versionId: string;
+  versionNumber: number;
+  createdAt: Date;
+  stockToolId: string | null;
+  stockVersionId: string | null;
+  /** The stock version's own number (`stock_tool_version.version_number`); null when not from stock. */
+  stockVersionNumber: number | null;
+};
+
+/**
+ * The origins of every version of the person's tools, or of one tool's when `toolId` is given, in
+ * one statement: the person's tools by subquery, the stock number by a left join on the global
+ * catalogue. Ordered by tool, then newest first.
+ */
+export async function listToolVersionOrigins(
+  db: DbOrTx,
+  personId: string,
+  toolId?: string,
+): Promise<ToolVersionOrigin[]> {
+  const owned = db
+    .select({ id: authoredTool.id })
+    .from(authoredTool)
+    .where(
+      toolId === undefined
+        ? eq(authoredTool.personId, personId)
+        : and(eq(authoredTool.id, toolId), eq(authoredTool.personId, personId)),
+    );
+  return db
+    .select({
+      toolId: toolVersion.toolId,
+      versionId: toolVersion.id,
+      versionNumber: toolVersion.versionNumber,
+      createdAt: toolVersion.createdAt,
+      stockToolId: toolVersion.stockToolId,
+      stockVersionId: toolVersion.stockVersionId,
+      stockVersionNumber: stockToolVersion.versionNumber,
+    })
+    .from(toolVersion)
+    .leftJoin(stockToolVersion, eq(stockToolVersion.id, toolVersion.stockVersionId))
+    .where(inArray(toolVersion.toolId, owned))
+    .orderBy(asc(toolVersion.toolId), desc(toolVersion.versionNumber));
 }
 
 export async function findToolVersion(

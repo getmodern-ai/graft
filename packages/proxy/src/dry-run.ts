@@ -1,3 +1,4 @@
+import { isDestructiveRequest } from "./read-request";
 import { credentialIncompleteRefusal, type SchemePlugin } from "./schemes";
 import type { SchemeConfig } from "./types";
 
@@ -8,8 +9,10 @@ export type { DryRunOutcome } from "./types";
  * answers with a preview of the request that would have left).
  *
  * A capability token may carry `dryRun: true`. With it, the proxy runs every check it runs today,
- * forwards `GET` and `HEAD` exactly as a normal call, and stops every other method here, answering
- * a **preview** rather than anything a vendor said. The claim is the guarantee, not the client: a
+ * forwards a read exactly as a normal call, and stops every other request here, answering a
+ * **preview** rather than anything a vendor said. A read is what `read-request.ts`'s classifier
+ * says it is: a `GET` or `HEAD`, a GraphQL query, or an entry of the reviewed table (ADR 0008 as
+ * amended 2026-10-10). The claim is the guarantee, not the client: a
  * module that bypasses the runner's fetch — or an SDK bound to the proxy (ADR 0010) — still cannot
  * write during a dry run, because the proxy is what reads the token. This file holds the pure parts
  * — the marker, the status, the preview's shape and how it is built; `app.ts` decides where in the
@@ -53,11 +56,14 @@ export function isSafeMethod(method: string): boolean {
  * primary's base path plus the caller's, or the caller's alone under the explicit form). `hasQuery`
  * says whether a query string was present without repeating it — a scheme may put the key there.
  * The body is the caller's own, already read under the proxy's cap, as UTF-8 when it decodes as
- * such and base64 otherwise.
+ * such and base64 otherwise. `destructive` labels a write the person could not take back, a
+ * `DELETE` or an entry of the reviewed table (`read-request.ts`'s `isDestructiveRequest`, the
+ * judgement the check annotates a tool's `destructive` with; GRA-267).
  */
 export type DryRunPreview = {
   dryRun: true;
   intercepted: true;
+  destructive: boolean;
   request: {
     method: string;
     host: string;
@@ -85,6 +91,13 @@ export function buildDryRunPreview(input: DryRunPreviewInput): DryRunPreview {
   return {
     dryRun: true,
     intercepted: true,
+    destructive: isDestructiveRequest({
+      method: input.method,
+      host: input.url.hostname,
+      path: input.url.pathname,
+      hasQuery: input.url.search.length > 1,
+      body: null,
+    }),
     request: {
       method: input.method,
       host: input.url.hostname,

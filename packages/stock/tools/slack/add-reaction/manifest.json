@@ -1,0 +1,31 @@
+{
+  "name": "add-reaction",
+  "description": "Adds an emoji reaction to a Slack message. Takes the channel by name or id (list-channels lists them), the message's ts, which read-channel-history, read-thread and post-message answer, and the emoji's name.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "channel": {
+        "type": "string",
+        "minLength": 1,
+        "description": "A channel name, with or without the leading #, or a channel id from list-channels."
+      },
+      "messageTs": {
+        "type": "string",
+        "minLength": 1,
+        "description": "The ts of the message to react to, from read-channel-history, read-thread or post-message."
+      },
+      "emoji": {
+        "type": "string",
+        "minLength": 1,
+        "description": "The emoji's name, such as thumbsup, with or without the surrounding colons."
+      }
+    },
+    "required": ["channel", "messageTs", "emoji"],
+    "additionalProperties": false
+  },
+  "hosts": ["slack.com"],
+  "annotations": {
+    "readOnly": false,
+    "destructive": false
+  }
+}

@@ -307,7 +307,7 @@ describe("the proposal's rules, before any record exists", () => {
         primaryHost: "https://api.acme.example/v2",
         hosts: ["api.acme.example", "files.acme.example"],
         docsUrl: "https://developer.acme.example/auth",
-        note: expect.stringContaining("agent's model"),
+        note: expect.stringContaining("The agent proposed this connection"),
       },
     });
   });

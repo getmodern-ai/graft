@@ -1,0 +1,32 @@
+{
+  "name": "list-folder",
+  "description": "Lists files and subfolders in a Google Drive folder, including shared-drive folders, with optional pagination.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "folderId": {
+        "type": "string",
+        "default": "root",
+        "examples": ["root"],
+        "description": "A folder id from search-files or list-recent-files, or 'root' for My Drive."
+      },
+      "limit": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 1000,
+        "default": 50,
+        "description": "Maximum number of files to return."
+      },
+      "pageToken": {
+        "type": "string",
+        "description": "The nextPageToken an earlier call answered."
+      }
+    },
+    "additionalProperties": false
+  },
+  "hosts": ["www.googleapis.com"],
+  "annotations": {
+    "readOnly": true,
+    "destructive": false
+  }
+}

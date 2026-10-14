@@ -43,6 +43,9 @@ function inMemorySetup(
       step: "harness",
       harness: null,
       agentId: null,
+      starterId: null,
+      goal: null,
+      stockTool: null,
       pendingActionId: null,
       connectionId: null,
       acquireJobId: null,
@@ -232,10 +235,15 @@ describe("GET /api/setup/vendors", () => {
       "gmail",
       "google-calendar",
       "google-drive",
+      "google-sheets",
       "slack",
       "notion",
       "github",
       "hubspot",
+      "stripe",
+      "microsoft-outlook",
+      "linear",
+      "apollo",
       "open-meteo",
     ]);
     expect(
@@ -370,6 +378,40 @@ describe("POST /api/setup/connect", () => {
     });
   });
 
+  it("opens Linear's secret form with its bare Authorization header, and a key connects it (GRA-269)", async () => {
+    const h = harness();
+    await started(h);
+    const asked = await read(
+      await h.app.request("/api/setup/connect", post({ starterId: "linear" })),
+    );
+    const askId: string = asked.setup.pendingActionId;
+    expect(h.store.pendingActions.get(askId)?.payload).toMatchObject({
+      vendor: "linear",
+      primaryHost: "https://api.linear.app",
+      scheme: "api_key_header",
+      schemeConfig: { headerName: "Authorization" },
+      providerConnect: "form",
+    });
+    const res = await h.app.request(
+      `/api/pending-actions/${askId}/connection`,
+      post({
+        vendor: "linear",
+        displayName: "Linear",
+        primaryHost: "https://api.linear.app",
+        hosts: ["api.linear.app"],
+        scheme: "api_key_header",
+        schemeConfig: { headerName: "Authorization" },
+        credential: { apiKey: "lin_api_setup_test_key_0123456789" },
+      }),
+    );
+    expect(res.status).toBe(201);
+    const connectionId: string = (await read(res)).connection.id;
+    expect(await read(await h.app.request("/api/setup"))).toMatchObject({
+      step: "goal",
+      setup: { connectionId },
+    });
+  });
+
   it("goes back to the vendor step when the ask is declined", async () => {
     const h = harness();
     await started(h);
@@ -454,6 +496,34 @@ describe("POST /api/setup/connect", () => {
     expect(await read(await h.app.request("/api/setup"))).toMatchObject({
       step: "goal",
       setup: { connectionId: scope[0] },
+    });
+  });
+
+  it("lands a task's connect only on the plan it saved, never on another tab's (Greptile on #201)", async () => {
+    const h = harness();
+    await started(h);
+    await h.app.request("/api/setup/starter", post({ starterId: "open-meteo" }));
+    // This request saves its task (the first lock); before its connect move takes the second,
+    // another tab goes back to the integrations, clearing the starter and the task.
+    h.hooks.locks = [
+      null,
+      async () => {
+        const other = await read(
+          await h.app.request("/api/setup/starter", post({ starterId: null })),
+        );
+        expect(other).toMatchObject({ step: "vendor", setup: { starterId: null, goal: null } });
+      },
+    ];
+    const res = await h.app.request(
+      "/api/setup/task",
+      post({ goal: "Tell me the weather right now in a city I name" }),
+    );
+    expect(res.status).toBe(200);
+    // The move found the plan changed and stood aside: no ask on a record that holds no task,
+    // which unguarded would have moved to connect with nothing to build once it lands.
+    expect(await read(res)).toMatchObject({
+      step: "vendor",
+      setup: { starterId: null, goal: null, pendingActionId: null },
     });
   });
 

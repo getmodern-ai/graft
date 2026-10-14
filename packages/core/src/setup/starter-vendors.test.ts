@@ -33,15 +33,20 @@ const ids = (list: ReturnType<typeof setupVendorOptions>) =>
   list.map((option) => option.starter.id);
 
 describe("the starter integrations", () => {
-  it("are the eight, each a vendor slug and a host set the connection rules admit", () => {
+  it("are the starters, each a vendor slug and a host set the connection rules admit", () => {
     expect(STARTER_VENDOR_IDS).toEqual([
       "gmail",
       "google-calendar",
       "google-drive",
+      "google-sheets",
       "slack",
       "notion",
       "github",
       "hubspot",
+      "stripe",
+      "microsoft-outlook",
+      "linear",
+      "apollo",
       "open-meteo",
     ]);
     for (const starter of STARTER_VENDORS) {
@@ -91,8 +96,19 @@ describe("the starter integrations", () => {
     expect(STARTER_VENDORS.filter((starter) => starter.runInput).map((s) => s.id)).toEqual([
       "open-meteo",
     ]);
-    // A spreadsheet's rows need its id and a range, both looked up (GRA-217): Drive lists files.
-    expect(starterVendorOf("google-sheets")).toBeNull();
+    // A spreadsheet's rows need its id and a range, both looked up (GRA-217): Sheets' task lists
+    // the spreadsheets through Drive's search, on Drive's host (GRA-259).
+    expect(starterVendorOf("google-sheets")).toMatchObject({
+      vendor: "google-sheets",
+      primaryHost: "https://sheets.googleapis.com/v4",
+      hosts: ["sheets.googleapis.com", "www.googleapis.com"],
+      runInput: null,
+    });
+    // The stock tools connect through this proposal and four of them write (GRA-259), so the
+    // keyring's consent asks Google for read and write on spreadsheets, never the read-only scope.
+    const sheetsScopes = String(starterVendorOf("google-sheets")?.schemeConfig.scopes).split(" ");
+    expect(sheetsScopes).toContain("https://www.googleapis.com/auth/spreadsheets");
+    expect(sheetsScopes).not.toContain("https://www.googleapis.com/auth/spreadsheets.readonly");
     expect(starterVendorOf("google-drive")).toMatchObject({
       vendor: "google-drive",
       primaryHost: "https://www.googleapis.com/drive/v3",
@@ -101,8 +117,15 @@ describe("the starter integrations", () => {
     });
     expect(starterVendorOf("gmail")?.runInput).toBeNull();
     expect(starterVendorOf("jira")).toBeNull();
-    // Linear reads through GraphQL, a POST, which the check counts as a write (GRA-216).
-    expect(starterVendorOf("linear")).toBeNull();
+    // Linear reads through a GraphQL query, a POST the proxy reads (GRA-260, GRA-269).
+    expect(starterVendorOf("linear")).toMatchObject({
+      vendor: "linear",
+      primaryHost: "https://api.linear.app",
+      hosts: ["api.linear.app"],
+      scheme: "api_key_header",
+      schemeConfig: { headerName: "Authorization" },
+      runInput: null,
+    });
     expect(starterVendorFor("google-calendar")?.id).toBe("google-calendar");
     expect(starterVendorFor("acme")).toBeNull();
   });
@@ -115,6 +138,15 @@ describe("the starter integrations", () => {
     expect(gmail?.hints).toContain("`snippet`");
     expect(gmail?.hints).toContain("Make no other call.");
     expect(gmail?.hints).not.toMatch(/message get|metadataHeaders|then read each/);
+  });
+
+  it("asks Google Calendar's consent for event writes, which its stock tools make", () => {
+    const calendar = starterVendorOf("google-calendar");
+    const scopes = String(calendar?.schemeConfig.scopes).split(/\s+/);
+    expect(scopes).toEqual([
+      "https://www.googleapis.com/auth/calendar.readonly",
+      "https://www.googleapis.com/auth/calendar.events",
+    ]);
   });
 
   it("proposes exactly what an agent's request_connection would send", () => {
@@ -147,10 +179,15 @@ describe("setupVendorOptions", () => {
       "gmail",
       "google-calendar",
       "google-drive",
+      "google-sheets",
       "slack",
       "notion",
       "github",
       "hubspot",
+      "stripe",
+      "microsoft-outlook",
+      "linear",
+      "apollo",
       "open-meteo",
     ]);
     expect(list.slice(0, -1).every((option) => option.connect === "link")).toBe(true);
@@ -171,7 +208,10 @@ describe("setupVendorOptions", () => {
       covered((starter) =>
         starter.vendor === "github"
           ? GATEWAY
-          : starter.vendor === "open-meteo" || starter.vendor === "hubspot"
+          : starter.vendor === "open-meteo" ||
+              starter.vendor === "hubspot" ||
+              starter.vendor === "stripe" ||
+              starter.vendor === "apollo"
             ? KEYRING
             : LINK,
       ),
@@ -180,8 +220,11 @@ describe("setupVendorOptions", () => {
       "gmail:link",
       "google-calendar:link",
       "google-drive:link",
+      "google-sheets:link",
       "slack:link",
       "notion:link",
+      "microsoft-outlook:link",
+      "linear:link",
       "github:none",
       "open-meteo:keyless",
     ]);

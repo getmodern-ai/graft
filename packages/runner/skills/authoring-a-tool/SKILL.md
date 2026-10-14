@@ -43,8 +43,12 @@ the re-entry variant against the existing connection.
    not the first alone: a module that lists and then fetches each item has two paths to prove,
    and the second's headers and fields are what it parses. A proof read may name a host: a path
    the module reads from another host the connection declares is proven on that host, with the
-   same `{ host }` the module passes to `ctx.fetch`, never on the primary host. A draft whose proof
-   read failed is not published: change the module or the read and prove again.
+   same `{ host }` the module passes to `ctx.fetch`, never on the primary host. A proof read
+   carries the vendor's own headers the module sends, such as a version header, and never a
+   credential, which the proxy injects. A proof read may be a `POST` with its body only where the
+   proxy counts it as a read, a GraphQL query or a reviewed search endpoint; any other `POST` is a
+   write, and the dry run previews it instead. A draft whose proof read failed is not published:
+   change the module or the read and prove again.
 5. **Publish with a test input** — `publish_tool` with `testInput`. It runs the same check and
    refuses on the same list, installs any package the module declares if the package policy allows
    it, then **dry-runs** the version it just wrote: reads reach the vendor for real, every write
@@ -313,9 +317,22 @@ declared input field the module never reads, a result JSON would lose (a functio
 The check also answers with the tool's **annotations**, `readOnly` and `destructive`, read off the
 methods the module uses: `ctx.fetch` with no method, `GET` or `HEAD` is a read; `DELETE` is
 destructive; any other method is a write; and every SDK call, and a `method` that is not a literal,
-counts as a write. You do not declare them, and nothing you write about the tool changes them. A
-tool you meant to be read-only that comes back `readOnly: false` is one with an SDK call or a
-computed method in it, and reads pass without asking only when `readOnly` is true.
+counts as a write. Two kinds of `POST` are reads, judged exactly as the dry run judges them:
+
+- **A GraphQL query**: a `POST` to a path ending `/graphql` (or `/graphql.json`), no query string,
+  whose body is `JSON.stringify({ query, variables?, operationName? })` with `query` a string
+  literal, a template with no `${}`, a `+` of those, or a `const` of the file holding one, and the
+  document only `query` operations (and fragments). A mutation, a subscription, a document built
+  from the input, or any other key in the body (`extensions` included) is a write.
+- **A reviewed search endpoint**, such as HubSpot's `POST /crm/v3/objects/<type>/search` or
+  Apollo's `POST /api/v1/mixed_people/api_search`, with the path a literal and the host named:
+  `ctx.fetch("/crm/v3/objects/contacts/search", { method: "POST", host: "api.hubapi.com", body })`.
+  Without `host` the check cannot know which host the path goes to, and the call is a write.
+
+You do not declare them, and nothing you write about the tool changes them. A tool you meant to be
+read-only that comes back `readOnly: false` is one with an SDK call, a computed method, or a `POST`
+the check could not see as one of the two above, and reads pass without asking only when
+`readOnly` is true.
 
 Fix what is named, check again, and only then run it. The check compiles on Graft, reads only the
 files you wrote and reaches nothing — it needs no approval and costs no vendor call, so there is no
@@ -349,7 +366,8 @@ call belongs to the published tool, below.
 
 To probe a write endpoint's shape *before* you draft the module — is the path right, does the
 vendor want `itemId` or `item_id` — call the execute tool with `dryRun: true`. The proxy then
-forwards `GET` and `HEAD` as usual and stops every other method, answering `202` with header
+forwards reads as usual (`GET`, `HEAD`, and the two read `POST`s above) and stops every other
+request, answering `202` with header
 `x-graft-dry-run: intercepted` and a JSON preview of the request that would have been sent; nothing
 reaches the vendor. The same `dryRun: true` on `run_tool` re-tests a published version after an
 edit without a republish.
@@ -359,7 +377,8 @@ edit without a republish.
 `publish_tool` takes the vendor, a kebab-case name (`create-order`), a description of up to 500
 characters, a JSON Schema object for the input, the module's path, and a `testInput`. It runs the
 same check `check_tool` runs and refuses with the diagnostics on any refusal; otherwise it copies
-the module into the toolbox as a new version — `/tools/<vendor>/<name>/v<N>` — installs the
+the module into the toolbox as a new version — a directory of its own under
+`/tools/<vendor>/<name>/`, whose path the result names — installs the
 packages the module declares under the package policy and vendors them into the version, records
 the version with the check's annotations, returns the check's advice beside the result, and
 **dry-runs the version it just wrote** with the test input. No approval is needed for this: a
@@ -369,8 +388,9 @@ exist — the credential, and the tool's first use.
 ## Dry-running it
 
 A dry run is how you learn whether your request is right without changing anything. The token the
-run carries says so, and the proxy honours it: reads (`GET`, `HEAD`) go to the vendor for real and
-come back real; every other method stops at the proxy, which answers your module with a **preview**
+run carries says so, and the proxy honours it: reads (`GET`, `HEAD`, a GraphQL query, a reviewed
+search endpoint) go to the vendor for real and come back real, and are on the report's `reads`;
+every other request stops at the proxy, which answers your module with a **preview**
 of the request that would have left — method, path, the header names (never values), the body —
 on a `202`. Your module runs on against that preview, and the runner reports what happened:
 
@@ -424,7 +444,9 @@ passes.
 Write the description for the person. The approval shows it as your words, marked as written by the
 agent's model, so say what the tool does and what it needs in plain language: *Creates an order in
 Demo Orders for one item and a quantity.* The input schema is `type: "object"` with `properties`
-and `required`; every call, the agent's included, is validated against it.
+and `required`; every call, the agent's included, is validated against it. Nothing fills a
+`default` in, so a field with one stays out of `required` and the module applies it
+(`input.limit ?? 10`); the check refuses a required field that carries a default.
 
 ## The first write
 

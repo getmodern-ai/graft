@@ -22,7 +22,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { agentKeys, type Tool } from "@/lib/agent-queries";
+import { agentKeys } from "@/lib/agent-queries";
 import {
   type Connection,
   connectionKeys,
@@ -32,14 +32,17 @@ import {
   providerLabel,
   reconnectConnection,
   retryProviderRelease,
+  type ToolboxTool,
   toolKeys,
 } from "@/lib/connection-queries";
 import { startOAuthConsent } from "@/lib/oauth-consent";
+import { providerLabel as providerName } from "@/lib/provider-name";
 import {
   AWAITING_RECONNECTION_CHIP,
   connectionStatusChips,
   NO_PASSING_VERSION_CHIP,
 } from "@/lib/status-chips";
+import { toolVersionLines } from "@/lib/tool-versions";
 
 /**
  * One connection: the vendor, the hosts the proxy pins its calls to, the scheme, when the credential
@@ -71,7 +74,13 @@ import {
  * the footer is Cando's banded action strip, `bg-muted/50` over a rule, and a table drawn on that
  * band loses its own row hover (the same `bg-muted/50`) and reads as furniture rather than data.
  */
-export function ConnectionCard({ connection, tools }: { connection: Connection; tools: Tool[] }) {
+export function ConnectionCard({
+  connection,
+  tools,
+}: {
+  connection: Connection;
+  tools: ToolboxTool[];
+}) {
   const [showCalls, setShowCalls] = useState(false);
   const [revoking, setRevoking] = useState(false);
   const [reentering, setReentering] = useState(false);
@@ -113,14 +122,20 @@ export function ConnectionCard({ connection, tools }: { connection: Connection; 
     onSuccess: ({ providerRelease }) => {
       queryClient.invalidateQueries({ queryKey: connectionKeys.all });
       if (providerRelease.released) {
-        toast.success(`${providerRelease.provider} released ${connection.displayName}`, {
-          description:
-            "The account is gone at the provider; nothing about it is held anywhere now.",
-        });
+        toast.success(
+          `${providerName(providerRelease.provider)} released ${connection.displayName}`,
+          {
+            description:
+              "The account is gone at the provider; nothing about it is held anywhere now.",
+          },
+        );
       } else {
-        toast.warning(`${providerRelease.provider} still did not release the connection`, {
-          description: "The provider could not be reached; the card keeps offering Retry.",
-        });
+        toast.warning(
+          `${providerName(providerRelease.provider)} still did not release the connection`,
+          {
+            description: "The provider could not be reached; the card keeps offering Retry.",
+          },
+        );
       }
     },
   });
@@ -134,9 +149,10 @@ export function ConnectionCard({ connection, tools }: { connection: Connection; 
       </>
     ) : !keyring ? (
       <>
-        Revoked <Time iso={connection.revokedAt ?? ""} />. The account at {connection.provider} is
-        forgotten and every approval with it; when an agent asks to connect {connection.vendor}{" "}
-        again, one click through {connection.provider} reconnects it.
+        Revoked <Time iso={connection.revokedAt ?? ""} />. The account at{" "}
+        {providerName(connection.provider)} is forgotten and every approval with it; when an agent
+        asks to connect {connection.vendor} again, one click through{" "}
+        {providerName(connection.provider)} reconnects it.
       </>
     ) : !takesCredential(connection.scheme) ? (
       // A keyless scheme (GRA-66) had no credential to clear and has none to re-enter: Reconnect is
@@ -180,8 +196,9 @@ export function ConnectionCard({ connection, tools }: { connection: Connection; 
       </>
     ) : !keyring ? (
       <>
-        Connected through {connection.provider}. The account's token is held there, never here;
-        Graft stores only the account's id, and every call relays through {connection.provider}.
+        Connected through {providerName(connection.provider)}. The account's token is held there,
+        never here; Graft stores only the account's id, and every call relays through{" "}
+        {providerName(connection.provider)}.
       </>
     ) : !takesCredential(connection.scheme) ? (
       // A keyless scheme (GRA-66) has no credential to have set: the sentence says so instead of
@@ -270,11 +287,11 @@ export function ConnectionCard({ connection, tools }: { connection: Connection; 
         {connection.providerReleaseFailedAt ? (
           <Alert variant="destructive">
             <WarningIcon />
-            <AlertTitle>{connection.provider} still holds this account</AlertTitle>
+            <AlertTitle>{providerName(connection.provider)} still holds this account</AlertTitle>
             <AlertDescription>
               <p>
-                Everything in Graft is revoked, but {connection.provider} could not be asked to
-                release the account when you revoked (
+                Everything in Graft is revoked, but {providerName(connection.provider)} could not be
+                asked to release the account when you revoked (
                 <Time iso={connection.providerReleaseFailedAt} />
                 ). Until it does, the account is still connected there.
               </p>
@@ -326,15 +343,18 @@ export function ConnectionCard({ connection, tools }: { connection: Connection; 
             ) : (
               <ul className="flex flex-col gap-1.5">
                 {tools.map((tool) => (
-                  <li key={tool.id} className="flex flex-wrap items-center gap-2">
-                    <code className="font-mono text-xs">
-                      {tool.vendor}__{tool.name}
-                    </code>
-                    <ToolAnnotations readOnly={tool.readOnly} destructive={tool.destructive} />
-                    {tool.currentVersionId === null ? (
-                      <StatusChip chip={NO_PASSING_VERSION_CHIP} />
-                    ) : null}
-                    {usable ? null : <StatusChip chip={AWAITING_RECONNECTION_CHIP} />}
+                  <li key={tool.id} className="flex flex-col gap-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <code className="font-mono text-xs">
+                        {tool.vendor}__{tool.name}
+                      </code>
+                      <ToolAnnotations readOnly={tool.readOnly} destructive={tool.destructive} />
+                      {tool.currentVersionId === null ? (
+                        <StatusChip chip={NO_PASSING_VERSION_CHIP} />
+                      ) : null}
+                      {usable ? null : <StatusChip chip={AWAITING_RECONNECTION_CHIP} />}
+                    </div>
+                    <ToolVersionHistory tool={tool} />
                   </li>
                 ))}
               </ul>
@@ -366,5 +386,24 @@ export function ConnectionCard({ connection, tools }: { connection: Connection; 
         />
       ) : null}
     </Card>
+  );
+}
+
+/**
+ * A tool's versions, newest first, each with where it came from: a ready-made version names the
+ * stock version it was copied from, so a copy that followed stock shows each step (GRA-242).
+ */
+function ToolVersionHistory({ tool }: { tool: ToolboxTool }) {
+  const lines = toolVersionLines(tool);
+  if (lines.length === 0) return null;
+  return (
+    <ol className="flex flex-col gap-0.5 text-muted-foreground text-xs" aria-label="Versions">
+      {lines.map((line) => (
+        <li key={line.id}>
+          {line.label} · {line.origin}
+          {line.current ? ", current" : null}
+        </li>
+      ))}
+    </ol>
   );
 }

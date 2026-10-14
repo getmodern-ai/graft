@@ -5,15 +5,22 @@ import type {
   SetupBackBody,
   SetupBuildBody,
   SetupConnectBody,
+  SetupDirectoryEntry,
+  SetupDirectoryHome,
+  SetupDirectoryPage,
   SetupFinishOutput,
   SetupGoalContext,
   SetupGoalSuggestions,
   SetupNextBody,
+  SetupReadyMade,
   SetupStartBody,
+  SetupStarterBody,
+  SetupStockBody,
+  SetupTaskBody,
   SetupToolContext,
   ToolRunBody,
 } from "@graft/server/api";
-import { type QueryClient, queryOptions } from "@tanstack/react-query";
+import { infiniteQueryOptions, type QueryClient, queryOptions } from "@tanstack/react-query";
 
 import { api, type Jsonified } from "./api";
 
@@ -89,6 +96,81 @@ export const setupVendorsQuery = queryOptions({
 /** A starter by its id, or the connection *Another integration*'s form made (`SetupConnectBody`). */
 export function connectSetup(body: SetupConnectBody) {
   return api<SetupStateData>("/setup/connect", { method: "POST", body });
+}
+
+/**
+ * Setup v2: the starter chosen before anything is connected, or null for the tool screen's Back
+ * (`POST /api/setup/starter`). The record stays on the vendor step.
+ */
+export function chooseSetupStarter(body: SetupStarterBody) {
+  return api<SetupStateData>("/setup/starter", { method: "POST", body });
+}
+
+/**
+ * Setup v2: the task, chosen before connecting (`POST /api/setup/task`). The server connects the
+ * starter and builds the moment the connection is made, or on the read that learns it.
+ */
+export function chooseSetupTask(body: SetupTaskBody) {
+  return api<SetupStateData>("/setup/task", { method: "POST", body });
+}
+
+export type SetupReadyMadeList = Jsonified<SetupReadyMade>;
+export type SetupReadyMadeTool = SetupReadyMadeList["tools"][number];
+
+/**
+ * The ready-made tools Setup offers for a starter (`GET /api/setup/stock`, GRA-276): the curated
+ * stock tools this release holds as read-only, the curated task's match first, or none. Keyed by the
+ * starter outside `["setup"]`, since the list follows the release and not the record.
+ */
+export function setupReadyMadeQuery(starterId: string) {
+  return queryOptions({
+    queryKey: ["setup-stock", starterId] as const,
+    queryFn: () =>
+      api<SetupReadyMadeList>(`/setup/stock?starterId=${encodeURIComponent(starterId)}`),
+    staleTime: 5 * 60_000,
+  });
+}
+
+/**
+ * A ready-made tool chosen instead of a task to build (`POST /api/setup/stock`, GRA-276): on the
+ * tool screen the server saves it and connects the starter, and takes it the moment the connection
+ * lands; on the task step it is taken at once, and the record moves to the result.
+ */
+export function chooseSetupStock(body: SetupStockBody) {
+  return api<SetupStateData>("/setup/stock", { method: "POST", body });
+}
+
+export type DirectoryEntry = Jsonified<SetupDirectoryEntry>;
+export type DirectoryHome = Jsonified<SetupDirectoryHome>;
+export type DirectoryPage = Jsonified<SetupDirectoryPage>;
+
+/** The integration step's first view (`GET /api/setup/directory`): popular, categories, the wall. */
+export const setupDirectoryHomeQuery = queryOptions({
+  queryKey: ["setup-directory", "home"] as const,
+  queryFn: () => api<DirectoryHome>("/setup/directory"),
+  staleTime: 5 * 60_000,
+});
+
+/** How many entries one page of a search asks for. */
+export const DIRECTORY_SEARCH_PAGE = 24;
+
+/**
+ * A search of the directory (`GET /api/setup/directory/search`), by words, a category or both, a
+ * page at a time: *Show all* asks for the next with the cursor the last one answered.
+ */
+export function setupDirectorySearchQuery(query: string, category: string | null) {
+  return infiniteQueryOptions({
+    queryKey: ["setup-directory", "search", query, category] as const,
+    queryFn: ({ pageParam }) => {
+      const params = new URLSearchParams({ q: query, limit: String(DIRECTORY_SEARCH_PAGE) });
+      if (category) params.set("category", category);
+      if (pageParam) params.set("cursor", pageParam);
+      return api<DirectoryPage>(`/setup/directory/search?${params}`);
+    },
+    initialPageParam: null as string | null,
+    getNextPageParam: (last) => last.nextCursor,
+    staleTime: 60_000,
+  });
 }
 
 export type SetupGoal = Jsonified<SetupGoalContext>;
@@ -205,4 +287,26 @@ export function acquireJobQuery(agentId: string, jobId: string) {
     queryKey: ["agents", agentId, "acquire-jobs", jobId] as const,
     queryFn: () => api<AcquireJobStatus>(`/agents/${agentId}/acquire-jobs/${jobId}`),
   });
+}
+
+/**
+ * A directory entry's mark by its slug, from the directory reads this page already made (the home
+ * view and any search), so the connect, building and done cards of an integration chosen there
+ * draw its logo rather than a glyph. Null when the page never read it, as after a reload.
+ */
+export function cachedDirectoryLogo(queryClient: QueryClient, slug: string): string | null {
+  for (const [, data] of queryClient.getQueriesData<unknown>({ queryKey: ["setup-directory"] })) {
+    const pages =
+      data && typeof data === "object" && "pages" in data
+        ? (data as { pages: DirectoryPage[] }).pages
+        : null;
+    const entries: { slug: string; logoUrl: string | null }[] = pages
+      ? pages.flatMap((page) => page.entries)
+      : data && typeof data === "object" && "popular" in data
+        ? (data as DirectoryHome).popular
+        : [];
+    const found = entries.find((entry) => entry.slug === slug && entry.logoUrl);
+    if (found?.logoUrl) return found.logoUrl;
+  }
+  return null;
 }

@@ -1,0 +1,52 @@
+{
+  "name": "find-rows",
+  "description": "Finds the rows in a Google Sheets tab where a column matches a value, exactly or as a substring, ignoring case, and answers each with its row number and its cells keyed by the header row. The spreadsheet can be a URL copied from the browser or an id from google-sheets__find-spreadsheets; tab names come from google-sheets__list-tabs. The row numbers it answers are what google-sheets__update-range takes.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "spreadsheet": {
+        "type": "string",
+        "minLength": 1,
+        "description": "The spreadsheet URL copied from the browser, or its ID from google-sheets__find-spreadsheets.",
+        "examples": [
+          "https://docs.google.com/spreadsheets/d/1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms/edit"
+        ]
+      },
+      "tab": {
+        "type": "string",
+        "minLength": 1,
+        "description": "The tab's name, from google-sheets__list-tabs. When omitted, uses the spreadsheet's first tab.",
+        "examples": ["Class Data"]
+      },
+      "column": {
+        "type": "string",
+        "minLength": 1,
+        "description": "Header text from row 1, matched case-insensitively after trimming.",
+        "examples": ["Major"]
+      },
+      "value": {
+        "type": "string",
+        "description": "Value to find, compared case-insensitively after trimming.",
+        "examples": ["English"]
+      },
+      "contains": {
+        "type": "boolean",
+        "default": false,
+        "description": "When true, match cells containing the value instead of requiring equality."
+      },
+      "limit": {
+        "type": "integer",
+        "minimum": 1,
+        "default": 50,
+        "description": "Maximum number of matching rows to return."
+      }
+    },
+    "required": ["spreadsheet", "column", "value"],
+    "additionalProperties": false
+  },
+  "hosts": ["sheets.googleapis.com"],
+  "annotations": {
+    "readOnly": true,
+    "destructive": false
+  }
+}

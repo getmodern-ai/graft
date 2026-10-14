@@ -1,0 +1,27 @@
+{
+  "format": 1,
+  "tool": "microsoft-outlook__reply-to-message",
+  "recordedAt": "2026-10-10T06:12:14.698Z",
+  "input": {
+    "messageId": "xvei-ajdyvzp-lm",
+    "comment": "Qlfhcf gzk tfvs nyseczx."
+  },
+  "exchanges": [
+    {
+      "kind": "write",
+      "method": "POST",
+      "url": "https://graph.microsoft.com/v1.0/me/messages/xvei-ajdyvzp-lm/reply",
+      "body": {
+        "json": {
+          "comment": "Qlfhcf gzk tfvs nyseczx."
+        }
+      }
+    }
+  ],
+  "result": {
+    "sent": false,
+    "preview": {
+      "comment": "Qlfhcf gzk tfvs nyseczx."
+    }
+  }
+}

@@ -20,6 +20,7 @@ import {
   SCHEMES,
   type SchemeTarget,
   SNOWFLAKE_TOKEN_TYPE_HEADER,
+  schemeReplacedHeaderNames,
   UNLEASHED_CLIENT_TYPE,
 } from "./schemes";
 import { createSingleFlight } from "./single-flight";
@@ -983,5 +984,39 @@ describe("oauth_authorization_code", () => {
     );
     expect(noClient).toBeInstanceOf(MissingSchemeParameterError);
     expect((noClient as MissingSchemeParameterError).parameter).toBe("clientId");
+  });
+});
+
+/**
+ * `schemeReplacedHeaderNames` (GRA-271; Greptile on #210): what a caller's header loses to the
+ * scheme, from `apply` itself, so a default the scheme only supplies when the caller sends none
+ * stays the caller's.
+ */
+describe("schemeReplacedHeaderNames", () => {
+  it("names what apply sets over the caller's value, and keeps a default apply only supplies", () => {
+    expect(
+      schemeReplacedHeaderNames("unleashed_hmac", {}, [
+        "Accept",
+        "Content-Type",
+        "api-auth-id",
+        "client-type",
+        "x-other",
+      ]),
+    ).toEqual(["api-auth-id", "client-type"]);
+    expect(
+      schemeReplacedHeaderNames("api_key_header", { headerName: "X-Demo-Key" }, [
+        "x-demo-key",
+        "notion-version",
+      ]),
+    ).toEqual(["x-demo-key"]);
+    expect(schemeReplacedHeaderNames("bearer", {}, ["Authorization", "Accept"])).toEqual([
+      "authorization",
+    ]);
+    expect(schemeReplacedHeaderNames("none", {}, ["authorization"])).toEqual([]);
+  });
+
+  it("answers none for a configuration the scheme refuses, since the run is refused whatever its headers", () => {
+    // `api_key_header` with no `headerName`: `apply` and `headerNames` both refuse it.
+    expect(schemeReplacedHeaderNames("api_key_header", {}, ["x-demo-key"])).toEqual([]);
   });
 });

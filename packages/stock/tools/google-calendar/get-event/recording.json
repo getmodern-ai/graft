@@ -1,0 +1,81 @@
+{
+  "format": 1,
+  "tool": "google-calendar__get-event",
+  "recordedAt": "2026-10-09T18:49:43.504Z",
+  "input": {
+    "calendarId": "ec.wxv#qrczzzb@example.com",
+    "eventId": "63324579_x8vgug6kmx7m8jrl49amrsb617"
+  },
+  "exchanges": [
+    {
+      "kind": "read",
+      "method": "GET",
+      "url": "https://www.googleapis.com/calendar/v3/calendars/ec.wxv%23qrczzzb%40example.com/events/63324579_x8vgug6kmx7m8jrl49amrsb617",
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json; charset=UTF-8"
+        },
+        "body": {
+          "json": {
+            "kind": "sceybtda#oppaa",
+            "etag": "\"8638348248656281\"",
+            "id": "63324579_x8vgug6kmx7m8jrl49amrsb617",
+            "status": "ypfhmwbbe",
+            "htmlLink": "https://www.google.com/",
+            "created": "2016-08-20T04:32:15.601Z",
+            "updated": "2019-04-15T00:10:13.738Z",
+            "summary": "Rzxscrrnw Kzt",
+            "description": "Hbxnur sldqmsa",
+            "creator": {
+              "email": "ec.wxv#qrczzzb@example.com",
+              "displayName": "Yzsoiklz jw Snmasn Ivwqxi",
+              "self": true
+            },
+            "organizer": {
+              "email": "ec.wxv#qrczzzb@example.com",
+              "displayName": "Yzsoiklz jw Snmasn Ivwqxi",
+              "self": true
+            },
+            "start": {
+              "date": "2011-09-09"
+            },
+            "end": {
+              "date": "2014-06-28"
+            },
+            "transparency": "exxryitcyhs",
+            "visibility": "weukxq",
+            "iCalUID": "14049446_p1wqah6mug1m1tbg71kgjjm404@example.com",
+            "sequence": 0,
+            "eventType": "bbzzmcv"
+          }
+        }
+      }
+    }
+  ],
+  "result": {
+    "id": "63324579_x8vgug6kmx7m8jrl49amrsb617",
+    "status": "ypfhmwbbe",
+    "summary": "Rzxscrrnw Kzt",
+    "description": "Hbxnur sldqmsa",
+    "location": null,
+    "start": {
+      "dateTime": null,
+      "date": "2011-09-09",
+      "timeZone": null
+    },
+    "end": {
+      "dateTime": null,
+      "date": "2014-06-28",
+      "timeZone": null
+    },
+    "recurrence": [],
+    "recurringEventId": null,
+    "htmlLink": "https://www.google.com/",
+    "hangoutLink": null,
+    "organizerEmail": "ec.wxv#qrczzzb@example.com",
+    "creatorEmail": "ec.wxv#qrczzzb@example.com",
+    "attendees": [],
+    "visibility": "weukxq"
+  }
+}

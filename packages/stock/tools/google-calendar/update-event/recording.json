@@ -1,0 +1,80 @@
+{
+  "format": 1,
+  "tool": "google-calendar__update-event",
+  "recordedAt": "2026-10-09T18:53:28.572Z",
+  "input": {
+    "eventId": "21722094_9widgzye4pduea2ep39fkqvuz6",
+    "calendarId": "vh.nht#bmobpok@example.com",
+    "summary": "Fpbqf cjv-izy pabcnms arfair",
+    "addAttendees": ["fxgv@example.com"]
+  },
+  "exchanges": [
+    {
+      "kind": "read",
+      "method": "GET",
+      "url": "https://www.googleapis.com/calendar/v3/calendars/vh.nht%23bmobpok%40example.com/events/21722094_9widgzye4pduea2ep39fkqvuz6",
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json; charset=UTF-8"
+        },
+        "body": {
+          "json": {
+            "kind": "dkxfpanz#hdaeu",
+            "etag": "\"5337555240658135\"",
+            "id": "21722094_9widgzye4pduea2ep39fkqvuz6",
+            "status": "uairbsvvb",
+            "htmlLink": "https://www.google.com/",
+            "created": "2027-04-06T23:20:03.510Z",
+            "updated": "2027-10-31T11:33:20.819Z",
+            "summary": "Pib Hqns'd Dhh",
+            "description": "Cfdzrooepo\nPq qoyx frlmqsbtxpk, vu mw Kdvoqr Qrycsgao Yokryvqn > Ctahtwoh bf Lebnjq Azfnbg",
+            "creator": {
+              "email": "vh.nht#bmobpok@example.com",
+              "displayName": "Ispxhuiy qp Quooux Zpqopb",
+              "self": true
+            },
+            "organizer": {
+              "email": "vh.nht#bmobpok@example.com",
+              "displayName": "Ispxhuiy qp Quooux Zpqopb",
+              "self": true
+            },
+            "start": {
+              "date": "2004-04-05"
+            },
+            "end": {
+              "date": "2001-10-22"
+            },
+            "transparency": "vdhadwfangy",
+            "visibility": "zfsyej",
+            "iCalUID": "83936625_1qdyzfqd8orqwe3nw09unxlft2@example.com",
+            "sequence": 0,
+            "eventType": "nrbfswz"
+          }
+        }
+      }
+    },
+    {
+      "kind": "write",
+      "method": "PATCH",
+      "url": "https://www.googleapis.com/calendar/v3/calendars/vh.nht%23bmobpok%40example.com/events/21722094_9widgzye4pduea2ep39fkqvuz6",
+      "body": {
+        "json": {
+          "summary": "Fpbqf cjv-izy pabcnms arfair",
+          "attendees": [
+            {
+              "email": "fxgv@example.com"
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "result": {
+    "id": null,
+    "htmlLink": null,
+    "start": null,
+    "end": null,
+    "attendeeEmails": []
+  }
+}

@@ -1,7 +1,14 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import { answerPendingAction, revokeApproval, setAskEveryCall } from "@graft/core";
+import {
+  allowVendor,
+  answerPendingAction,
+  revokeApproval,
+  setApproval,
+  setAskEveryCall,
+  withdrawVendorApproval,
+} from "@graft/core";
 import type { PendingActionRow } from "@graft/db/repo/pending-action";
 import { loadSkills, runnerFiles } from "@graft/runner";
 import { createFakeSandboxBackend, type FakeSandboxBackend } from "@graft/sandbox";
@@ -17,10 +24,12 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
-import { AUTOMATIC_ANSWER_MS, NO_ELICITATION, requireBuildApproval } from "./approval";
+import { AUTOMATIC_ANSWER_MS, describeAsk, NO_ELICITATION, requireBuildApproval } from "./approval";
+import { confirmConnectionAsk, recordApprovalAnswer } from "./ask-answer";
 import type { McpDeps } from "./deps";
 import { HANDOFF_TOKEN_PARAM, verifyHandoff } from "./handoff";
 import { createToolListChangedNotifier } from "./notifier";
+import { runAuthoredTool } from "./run";
 import { openAgentSession } from "./session";
 import { createFakeDeps, createFakeStore, type FakeStore } from "./testing/fake-deps";
 import { type FakeVendor, generateTestKeys, startFakeVendor } from "./testing/fake-vendor";
@@ -46,6 +55,9 @@ const AGENT_D = "agent_d";
 const AGENT_E = "agent_e";
 const AGENT_F = "agent_f";
 const AGENT_G = "agent_g";
+const AGENT_I = "agent_i";
+const AGENT_J = "agent_j";
+const AGENT_K = "agent_k";
 const TOKEN_A = "grft_approval_token_a_000000000000000000000000";
 const TOKEN_B = "grft_approval_token_b_000000000000000000000000";
 const TOKEN_C = "grft_approval_token_c_000000000000000000000000";
@@ -53,6 +65,9 @@ const TOKEN_D = "grft_approval_token_d_000000000000000000000000";
 const TOKEN_E = "grft_approval_token_e_000000000000000000000000";
 const TOKEN_F = "grft_approval_token_f_000000000000000000000000";
 const TOKEN_G = "grft_approval_token_g_000000000000000000000000";
+const TOKEN_I = "grft_approval_token_i_000000000000000000000000";
+const TOKEN_J = "grft_approval_token_j_000000000000000000000000";
+const TOKEN_K = "grft_approval_token_k_000000000000000000000000";
 const CONN_DEMO = "conn_demo";
 const CONSOLE_URL = "http://console.graft.test";
 const SECRET = "graft-approval-test-handoff-secret-long-enough-32";
@@ -130,6 +145,9 @@ beforeAll(async () => {
     [AGENT_E, TOKEN_E, "headless Claude Code"],
     [AGENT_F, TOKEN_F, "oneshot Hermes"],
     [AGENT_G, TOKEN_G, "Hermes at a terminal"],
+    [AGENT_I, TOKEN_I, "integration Hermes"],
+    [AGENT_J, TOKEN_J, "connecting Hermes"],
+    [AGENT_K, TOKEN_K, "careful Hermes"],
   ] as const) {
     store.addAgent({
       scopeMode: "listed",
@@ -153,7 +171,18 @@ beforeAll(async () => {
       defaultConnectionId: CONN_DEMO,
       path: `tools/demo/${tool.name}/v1`,
     });
-    for (const agent of [AGENT_A, AGENT_B, AGENT_C, AGENT_D, AGENT_E, AGENT_F, AGENT_G]) {
+    for (const agent of [
+      AGENT_A,
+      AGENT_B,
+      AGENT_C,
+      AGENT_D,
+      AGENT_E,
+      AGENT_F,
+      AGENT_G,
+      AGENT_I,
+      AGENT_J,
+      AGENT_K,
+    ]) {
       store.promote(agent, tool.id);
     }
   }
@@ -250,8 +279,36 @@ const until = async (predicate: () => boolean, ms = 5_000) => {
 };
 
 /** What the console does when the person answers — GRA-6's service, as the answer endpoint calls it. */
-const answer = (id: string, said: { allow: boolean; askEveryCall?: boolean }) =>
-  answerPendingAction({ db: deps.db }, { personId: PERSON }, id, said, deps.pendingAction);
+const answer = (
+  id: string,
+  said: {
+    allow: boolean;
+    askEveryCall?: boolean;
+    allowVendor?: boolean;
+    includesDestructive?: boolean;
+  },
+) => answerPendingAction({ db: deps.db }, { personId: PERSON }, id, said, deps.pendingAction);
+
+/**
+ * The person's answer through a door that records it (the console's route, the ask card's
+ * `answer_ask`): `recordApprovalAnswer`, which writes the integration-wide yes when the person gives
+ * it (GRA-237). `answer` above records the action alone, as no door does.
+ */
+const answerAtDoor = (
+  id: string,
+  said: {
+    allow: boolean;
+    askEveryCall?: boolean;
+    allowVendor?: boolean;
+    includesDestructive?: boolean;
+  },
+) =>
+  recordApprovalAnswer({ db: deps.db }, { personId: PERSON }, id, said, {
+    approval: deps.approval,
+    pendingAction: deps.pendingAction,
+    connection: deps.connection,
+    agent: deps.agent,
+  });
 
 /** The agent page's switch — the same service the `PUT /approvals/:toolId/ask-every-call` route calls. */
 const askEveryCall = (agentId: string, toolId: string, on: boolean) =>
@@ -578,6 +635,208 @@ describe("through a handoff — the channel every harness has", () => {
       store.pendingActions.clear();
     }
   }, 30_000);
+});
+
+/** ADR 0008 as amended 2026-10-09 (GRA-237): "Allow every Demo tool for this agent". */
+describe("an integration allowed at once, on the ask", () => {
+  it("lets the agent's other writes of the vendor run without an ask, keeps a destructive one asking, and asks again once withdrawn", async () => {
+    const i = await connect(TOKEN_I);
+    try {
+      const first = awaiting(await i.call(CREATE_ITEM, { limit: 1 }));
+      await answerAtDoor(first.action.id, {
+        allow: true,
+        allowVendor: true,
+        includesDestructive: false,
+      });
+
+      // The asked tool runs, and the integration's standing approval is recorded for this agent.
+      expect(body(await i.call(CREATE_ITEM, { limit: 1 }))).toEqual(VENDOR_BODY);
+      expect(store.vendorApprovals.get(`${AGENT_I} demo`)).toMatchObject({
+        agentId: AGENT_I,
+        vendor: "demo",
+        includesDestructive: false,
+      });
+
+      // A second write of the same vendor, never asked about, runs with no ask.
+      const actionsBefore = actionsOf(AGENT_I, "tool").length;
+      expect(body(await i.call(UPDATE_ITEM, { limit: 1 }))).toEqual(VENDOR_BODY);
+      expect(actionsOf(AGENT_I, "tool")).toHaveLength(actionsBefore);
+      expect(approvalOf(AGENT_I, "tool_update")).toBeUndefined();
+
+      // A destructive one still asks: the person left destructive tools out.
+      const destructive = awaiting(await i.call(DELETE_ITEM, { limit: 1 }));
+      expect(destructive.action.payload).toMatchObject({ toolId: "tool_delete" });
+
+      // Another agent of the same person is not covered.
+      expect(store.vendorApprovals.get(`${AGENT_A} demo`)).toBeUndefined();
+
+      // Withdrawn on the agent's page, the integration's other writes ask again.
+      await withdrawVendorApproval(
+        { db: deps.db },
+        { personId: PERSON, agentId: AGENT_I },
+        "demo",
+        deps.approval,
+      );
+      awaiting(await i.call(UPDATE_ITEM, { limit: 1 }));
+      // The tool the person answered on its own keeps its own approval.
+      expect(body(await i.call(CREATE_ITEM, { limit: 1 }))).toEqual(VENDOR_BODY);
+    } finally {
+      await i.close();
+    }
+  }, 60_000);
+
+  it("a per-call yes taken after the integration's approval was withdrawn does not bring it back", async () => {
+    const i = await connect(TOKEN_I);
+    try {
+      store.vendorApprovals.clear();
+      const ask = awaiting(await i.call(UPDATE_ITEM, { limit: 1 }));
+      await answerAtDoor(ask.action.id, {
+        allow: true,
+        askEveryCall: true,
+        allowVendor: true,
+        includesDestructive: false,
+      });
+      expect(store.vendorApprovals.get(`${AGENT_I} demo`)).toBeDefined();
+      // Withdrawn on the agent's page before the agent takes the answer.
+      await withdrawVendorApproval(
+        { db: deps.db },
+        { personId: PERSON, agentId: AGENT_I },
+        "demo",
+        deps.approval,
+      );
+      expect(body(await i.call(UPDATE_ITEM, { limit: 1 }))).toEqual(VENDOR_BODY);
+      expect(store.vendorApprovals.get(`${AGENT_I} demo`)).toBeUndefined();
+    } finally {
+      await i.close();
+    }
+  }, 60_000);
+
+  it("with destructive tools ticked, a destructive tool of the vendor passes too", async () => {
+    const i = await connect(TOKEN_I);
+    try {
+      const ask = awaiting(await i.call(UPDATE_ITEM, { limit: 1 }));
+      await answerAtDoor(ask.action.id, {
+        allow: true,
+        allowVendor: true,
+        includesDestructive: true,
+      });
+      expect(body(await i.call(UPDATE_ITEM, { limit: 1 }))).toEqual(VENDOR_BODY);
+      const before = actionsOf(AGENT_I, "tool").filter((row) => row.answeredAt === null).length;
+      expect(body(await i.call(DELETE_ITEM, { limit: 1 }))).toEqual(VENDOR_BODY);
+      expect(store.vendorApprovals.get(`${AGENT_I} demo`)?.includesDestructive).toBe(true);
+      expect(actionsOf(AGENT_I, "tool").filter((row) => row.answeredAt === null)).toHaveLength(
+        before,
+      );
+    } finally {
+      await i.close();
+      store.vendorApprovals.clear();
+    }
+  }, 60_000);
+});
+
+/**
+ * GRA-239 (ADR 0008 as amended 2026-10-09): the connection's confirmation carries the line "Use
+ * <integration>'s tools without asking each time", pre-ticked. Confirmed with it on, the
+ * integration's writes run with no ask and a destructive one still asks; confirmed with it off,
+ * nothing is recorded and the writes ask as before.
+ */
+describe("an integration allowed when connecting", () => {
+  /** The agent proposes a second Demo account, keyless, and the person confirms it on the console's card. */
+  const connectWithLine = async (
+    client: Awaited<ReturnType<typeof connect>>,
+    label: string,
+    allowVendor: boolean,
+  ) => {
+    const asked = body(
+      await client.call("request_connection", {
+        vendor: "demo",
+        displayName: "Demo Status",
+        primaryHost: `https://${label}.status.demo.example`,
+        hosts: [],
+        scheme: "none",
+        schemeConfig: {},
+      }),
+    );
+    expect(asked).toMatchObject({ error: "awaiting_connection" });
+    return confirmConnectionAsk(
+      { db: deps.db },
+      { personId: PERSON },
+      asked.pendingActionId as string,
+      {
+        vendor: "demo",
+        displayName: "Demo Status",
+        scheme: "none",
+        schemeConfig: {},
+        primaryHost: `https://${label}.status.demo.example`,
+        hosts: [`${label}.status.demo.example`],
+        credential: {},
+        approveBuild: false,
+        allowVendor,
+      },
+      {
+        connection: deps.connection,
+        agent: deps.agent,
+        approval: deps.approval,
+        pendingAction: deps.pendingAction,
+      },
+    );
+  };
+
+  it("left on, the integration's writes run without an ask and a destructive one still asks", async () => {
+    const j = await connect(TOKEN_J);
+    try {
+      const confirmed = await connectWithLine(j, "j", true);
+      expect(confirmed.vendorApproval).toMatchObject({
+        agentId: AGENT_J,
+        vendor: "demo",
+        includesDestructive: false,
+      });
+
+      const before = actionsOf(AGENT_J, "tool").length;
+      expect(body(await j.call(CREATE_ITEM, { limit: 1 }))).toEqual(VENDOR_BODY);
+      expect(body(await j.call(UPDATE_ITEM, { limit: 1 }))).toEqual(VENDOR_BODY);
+      expect(actionsOf(AGENT_J, "tool")).toHaveLength(before);
+
+      const destructive = awaiting(await j.call(DELETE_ITEM, { limit: 1 }));
+      expect(destructive.action.payload).toMatchObject({ toolId: "tool_delete" });
+      // Another agent of the person is not covered.
+      expect(store.vendorApprovals.get(`${AGENT_K} demo`)).toBeUndefined();
+    } finally {
+      await j.close();
+      store.vendorApprovals.delete(`${AGENT_J} demo`);
+    }
+  }, 60_000);
+
+  it("never narrows a standing approval that already includes destructive tools", async () => {
+    const j = await connect(TOKEN_J);
+    try {
+      await allowVendor(
+        { db: deps.db },
+        { personId: PERSON, agentId: AGENT_J },
+        "demo",
+        { includesDestructive: true },
+        deps.approval,
+      );
+      const confirmed = await connectWithLine(j, "j-again", true);
+      expect(confirmed.vendorApproval?.includesDestructive).toBe(true);
+      expect(store.vendorApprovals.get(`${AGENT_J} demo`)?.includesDestructive).toBe(true);
+    } finally {
+      await j.close();
+      store.vendorApprovals.delete(`${AGENT_J} demo`);
+    }
+  }, 60_000);
+
+  it("unticked, nothing is recorded and the writes ask as before", async () => {
+    const k = await connect(TOKEN_K);
+    try {
+      const confirmed = await connectWithLine(k, "k", false);
+      expect(confirmed.vendorApproval).toBeUndefined();
+      expect(store.vendorApprovals.get(`${AGENT_K} demo`)).toBeUndefined();
+      awaiting(await k.call(CREATE_ITEM, { limit: 1 }));
+    } finally {
+      await k.close();
+    }
+  }, 60_000);
 });
 
 describe("the build approval", () => {
@@ -1283,4 +1542,153 @@ describe("every approval and every pending action is a row with the agent and th
     expect(store.approvals.size).toBeGreaterThan(0);
     expect(store.buildApprovals.size).toBeGreaterThan(0);
   });
+});
+
+/** GRA-245: the elicitation form names where the tool came from, from `toolProvenance`. */
+describe("the elicitation form's provenance", () => {
+  const subject = (provenance: "stock" | "remix" | "authored") =>
+    ({
+      kind: "tool",
+      tool: {
+        vendor: "demo",
+        name: "save-place",
+        description: "Saves a place.",
+        readOnly: false,
+        destructive: false,
+      },
+      connection: { displayName: "Demo", vendor: "demo", hosts: ["api.demo.example"] },
+      askEveryCall: false,
+      provenance,
+    }) as unknown as Parameters<typeof describeAsk>[0];
+
+  it("says a stock copy is ready-made by Graft and reviewed, and nothing of the agent's model", () => {
+    const message = describeAsk(subject("stock"), "Hermes");
+    expect(message).toContain(
+      'Ready-made by Graft and reviewed before release. Its description: "Saves a place."',
+    );
+    expect(message).not.toContain("model");
+  });
+
+  it("says a remix is the agent's version of a ready-made tool, in its model's words", () => {
+    expect(describeAsk(subject("remix"), "Hermes")).toContain(
+      "Your agent's version of a ready-made tool. Its description, in your agent's model's own words:",
+    );
+  });
+
+  it("keeps an authored tool's wording", () => {
+    expect(describeAsk(subject("authored"), "Hermes")).toContain(
+      `Its description, in the agent's model's own words: "Saves a place."`,
+    );
+  });
+});
+
+/**
+ * GRA-245, Greptile on #190: an approval is for the version the person was shown. The ask names
+ * the version the asking call runs; every answer records for that version, and the gate judges the
+ * version the run executes, pinned before it, never the pointer read after.
+ */
+describe("an approval is for the version the person was shown", () => {
+  const SCOPE_A = { personId: PERSON, agentId: AGENT_A };
+  /** A write tool with a version per module, each answering its own number. */
+  const addVersionedTool = async (id: string, name: string) => {
+    const versionDir = (n: number) => `tools/demo/${name}/v${n}`;
+    for (const n of [1, 2]) {
+      const dir = join(sandbox.toolboxRoot(PERSON), versionDir(n));
+      await mkdir(dir, { recursive: true });
+      await writeFile(join(dir, "index.ts"), `export default async () => ({ version: ${n} });\n`);
+    }
+    const { tool, version } = store.addTool({
+      id,
+      personId: PERSON,
+      vendor: "demo",
+      name,
+      description: `${name} at Demo Orders, in the model's words.`,
+      inputSchema: { type: "object", properties: {} },
+      readOnly: false,
+      destructive: false,
+      defaultConnectionId: CONN_DEMO,
+      path: versionDir(1),
+    });
+    store.promote(AGENT_A, id);
+    /** A republish: v2 written and made current, as `activateToolVersion` leaves it. */
+    const republish = () => {
+      const v2 = { ...version, id: `${id}_v2`, versionNumber: 2, path: versionDir(2) };
+      store.versions.set(v2.id, v2);
+      const row = store.tools.get(id);
+      if (row) store.tools.set(id, { ...row, currentVersionId: v2.id });
+      return v2;
+    };
+    return { tool, v1: version, republish };
+  };
+  /** The console's answer route: `recordApprovalAnswer`, as `POST /pending-actions/:id/answer` calls it. */
+  const consoleAnswers = (id: string, allow: boolean) =>
+    recordApprovalAnswer(
+      { db: deps.db },
+      { personId: PERSON },
+      id,
+      { allow },
+      {
+        approval: deps.approval,
+        pendingAction: deps.pendingAction,
+        connection: deps.connection,
+        agent: deps.agent,
+      },
+    );
+
+  it("an ask about v1 answered after v2 became current approves v1 only, so v2 asks again", async () => {
+    const { v1, republish } = await addVersionedTool("tool_versioned", "versioned-item");
+    const wire = authoredToolName("demo", "versioned-item");
+    const a = await connect(TOKEN_A);
+    try {
+      const first = awaiting(await a.call(wire, {}));
+      expect(first.action.payload).toMatchObject({ toolVersionId: v1.id });
+
+      const v2 = republish();
+      await consoleAnswers(first.action.id, true);
+      expect(approvalOf(AGENT_A, "tool_versioned")).toMatchObject({
+        decision: "allow",
+        toolVersionId: v1.id,
+      });
+
+      // v2 is not what the person was shown: it asks, with an ask of its own naming v2.
+      const second = awaiting(await a.call(wire, {}));
+      expect(second.action.id).not.toBe(first.action.id);
+      expect(second.action.payload).toMatchObject({ toolVersionId: v2.id });
+
+      await consoleAnswers(second.action.id, true);
+      expect(approvalOf(AGENT_A, "tool_versioned")).toMatchObject({ toolVersionId: v2.id });
+      expect(body(await a.call(wire, {}))).toEqual({ version: 2 });
+    } finally {
+      await a.close();
+    }
+  }, 60_000);
+
+  it("gates a run on the version it pinned, not on a version made current and approved meanwhile", async () => {
+    const { v1, republish } = await addVersionedTool("tool_pinned", "pinned-item");
+    let v2Id = "";
+    const run = (admit?: () => Promise<null>) =>
+      runAuthoredTool(deps, SCOPE_A, {
+        vendor: "demo",
+        name: "pinned-item",
+        input: {},
+        mode: { detached: false, timeoutSeconds: 30, dryRun: false },
+        channel: NO_ELICITATION,
+        ...(admit ? { admit } : {}),
+      });
+
+    // Between the pin and the gate, v2 becomes current and another call's yes approves it.
+    const raced = await run(async () => {
+      v2Id = republish().id;
+      await setApproval({ db: deps.db }, SCOPE_A, "tool_pinned", "allow", deps.approval, {
+        asked: { versionId: v2Id, annotations: { readOnly: false, destructive: false } },
+      });
+      return null;
+    });
+    expect(raced).toMatchObject({ isError: true, answer: { reason: "awaiting_approval" } });
+    const [ask] = actionsOf(AGENT_A, "tool").filter((row) => row.payload.toolId === "tool_pinned");
+    expect(ask?.payload).toMatchObject({ toolVersionId: v1.id });
+
+    // The pointer's version runs on its own approval.
+    expect(await run()).toEqual({ isError: false, answer: { version: 2 } });
+  }, 60_000);
 });

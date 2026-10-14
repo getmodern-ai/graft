@@ -15,6 +15,7 @@ function everySentence(origin: AskOrigin): string[] {
     connectedToastDescription({ origin, agentName: "Claude" }),
     connectedToastDescription({ origin, agentName: "Claude", approveBuild: true }),
     connectedToastDescription({ origin, agentName: "Claude", provider: "broker" }),
+    connectedToastDescription({ origin, agentName: "Claude", vendorTools: "HubSpot" }),
     connectedSettledSentence({ origin }),
     connectedSettledSentence({ origin, widens: true }),
     connectedSettledSentence({ origin, provider: "broker" }),
@@ -39,7 +40,7 @@ describe("an answered connection ask's copy (GRA-212)", () => {
         provider: "broker",
       }),
     ).toBe(
-      "In Claude's scope, allowed to build tools against it; its waiting call answers connected. The account's token stays with broker.",
+      "In Claude's scope, allowed to build tools against it; its waiting call answers connected. The account's token stays with Broker.",
     );
     expect(scopeAllowedToastDescription({ origin: "agent", approveBuild: true })).toBe(
       "Allowed to build tools against it; its waiting call answers connected. Nothing was entered and no new connection was made.",
@@ -47,17 +48,26 @@ describe("an answered connection ask's copy (GRA-212)", () => {
     expect(declinedToastDescription("agent")).toBe("The agent's waiting call is refused.");
   });
 
+  it("names a provider as a person reads it, never its lower-case id (GRA-273)", () => {
+    expect(connectedSettledSentence({ origin: "agent", provider: "broker" })).toBe(
+      "Connected through Broker. The connection is in the agent's scope and its waiting call answers connected; the account's token stays with Broker.",
+    );
+    for (const sentence of [...everySentence("agent"), ...everySentence("setup")]) {
+      expect(sentence).not.toContain("broker");
+    }
+  });
+
   it("says Setup's next step in Setup, where no call is waiting", () => {
     expect(
       connectedToastDescription({ origin: "setup", agentName: "Claude", approveBuild: true }),
-    ).toBe("In Claude's scope, allowed to build tools against it. Setup moves on to the task.");
+    ).toBe("In Claude's scope, allowed to build tools against it. Setup carries on from here.");
     expect(
       connectedToastDescription({ origin: "setup", agentName: "Claude", provider: "broker" }),
     ).toBe(
-      "In Claude's scope, and the account's token stays with broker. Setup moves on to the task.",
+      "In Claude's scope, and the account's token stays with Broker. Setup carries on from here.",
     );
     expect(scopeAllowedToastDescription({ origin: "setup" })).toBe(
-      "Nothing was entered and no new connection was made. Setup moves on to the task.",
+      "Nothing was entered and no new connection was made. Setup carries on from here.",
     );
     expect(declinedToastDescription("setup")).toBe(
       "Nothing was connected. Setup goes back to the integrations.",
@@ -66,6 +76,24 @@ describe("an answered connection ask's copy (GRA-212)", () => {
       expect(sentence).not.toContain("waiting call");
       expect(sentence).not.toContain("Other agents");
     }
+  });
+
+  it("says the integration's tools run without asking when the line was left on (GRA-239)", () => {
+    expect(
+      connectedToastDescription({
+        origin: "agent",
+        agentName: "Claude",
+        approveBuild: true,
+        vendorTools: "HubSpot",
+      }),
+    ).toBe(
+      "In Claude's scope, allowed to build tools against it; its waiting call answers connected. Other agents get it when you add it to theirs. HubSpot's tools run for this agent without asking; destructive ones still ask.",
+    );
+    expect(
+      connectedToastDescription({ origin: "setup", agentName: "Claude", vendorTools: "Gmail" }),
+    ).toBe(
+      "In Claude's scope. Gmail's tools run for this agent without asking; destructive ones still ask. Setup carries on from here.",
+    );
   });
 
   it("says nothing with an em dash, in either origin", () => {

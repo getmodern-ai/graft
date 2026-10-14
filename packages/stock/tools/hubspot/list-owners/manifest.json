@@ -1,0 +1,15 @@
+{
+  "name": "list-owners",
+  "description": "Lists the HubSpot owners, the CRM users that contacts, companies and deals can be assigned to, with each one's name and email. The owner id is what the ownerId input of hubspot__create-contact, hubspot__create-deal, hubspot__create-task and hubspot__add-note takes, and what hubspot_owner_id holds.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {},
+    "required": [],
+    "additionalProperties": false
+  },
+  "hosts": ["api.hubapi.com"],
+  "annotations": {
+    "readOnly": true,
+    "destructive": false
+  }
+}

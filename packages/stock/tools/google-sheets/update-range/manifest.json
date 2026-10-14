@@ -1,0 +1,44 @@
+{
+  "name": "update-range",
+  "description": "Updates cells in a Google Sheets tab: writes rows of values into an A1 range, replacing what is there, as if typed (formulas and numbers are parsed). The spreadsheet can be a URL copied from the browser or an id from google-sheets__find-spreadsheets; tab names come from google-sheets__list-tabs, and row numbers from google-sheets__find-rows.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "spreadsheet": {
+        "type": "string",
+        "minLength": 1,
+        "description": "The spreadsheet URL copied from the browser, or the spreadsheet id taken from google-sheets__find-spreadsheets.",
+        "examples": [
+          "https://docs.google.com/spreadsheets/d/1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms/edit"
+        ]
+      },
+      "tab": {
+        "type": "string",
+        "minLength": 1,
+        "description": "The tab's name, from google-sheets__list-tabs."
+      },
+      "range": {
+        "type": "string",
+        "minLength": 1,
+        "description": "The cells to replace in A1 notation without the tab name, such as B2:C3 or B5. A row number can come from google-sheets__find-rows."
+      },
+      "values": {
+        "type": "array",
+        "description": "Rows of values to write.",
+        "items": {
+          "type": "array",
+          "items": {
+            "type": ["string", "number", "boolean"]
+          }
+        }
+      }
+    },
+    "required": ["spreadsheet", "tab", "range", "values"],
+    "additionalProperties": false
+  },
+  "hosts": ["sheets.googleapis.com"],
+  "annotations": {
+    "readOnly": false,
+    "destructive": false
+  }
+}

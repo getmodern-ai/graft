@@ -1,0 +1,36 @@
+{
+  "name": "comment-on-issue-or-pull-request",
+  "description": "Adds a Markdown comment to a GitHub issue or to a pull request's conversation. The number comes from github__list-issues, github__list-pull-requests or github__search-issues-and-pull-requests, the owner and repository from github__list-my-repositories.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "owner": {
+        "type": "string",
+        "minLength": 1,
+        "description": "The repository's owner, the part before the slash of a full_name github__list-my-repositories answers."
+      },
+      "repo": {
+        "type": "string",
+        "minLength": 1,
+        "description": "The repository's name, the part after the slash of a full_name github__list-my-repositories answers."
+      },
+      "issueNumber": {
+        "type": "integer",
+        "minimum": 1,
+        "description": "The issue's or pull request's number; github__list-issues, github__list-pull-requests or github__search-issues-and-pull-requests answers it."
+      },
+      "body": {
+        "type": "string",
+        "minLength": 1,
+        "description": "Markdown comment body."
+      }
+    },
+    "required": ["owner", "repo", "issueNumber", "body"],
+    "additionalProperties": false
+  },
+  "hosts": ["api.github.com"],
+  "annotations": {
+    "readOnly": false,
+    "destructive": false
+  }
+}

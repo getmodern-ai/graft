@@ -40,8 +40,9 @@ RUN --mount=type=cache,id=graft-pnpm-store,target=/pnpm-store \
 
 # The console's `vite build`, the ask card's (`packages/ask-card`, GRA-84: one HTML file the MCP
 # server serves as a resource) and the server's `tsdown` bundle (`apps/server/tsdown.config.ts`,
-# which also lays the runner, the skills, the migration chain and that card beside the bundle). The
-# card is built before the server because the server's build copies its output.
+# which also lays the runner, the skills, the migration chain, the stock workspace (GRA-238) and that
+# card beside the bundle). The card is built before the server because the server's build copies
+# its output.
 #
 # Then the linked backings package, when there is one: the server's bundle loads it by name at run
 # time (`apps/server/src/backings.ts`) from an image that has no TypeScript, so the package has to
@@ -107,6 +108,7 @@ COPY --from=build --chown=graft:graft /app/apps/server/package.json ./apps/serve
 COPY --from=build --chown=graft:graft /app/apps/server/dist ./apps/server/dist
 COPY --from=build --chown=graft:graft /app/apps/server/skills ./apps/server/skills
 COPY --from=build --chown=graft:graft /app/apps/server/drizzle ./apps/server/drizzle
+COPY --from=build --chown=graft:graft /app/apps/server/tools ./apps/server/tools
 COPY --from=build --chown=graft:graft /app/apps/web/dist ./apps/web/dist
 
 # What the image knows about itself; everything a deployment decides comes from the environment

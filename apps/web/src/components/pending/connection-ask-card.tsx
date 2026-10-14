@@ -1,7 +1,9 @@
+import { integrationNameFor } from "@graft/core/approval/vendor-approval.rules";
 import { KEYRING_PROVIDER } from "@graft/core/connection/provider";
 import type { ConnectionSubmitBody } from "@graft/server/api";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
+import type * as React from "react";
 import { useState } from "react";
 import { toast } from "sonner";
 import { ConnectionFormFields, HostsNotice } from "@/components/connection/connection-form";
@@ -17,12 +19,15 @@ import {
   useAnswerAsk,
 } from "@/components/pending/ask-card";
 import { BuildApprovalItem } from "@/components/pending/build-approval-item";
+import { VendorToolsItem } from "@/components/pending/vendor-tools-item";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { FieldGroup, FieldLegend, FieldSet } from "@/components/ui/field";
 import { agentKeys } from "@/lib/agent-queries";
 import { ApiError } from "@/lib/api";
+import { approvalKeys } from "@/lib/approval-queries";
 import { connectedSettledSentence, connectedToastDescription } from "@/lib/ask-answered-copy";
+import { connectionChoicesSent, connectionChoicesShown } from "@/lib/connection-choices";
 import {
   type ConnectionDraft,
   type DraftErrors,
@@ -34,6 +39,7 @@ import {
 } from "@/lib/connection-form";
 import { connectionKeys, submitConnectionProposal } from "@/lib/connection-queries";
 import { type Ask, isOpen, pendingKeys } from "@/lib/pending-action-queries";
+import { providerLabel as providerName } from "@/lib/provider-name";
 
 /**
  * An agent's proposal for a connection (GRA-28; ADR 0006): the form opens pre-filled with everything
@@ -58,35 +64,51 @@ import { type Ask, isOpen, pendingKeys } from "@/lib/pending-action-queries";
  * The form's last control is the build approval, on by default (GRA-75; ADR 0008, amendment of
  * 2026-09-18): Connect posts it with the proposal, and the submit records `acquire`'s approval for
  * the asking agent in the transaction that makes the connection, so the agent's first `acquire`
- * needs no second link. Unticked, the agent asks as it always did.
+ * needs no second link. Unticked, the agent asks as it always did. Under it, also on by default,
+ * the line for the integration's tools (GRA-239; ADR 0008, amendment of 2026-10-09): the submit
+ * records the agent's standing approval for the vendor, destructive tools left out, in the same
+ * transaction.
  *
  * Under `origin: "setup"` (GRA-206) the proposal is Setup's, written from a starter entry: the
  * model's provenance is not shown and the proposal editor sits behind *Edit the connection*,
  * closed until opened or until a refusal lands on one of its inputs. The hosts, the secret
- * inputs, the build choice and the answer are the same card's.
+ * inputs, the line for the integration's tools and the answer are the same card's; the build
+ * choice is not drawn there and not sent (`lib/connection-choices.ts`, GRA-274).
  */
 export function ConnectionAskCard({
   ask,
   onAnswered,
   origin = "agent",
+  setupFooter,
 }: {
   ask: Extract<Ask, { kind: "connection" }>;
   onAnswered?: () => void;
   origin?: AskOrigin;
+  /** Under Setup's compact card: the task waiting on this connection. */
+  setupFooter?: React.ReactNode;
 }) {
   const { action, payload } = ask;
   const queryClient = useQueryClient();
   const [draft, setDraft] = useState<ConnectionDraft>(() => draftFromProposal(payload));
   const [errors, setErrors] = useState<DraftErrors>({});
   const [approveBuild, setApproveBuild] = useState(true);
+  const [allowVendor, setAllowVendor] = useState(true);
   // Setup's disclosure over the proposal editor; outside Setup the editor is never folded.
   const [editing, setEditing] = useState(false);
   const agentName = action.agent?.name ?? "the agent";
+  // What Connect carries: a line the card does not draw is never sent as a yes (GRA-274).
+  const shown = connectionChoicesShown({ origin, widens: payload.widens != null });
+  const sent = connectionChoicesSent(shown, { approveBuild, allowVendor });
   const decline = useAnswerAsk(action, onAnswered, origin);
   const consent = useOAuthConsent({
     onConnected: () => {
       toast.success(`${draft.displayName} is connected`, {
-        description: connectedToastDescription({ origin, agentName }),
+        description: connectedToastDescription({
+          origin,
+          agentName,
+          approveBuild: sent.approveBuild,
+          ...(sent.allowVendor ? { vendorTools: integrationName } : {}),
+        }),
       });
       onAnswered?.();
     },
@@ -98,6 +120,7 @@ export function ConnectionAskCard({
       queryClient.invalidateQueries({ queryKey: pendingKeys.all });
       queryClient.invalidateQueries({ queryKey: connectionKeys.all });
       queryClient.invalidateQueries({ queryKey: agentKeys.all });
+      queryClient.invalidateQueries({ queryKey: approvalKeys.vendorsOfAgent(action.agentId) });
       if (authorizeUrl) {
         toast.message(`${connection.displayName}'s client is saved`, {
           description:
@@ -111,6 +134,9 @@ export function ConnectionAskCard({
           origin,
           agentName,
           approveBuild: submitted.approveBuild,
+          ...(submitted.allowVendor
+            ? { vendorTools: integrationNameFor(connection.vendor, connection.displayName) }
+            : {}),
         }),
       });
       onAnswered?.();
@@ -140,7 +166,7 @@ export function ConnectionAskCard({
       return;
     }
     setErrors({});
-    connect.mutate({ ...verdict.value, approveBuild });
+    connect.mutate({ ...verdict.value, ...sent });
   };
 
   const open = isOpen(action);
@@ -149,6 +175,7 @@ export function ConnectionAskCard({
   const secret = secretLegend(draft);
   const provider: string = payload.provider ?? KEYRING_PROVIDER;
   const widens = payload.widens ?? null;
+  const integrationName = integrationNameFor(draft.vendor, draft.displayName);
   // Once the client is saved and the popup is open, the form's job is done; the callback settles it.
   const consenting = consent.state.phase !== "idle" && consent.state.phase !== "done";
   const busy = connect.isPending || decline.isPending || consenting;
@@ -163,6 +190,62 @@ export function ConnectionAskCard({
     />
   );
 
+  // Setup v2's connect step: the app card, with only what the person must do on it (a secret to
+  // paste, the line for the integration's tools, the consent popup's status, the folded editor),
+  // never the build choice, which Setup's own build records (`startSetupBuild`) and Connect here
+  // does not send (GRA-274), or the explanations the inbox card carries.
+  if (origin === "setup" && !widens) {
+    return (
+      <AskCard
+        action={action}
+        title={payload.displayName}
+        settled={(recorded) =>
+          typeof recorded?.connectionId === "string"
+            ? "Connected."
+            : "Declined. Go back to choose again."
+        }
+        approveLabel={`Connect ${payload.displayName}`}
+        pending={busy}
+        onAnswer={(allow) => (allow ? submit() : decline.mutate({ allow: false }))}
+        compact={{
+          vendor: payload.vendor,
+          name: payload.displayName,
+          subline: oauth
+            ? `Sign in to ${payload.displayName} in a popup`
+            : secret
+              ? `${secret}, entered here and never through your agent`
+              : "A public API · nothing to sign in to, no key needed",
+          footer: setupFooter,
+        }}
+      >
+        {secret ? <FieldGroup>{credentialFields}</FieldGroup> : null}
+        {shown.allowVendor ? (
+          <VendorToolsItem
+            id={`ask-${action.id}-allow-vendor`}
+            integrationName={integrationName}
+            checked={allowVendor}
+            onCheckedChange={setAllowVendor}
+            disabled={busy}
+          />
+        ) : null}
+        {consent.state.phase === "idle" ? null : (
+          <ConsentStatus state={consent.state} onCancel={consent.cancel} />
+        )}
+        {editing || Object.keys(errors).some((key) => !key.startsWith("credential")) ? (
+          <FieldGroup>
+            <ConnectionFormFields
+              draft={draft}
+              onChange={setDraft}
+              errors={errors}
+              idPrefix={`ask-${action.id}`}
+              disabled={busy}
+            />
+          </FieldGroup>
+        ) : null}
+      </AskCard>
+    );
+  }
+
   return (
     <AskCard
       action={action}
@@ -171,7 +254,9 @@ export function ConnectionAskCard({
           <span className="text-muted-foreground">{widens ? "widen" : "connect"}</span>
           <span>{payload.displayName}</span>
           <Badge variant="outline">{payload.vendor}</Badge>
-          {provider === KEYRING_PROVIDER ? null : <Badge variant="outline">via {provider}</Badge>}
+          {provider === KEYRING_PROVIDER ? null : (
+            <Badge variant="outline">via {providerName(provider)}</Badge>
+          )}
           {oauth ? <Badge variant="outline">OAuth consent</Badge> : null}
         </>
       }
@@ -197,7 +282,12 @@ export function ConnectionAskCard({
       pending={busy}
       onAnswer={(allow) => (allow ? submit() : decline.mutate({ allow: false }))}
     >
-      <ProposalSource origin={origin} note={payload.note} docsUrl={payload.docsUrl} />
+      <ProposalSource
+        origin={origin}
+        agentName={action.agent?.name ?? null}
+        note={payload.note}
+        docsUrl={payload.docsUrl}
+      />
 
       {open && widens ? (
         // A widening (GRA-167): the row is the person's already, so nothing here is editable —
@@ -224,6 +314,13 @@ export function ConnectionAskCard({
             agentName={agentName}
             checked={approveBuild}
             onCheckedChange={setApproveBuild}
+            disabled={busy}
+          />
+          <VendorToolsItem
+            id={`ask-${action.id}-allow-vendor`}
+            integrationName={integrationName}
+            checked={allowVendor}
+            onCheckedChange={setAllowVendor}
             disabled={busy}
           />
         </>
@@ -277,6 +374,13 @@ export function ConnectionAskCard({
             agentName={agentName}
             checked={approveBuild}
             onCheckedChange={setApproveBuild}
+            disabled={busy}
+          />
+          <VendorToolsItem
+            id={`ask-${action.id}-allow-vendor`}
+            integrationName={integrationName}
+            checked={allowVendor}
+            onCheckedChange={setAllowVendor}
             disabled={busy}
           />
           <ConsentStatus state={consent.state} onCancel={consent.cancel} />

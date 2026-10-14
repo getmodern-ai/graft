@@ -1,0 +1,64 @@
+{
+  "name": "update-prospect",
+  "description": "Changes fields of a prospect saved as a contact in your Apollo team: name, email, title, company name, account (an id from apollo__search-accounts), website, labels, stage or phone. The contact id comes from apollo__search-contacts. Sends only the fields given; spends no Apollo credits.",
+  "inputSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "contactId": {
+        "type": "string",
+        "minLength": 1,
+        "description": "The contact's id, from apollo__search-contacts."
+      },
+      "firstName": {
+        "type": "string",
+        "description": "New first name."
+      },
+      "lastName": {
+        "type": "string",
+        "description": "New last name."
+      },
+      "email": {
+        "type": "string",
+        "description": "New email address."
+      },
+      "title": {
+        "type": "string",
+        "description": "New job title."
+      },
+      "organizationName": {
+        "type": "string",
+        "description": "New company name."
+      },
+      "accountId": {
+        "type": "string",
+        "description": "An account's id, from apollo__search-accounts."
+      },
+      "websiteUrl": {
+        "type": "string",
+        "description": "New website URL."
+      },
+      "labelNames": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "description": "Apollo label names to set."
+      },
+      "contactStageId": {
+        "type": "string",
+        "description": "Apollo contact stage id."
+      },
+      "phone": {
+        "type": "string",
+        "description": "Direct phone number for the contact."
+      }
+    },
+    "required": ["contactId"]
+  },
+  "hosts": ["api.apollo.io"],
+  "annotations": {
+    "readOnly": false,
+    "destructive": false
+  }
+}

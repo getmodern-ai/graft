@@ -4,14 +4,17 @@ import { assertSandboxName } from "@graft/sandbox/types";
  * The layout of one person's toolbox, as paths relative to its root (GRA-1, "The check, the runner
  * and the toolbox"): published versions under vendor and tool name, drafts under a job-scoped path.
  *
- *   tools/<vendor>/<name>/v<N>/     one published version: the module's files, and when it declares
- *                                   dependencies its own node_modules and package-lock.json
- *   .drafts/<jobId>/                what an acquire job is writing before it publishes
+ *   tools/<vendor>/<name>/w-<writeId>/  one write of a version: the module's files, and when it
+ *                                       declares dependencies its own node_modules and package-lock.json
+ *   tools/<vendor>/<name>/v<N>/         a version written before GRA-238, named by its number
+ *   .drafts/<jobId>/                    what an acquire job is writing before it publishes
  *
- * A version directory is named by its number, and the number is the tool's next (`@graft/core`'s
- * `nextVersionNumber`), so a republish lands beside the last version and never on it (ADR 0009). The
- * `tool_version.path` column holds exactly what `versionPath` returns; inside a sandbox the same
- * directory is under `TOOLBOX_MOUNT_PATH`, which is what `sandboxPath` prepends.
+ * A version directory is its writer's alone (`writePath`): a publish or a stock copy writes a fresh
+ * one, and the version number is decided after, with the rows, as the tool's next (`@graft/core`'s
+ * `addToolVersion`), so no writer ever writes over another's files and a republish lands beside the
+ * last version (ADR 0009). A write whose rows never land leaves its directory as an orphan; nothing
+ * under `tools/` is removed. The `tool_version.path` column holds the directory exactly; inside a
+ * sandbox the same directory is under `TOOLBOX_MOUNT_PATH`, which is what `sandboxPath` prepends.
  *
  * Beside the toolboxes, not inside one, the blobs (ADR 0023, GRA-185): relative to the toolbox
  * *root*, the directory every toolbox is a subdirectory of,
@@ -40,6 +43,19 @@ export function versionPath(vendor: string, name: string, versionNumber: number)
     throw new Error(`a version number is a positive integer: ${JSON.stringify(versionNumber)}`);
   }
   return `${toolPath(vendor, name)}/v${versionNumber}`;
+}
+
+/**
+ * The directory one write of a version goes to, relative to the toolbox root:
+ * `tools/<vendor>/<name>/w-<writeId>` (GRA-238, GRA-265). Every publish and every stock copy writes
+ * a directory of its own, so no writer ever writes into another's, whoever records its rows first;
+ * the version number is decided when the rows are written and is the row's, not the directory's.
+ * `tool_version.path` records the directory. A version written before this is `v<N>`
+ * (`versionPath`), and that path stays valid.
+ */
+export function writePath(vendor: string, name: string, writeId: string): string {
+  assertSegment("a write id", writeId);
+  return `${toolPath(vendor, name)}/w-${writeId}`;
 }
 
 /** The directory holding every version of one tool, relative to the toolbox root. */

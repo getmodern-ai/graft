@@ -6,7 +6,7 @@ import { describe, expect, it } from "vitest";
 import { createProxyApp, DEFAULT_PROXY_OPTIONS, proxyPathFor } from "./app";
 import { DRY_RUN_HEADER } from "./dry-run";
 import { CREDENTIAL_REDACTED, REDACTED_HEADER } from "./echo";
-import { REFUSAL_HEADER } from "./failure";
+import { PROXY_REFUSED_HEADER, REFUSAL_HEADER } from "./failure";
 import { MAX_REDIRECT_HOPS } from "./redirects";
 import { SNOWFLAKE_TOKEN_TYPE_HEADER, UNLEASHED_CLIENT_TYPE } from "./schemes";
 import type {
@@ -40,6 +40,7 @@ const OTHER_AGENT = "other-agent-token";
 const DRY = "dry-run-token";
 const DRY_OTHER_PERSON = "dry-run-other-person-token";
 const DRY_OTHER_AGENT = "dry-run-other-agent-token";
+const READ_ONLY = "read-only-token";
 
 const CONNECTION: ProxyConnection = {
   id: "conn_1",
@@ -64,6 +65,7 @@ function claims(overrides: Partial<CapabilityClaims> = {}): CapabilityClaims {
     jti: "jti_1",
     exp: Math.floor(Date.now() / 1000) + 300,
     dryRun: false,
+    readOnly: false,
     ...overrides,
   };
 }
@@ -107,6 +109,7 @@ function harness(
       DRY_OTHER_AGENT,
       ok(claims({ dryRun: true, agent: "agent_2", connections: ["conn_of_agent_2"] })),
     ],
+    [READ_ONLY, ok(claims({ readOnly: true, tool: "linear__list_issues", connections: scope }))],
   ]);
   let responder: Responder = () => jsonResponse({ ok: true });
   let unconfigured = false;
@@ -1028,6 +1031,7 @@ describe("private ranges are refused", () => {
       message: "The vendor host is not a public address",
     });
     expect(res.headers.get(REFUSAL_HEADER)).toBeNull();
+    expect(res.headers.get(PROXY_REFUSED_HEADER)).toBe("host_not_public");
   });
 });
 
@@ -1314,6 +1318,9 @@ describe("limits", () => {
 
     expect(res.status).toBe(502);
     expect((await body(res)).reason).toBe("response_too_large");
+    // The vendor answered 200: the 502 is the proxy's, marked so, and not a vendor unreached.
+    expect(res.headers.get(PROXY_REFUSED_HEADER)).toBe("response_too_large");
+    expect(res.headers.get(REFUSAL_HEADER)).toBeNull();
   });
 
   /**
@@ -1487,6 +1494,7 @@ describe("limits", () => {
     const plain = await h.app.request("/c/conn_1/orders", { headers: bearer(GOOD) });
     expect(plain.status).toBe(200);
     expect(plain.headers.get(REFUSAL_HEADER)).toBeNull();
+    expect(plain.headers.get(PROXY_REFUSED_HEADER)).toBeNull();
     expect(plain.headers.get(DRY_RUN_HEADER)).toBeNull();
     expect([...plain.headers.keys()].filter((name) => name.startsWith("x-graft-"))).toEqual([]);
     expect(plain.headers.get("x-vendor-request-id")).toBe("req_abc");
@@ -1653,6 +1661,7 @@ describe("the dry-run claim", () => {
         expect(body).toEqual({
           dryRun: true,
           intercepted: true,
+          destructive: method === "DELETE",
           request: {
             method,
             host: "api.vendor.example",
@@ -1832,6 +1841,140 @@ describe("the dry-run claim", () => {
       expect(res.status).toBe(202);
       expect((await preview(res)).request.path).toBe("/v1/orders");
       expect(h.events[0]?.path).toBe("/orders");
+    });
+  });
+
+  /**
+   * A read is judged by `read-request.ts`'s classifier, the one the check annotates with (ADR 0008
+   * as amended 2026-10-10): a GraphQL query and a reviewed search endpoint reach the vendor in a
+   * dry run as a GET does; a mutation still stops at the preview.
+   */
+  describe("a read-only POST is forwarded", () => {
+    const LINEAR: ProxyConnection = {
+      ...CONNECTION,
+      primaryHost: "https://api.linear.app",
+      hosts: ["api.linear.app"],
+    };
+    const HUBSPOT: ProxyConnection = {
+      ...CONNECTION,
+      primaryHost: "https://api.hubapi.com",
+      hosts: ["api.hubapi.com"],
+    };
+    const post = (h: ReturnType<typeof harness>, path: string, body: unknown) =>
+      h.app.request(path, {
+        method: "POST",
+        headers: { ...bearer(DRY), "content-type": "application/json" },
+        body: JSON.stringify(body),
+      });
+
+    it("forwards a GraphQL query with the credential and its body, marked forwarded", async () => {
+      const h = harness({}, LINEAR);
+      h.respond(() => jsonResponse({ data: { viewer: { id: "u1" } } }));
+      const query = { query: "query { viewer { id } }" };
+      const res = await post(h, "/c/conn_1/graphql", query);
+
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({ data: { viewer: { id: "u1" } } });
+      expect(res.headers.get("x-graft-dry-run")).toBe("forwarded");
+      expect(h.forwarded).toHaveLength(1);
+      expect(h.forwarded[0]).toMatchObject({
+        method: "POST",
+        url: "https://api.linear.app/graphql",
+      });
+      expect(decode(h.forwarded[0]?.body ?? null)).toBe(JSON.stringify(query));
+      expect(h.forwarded[0]?.headers.get("x-demo-key")).toBe(SECRET);
+      expect(h.events[0]).toMatchObject({ dryRun: true, dryRunOutcome: "forwarded" });
+    });
+
+    it("stops a GraphQL mutation at the preview", async () => {
+      const h = harness({}, LINEAR);
+      const res = await post(h, "/c/conn_1/graphql", {
+        query: 'mutation { issueCreate(input: { title: "x" }) { success } }',
+      });
+
+      expect(res.status).toBe(202);
+      expect(res.headers.get("x-graft-dry-run")).toBe("intercepted");
+      expect(h.forwarded).toHaveLength(0);
+    });
+
+    it("stops a persisted query, whose document is not in the body", async () => {
+      const h = harness({}, LINEAR);
+      const res = await post(h, "/c/conn_1/graphql", {
+        extensions: { persistedQuery: { version: 1, sha256Hash: "abc" } },
+      });
+
+      expect(res.status).toBe(202);
+      expect(h.forwarded).toHaveLength(0);
+    });
+
+    it("forwards HubSpot's CRM search, a table entry, by its resolved host and path", async () => {
+      const h = harness({}, HUBSPOT);
+      h.respond(() => jsonResponse({ total: 1, results: [{ id: "1" }] }));
+      const res = await post(h, "/c/conn_1/crm/v3/objects/contacts/search", {
+        filterGroups: [{ filters: [{ propertyName: "email", operator: "EQ", value: "a@b.c" }] }],
+      });
+
+      expect(res.status).toBe(200);
+      expect(res.headers.get("x-graft-dry-run")).toBe("forwarded");
+      expect(h.forwarded[0]).toMatchObject({
+        method: "POST",
+        url: "https://api.hubapi.com/crm/v3/objects/contacts/search",
+      });
+    });
+
+    it("stops the same path on a host the table does not name", async () => {
+      const h = harness();
+      const res = await post(h, "/c/conn_1/crm/v3/objects/contacts/search", {});
+
+      expect(res.status).toBe(202);
+      expect(h.forwarded).toHaveLength(0);
+    });
+  });
+
+  /**
+   * GRA-267: the preview labels a write the person could not take back, by the classifier the
+   * check annotates `destructive` with, on the vendor URL as it would leave (the primary's base
+   * path included).
+   */
+  describe("a destructive POST is labelled in its preview", () => {
+    const STRIPE: ProxyConnection = {
+      ...CONNECTION,
+      primaryHost: "https://api.stripe.com/v1",
+      hosts: ["api.stripe.com"],
+    };
+    const post = (h: ReturnType<typeof harness>, path: string) =>
+      h.app.request(path, {
+        method: "POST",
+        headers: {
+          ...bearer(DRY),
+          "content-type": "application/x-www-form-urlencoded",
+        },
+        body: "charge=ch_1",
+      });
+
+    it("labels Stripe's refund destructive and still stops it at the preview", async () => {
+      const h = harness({}, STRIPE);
+      const res = await post(h, "/c/conn_1/refunds");
+
+      expect(res.status).toBe(202);
+      expect(res.headers.get("x-graft-dry-run")).toBe("intercepted");
+      expect(await preview(res)).toMatchObject({
+        destructive: true,
+        request: { method: "POST", host: "api.stripe.com", path: "/v1/refunds" },
+      });
+      expect(h.forwarded).toHaveLength(0);
+    });
+
+    it("labels an ordinary Stripe write, and the same path on another host, not destructive", async () => {
+      const stripe = harness({}, STRIPE);
+      expect(await preview(await post(stripe, "/c/conn_1/customers"))).toMatchObject({
+        destructive: false,
+      });
+      const other = harness();
+      expect(await preview(await post(other, "/c/conn_1/refunds"))).toMatchObject({
+        destructive: false,
+        request: { host: "api.vendor.example", path: "/v1/refunds" },
+      });
     });
   });
 
@@ -2843,5 +2986,95 @@ describe("oauth_authorization_code through the proxy", () => {
     expect(h.events[0]?.failure).toContain("storeCredential");
     expect(h.events[0]?.failure).not.toContain("disk full");
     expect(h.events[0]?.failure).not.toContain("client-secret-value");
+  });
+});
+
+/**
+ * The read-only claim (ADR 0008 as amended 2026-10-10; Greptile on #200). A run of a tool annotated
+ * read-only carries it, and the proxy classifies each request as it would leave with the check's
+ * own classifier, so a module that changes its body at run time (a replaced `JSON.stringify`, a
+ * computed option) cannot send a write under the annotation it was let through on.
+ */
+describe("the read-only claim", () => {
+  const LINEAR: ProxyConnection = {
+    ...CONNECTION,
+    primaryHost: "https://api.linear.app",
+    hosts: ["api.linear.app"],
+  };
+  const send = (h: ReturnType<typeof harness>, path: string, method: string, body?: string) =>
+    h.app.request(path, {
+      method,
+      headers: { ...bearer(READ_ONLY), "content-type": "application/json" },
+      ...(body === undefined ? {} : { body }),
+    });
+
+  it("forwards a GraphQL query and a GET as an ordinary call", async () => {
+    const h = harness({}, LINEAR);
+    h.respond(() => jsonResponse({ data: { viewer: { id: "u1" } } }));
+    const query = JSON.stringify({ query: "query { viewer { id } }" });
+    const res = await send(h, "/c/conn_1/graphql", "POST", query);
+
+    expect(res.status).toBe(200);
+    expect(res.headers.get("x-graft-dry-run")).toBeNull();
+    expect(decode(h.forwarded[0]?.body ?? null)).toBe(query);
+    expect(h.forwarded[0]?.headers.get("x-demo-key")).toBe(SECRET);
+
+    expect((await send(h, "/c/conn_1/viewer", "GET")).status).toBe(200);
+    expect(h.forwarded).toHaveLength(2);
+  });
+
+  it("refuses the mutation a tampered JSON.stringify sent, before any credential is obtained", async () => {
+    const obtained: string[] = [];
+    const h = harness({}, LINEAR, {
+      decryptCredential: async () => {
+        obtained.push("decrypt");
+        return { apiKey: SECRET };
+      },
+    });
+    // What a module whose check read `JSON.stringify({ query: "{ viewer { id } }" })` sends once
+    // it has replaced `JSON.stringify` with a function answering a mutation.
+    const res = await send(
+      h,
+      "/c/conn_1/graphql",
+      "POST",
+      JSON.stringify({ query: 'mutation { issueDelete(id: "x") { success } }' }),
+    );
+
+    expect(res.status).toBe(403);
+    expect(await res.json()).toMatchObject({
+      reason: "annotation_mismatch",
+      message: expect.stringContaining("linear__list_issues is annotated read-only"),
+    });
+    expect(h.forwarded).toHaveLength(0);
+    expect(obtained).toEqual([]);
+    expect(h.events[0]).toMatchObject({ outcome: "annotation_mismatch", status: 403 });
+  });
+
+  it.each(["PUT", "PATCH", "DELETE"])("refuses a %s", async (method) => {
+    const h = harness({}, LINEAR);
+    const res = await send(h, "/c/conn_1/issues/1", method, "{}");
+
+    expect(res.status).toBe(403);
+    expect(h.forwarded).toHaveLength(0);
+  });
+
+  it("refuses a REST POST whose body carries a query field", async () => {
+    const h = harness({}, LINEAR);
+    const res = await send(h, "/c/conn_1/messages", "POST", JSON.stringify({ query: "{ a }" }));
+
+    expect(res.status).toBe(403);
+    expect(h.forwarded).toHaveLength(0);
+  });
+
+  it("leaves a token without the claim as it was: an ordinary write is forwarded", async () => {
+    const h = harness({}, LINEAR);
+    const res = await h.app.request("/c/conn_1/graphql", {
+      method: "POST",
+      headers: { ...bearer(GOOD), "content-type": "application/json" },
+      body: JSON.stringify({ query: "mutation { logout }" }),
+    });
+
+    expect(res.status).toBe(200);
+    expect(h.forwarded).toHaveLength(1);
   });
 });

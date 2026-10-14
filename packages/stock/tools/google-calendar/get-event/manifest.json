@@ -1,0 +1,27 @@
+{
+  "name": "get-event",
+  "description": "Gets the details of one Google Calendar event (a meeting or appointment) by its id: title, description, times, location, recurrence, organizer, attendees and their responses, and the Meet link. google-calendar__list-events supplies the eventId; calendarId defaults to \"primary\" and google-calendar__list-calendars supplies others.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "eventId": {
+        "type": "string",
+        "minLength": 1,
+        "description": "Google Calendar event ID supplied by list-events."
+      },
+      "calendarId": {
+        "type": "string",
+        "minLength": 1,
+        "default": "primary",
+        "description": "Calendar ID supplied by list-calendars. Defaults to primary."
+      }
+    },
+    "required": ["eventId"],
+    "additionalProperties": false
+  },
+  "hosts": ["www.googleapis.com"],
+  "annotations": {
+    "readOnly": true,
+    "destructive": false
+  }
+}

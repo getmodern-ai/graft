@@ -1,0 +1,46 @@
+{
+  "name": "create-issue",
+  "description": "Creates an issue in a GitHub repository with a title and an optional Markdown body, labels and assignees, and answers its number, which github__get-issue and github__comment-on-issue-or-pull-request take. The owner and repository come from github__list-my-repositories.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "owner": {
+        "type": "string",
+        "description": "The repository's owner, the part before the slash of a full_name github__list-my-repositories answers."
+      },
+      "repo": {
+        "type": "string",
+        "description": "The repository's name, the part after the slash of a full_name github__list-my-repositories answers."
+      },
+      "title": {
+        "type": "string",
+        "description": "Issue title."
+      },
+      "body": {
+        "type": "string",
+        "description": "Optional issue body in Markdown."
+      },
+      "labels": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "description": "Optional label names."
+      },
+      "assignees": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "description": "Optional GitHub logins to assign."
+      }
+    },
+    "required": ["owner", "repo", "title"],
+    "additionalProperties": false
+  },
+  "hosts": ["api.github.com"],
+  "annotations": {
+    "readOnly": false,
+    "destructive": false
+  }
+}

@@ -1,0 +1,40 @@
+{
+  "name": "share-file",
+  "description": "Shares a Google Drive file with a person by email as a reader, commenter, or writer, with optional notification and message.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "fileId": {
+        "type": "string",
+        "description": "The file or folder ID from search-files or list-recent-files."
+      },
+      "email": {
+        "type": "string",
+        "format": "email",
+        "examples": ["someone@example.com"],
+        "description": "The email address of the person to share with."
+      },
+      "role": {
+        "type": "string",
+        "enum": ["reader", "commenter", "writer"],
+        "default": "reader",
+        "description": "What the person may do: reader (view), commenter or writer (edit). Defaults to reader."
+      },
+      "notify": {
+        "type": "boolean",
+        "default": true,
+        "description": "Whether Google emails the person about the share. Defaults to true."
+      },
+      "message": {
+        "type": "string",
+        "description": "An optional note included in the notification email."
+      }
+    },
+    "required": ["fileId", "email"]
+  },
+  "hosts": ["www.googleapis.com"],
+  "annotations": {
+    "readOnly": false,
+    "destructive": false
+  }
+}

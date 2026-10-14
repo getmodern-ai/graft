@@ -16,16 +16,30 @@ Graft lets an agent reach a vendor without holding a credential, and keeps the p
 where a decision is theirs. Anything that breaks either is in scope:
 
 - The **proxy** and its host pinning: a vendor request that leaves for a host the connection does
-  not name, a redirect or a private address followed, a credential echoed back.
-- The **capability token**: one accepted for a connection, tool or dry run it does not name, or
-  minted for an agent outside its scope.
+  not name, a redirect or a private address followed, a credential echoed back. In a dry run
+  only a read reaches the vendor: a `GET` or `HEAD`, a GraphQL query, or an endpoint in the
+  reviewed table (ADR 0008 as amended 2026-10-10); a request that can change a vendor's state and
+  still gets through is in scope. Outside a dry run, a run of a tool annotated read-only carries
+  a `readOnly` claim on its token and the proxy refuses any request under it that the same
+  classifier does not call a read (`annotation_mismatch`); a write that reaches a vendor from such
+  a run is in scope.
+- The **capability token**: one accepted for a connection, tool, dry run or read-only run it does
+  not name, or minted for an agent outside its scope.
 - The **vault**: a stored credential that becomes readable, or a decrypt outside the proxy binding
   and the OAuth callback. The **sandbox**: egress that is not the proxy, or escape.
 - The **approval and ask flows**: an approval or a connection confirmation that something other
   than the person can answer, or a handoff URL that works for someone it was not signed for. The
   console's session also records a build approval with no pending action, when the person presses
   Setup's Build for their agent and connection (ADR 0024); one recorded for an agent or connection
-  that is not theirs, or for a connection the agent was not given, is in scope.
+  that is not theirs, or for a connection the agent was not given, is in scope. So is an approval
+  that lets a write or destructive tool pass on a version it was not given for, other than a
+  ready-made tool's update that keeps or narrows its annotations (ADR 0008 as amended 2026-10-09).
+  A tool's ask may also allow every tool of its integration for that agent at once, destructive
+  tools only when the person ticks them (the same amendment), and a connection's confirmation may
+  record the same, destructive tools always left out: one recorded by anything but the person's
+  answer, for another agent, one recorded from a connection's confirmation with destructive tools
+  in it, or one that passes a destructive tool without the tick or a tool set to ask every call, is
+  in scope.
 - The **MCP OAuth server**: a token issued to the wrong client or agent, a code or refresh token
   replayed, a consent decided without a session. The **console**: a cross-origin state change. Its
   session also issues an agent's static token, shown once per request, to an agent awaiting its

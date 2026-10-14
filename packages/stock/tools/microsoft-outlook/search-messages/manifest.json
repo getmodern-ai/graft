@@ -1,0 +1,41 @@
+{
+  "name": "search-messages",
+  "description": "Searches and finds Outlook emails by words, sender, unread status or folder, newest first when no words are given. Message ids feed microsoft-outlook__reply-to-message, microsoft-outlook__move-message and microsoft-outlook__delete-message; folder ids come from microsoft-outlook__list-mail-folders.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "query": {
+        "type": "string",
+        "minLength": 1,
+        "description": "Free text or Outlook KQL, such as from:, subject:, or hasAttachments:true."
+      },
+      "from": {
+        "type": "string",
+        "minLength": 1,
+        "description": "Exact sender email address."
+      },
+      "unreadOnly": {
+        "type": "boolean",
+        "description": "Return only unread messages."
+      },
+      "folder": {
+        "type": "string",
+        "minLength": 1,
+        "description": "Mail folder ID or well-known name such as inbox, sentitems, drafts, or archive."
+      },
+      "top": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 50,
+        "default": 10,
+        "description": "Maximum number of messages to request. Defaults to 10."
+      }
+    },
+    "additionalProperties": false
+  },
+  "hosts": ["graph.microsoft.com"],
+  "annotations": {
+    "readOnly": true,
+    "destructive": false
+  }
+}

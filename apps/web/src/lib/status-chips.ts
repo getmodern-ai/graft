@@ -109,6 +109,16 @@ export const APPROVAL_DECISION_CHIP = {
 } as const satisfies Record<Approval["decision"], StatusChip>;
 
 /**
+ * Whether destructive tools pass under an integration's standing approval (GRA-237; ADR 0008 as
+ * amended 2026-10-09): `success` when they run too, `secondary` when they keep asking first, the
+ * neutral rest, since a tool that asks is not a fault.
+ */
+export const VENDOR_APPROVAL_DESTRUCTIVE_CHIP = {
+  included: { variant: "success", label: "Included" },
+  excluded: { variant: "secondary", label: "Ask first" },
+} as const satisfies Record<"included" | "excluded", StatusChip>;
+
+/**
  * `secondary` for a promotion rather than the filled `default`: the history is a list of events,
  * not of states, and a primary-filled chip on every other row read as a call to action. Demotion
  * stays `outline` — the quieter of the pair, as the tool is still one `find_tool` away (ADR 0009).

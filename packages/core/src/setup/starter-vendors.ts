@@ -18,14 +18,16 @@ import type { ProviderDescription } from "../connection/provider";
  * sentence the integration step shows under the name (`outcome`).
  *
  * The list is **common services a link provider connects by OAuth** (Pipedream on Cloud, ADR
- * 0019), plus Open-Meteo, the keyless one, for a deployment where no link provider covers anything.
- * Every task is a GET: Setup's result step runs only a read-only tool, and the check counts a
- * `POST` as a write whatever it reads. That is why there is no Linear, whose API is GraphQL and
- * reads through `POST` alone. **And every task needs nothing the person has to look up** (GRA-217):
+ * 0019; Stripe joined as a stock integration under GRA-261), plus Open-Meteo, the keyless one, for a deployment where no link provider covers anything.
+ * Every task is a read: Setup's result step runs only a read-only tool, and the check counts a
+ * `POST` as a write unless the proxy's classifier reads it (a GraphQL query, an entry of the
+ * reviewed table; GRA-260). Every task is a GET but Linear's, whose API is GraphQL and reads
+ * through a `POST` of a query (GRA-269). **And every task needs nothing the person has to look up** (GRA-217):
  * no id, no name, no link; a free-text value with an obvious default (Open-Meteo's city) is the one
- * input allowed, since a first run that fails is where a person leaves. That is why there is no
- * Google Sheets, whose rows need a spreadsheet's id and a range, and Google Drive's file list stands
- * in for it. Each entry's `hints` names its one endpoint and says the tool takes no input.
+ * input allowed, since a first run that fails is where a person leaves. That is why Google Sheets'
+ * task lists the spreadsheets through Drive's search rather than reading rows, which need a
+ * spreadsheet's id and a range (GRA-217; Sheets came back as a stock integration under GRA-259).
+ * Each entry's `hints` names its one endpoint and says the tool takes no input.
  *
  * `scheme` is **the keyring's path**, kept truthful (a pasted token's scheme, or the vendor's own
  * authorization-code endpoints) though `setupVendorOptions` never offers it: a link provider
@@ -42,6 +44,25 @@ export type StarterRunInput = {
   field: string;
   label: string;
   defaultValue: string;
+};
+
+/** One task the tool step offers: the person's words, and what the model is told beside them. */
+export type StarterTask = { goal: string; hints: string };
+
+/**
+ * One ready-made tool the tool step offers (GRA-276; ADR 0025): a stock tool of the starter's
+ * integration by its name (`<vendor>__<name>`'s second half), and the task it does in the person's
+ * words, which the person reads as the card and the setup prompt reads as the tool's goal.
+ */
+export type StarterReadyMade = {
+  tool: string;
+  goal: string;
+  /**
+   * The starter's tasks (its `goal` or a `moreTasks` entry) this tool does though their words
+   * differ, so the step does not offer them to build beside it (Greptile on #218). A task worded
+   * as `goal` is matched without being named here.
+   */
+  replaces?: readonly string[];
 };
 
 export type StarterVendor = {
@@ -72,6 +93,21 @@ export type StarterVendor = {
   hints: string;
   /** The run's one input, or null for a tool that takes none. */
   runInput: StarterRunInput | null;
+  /**
+   * More tasks the tool step offers beside `goal` (Setup v2), each with its own `hints`, held to
+   * the same rules: a read, needing nothing the person has to look up, inside the scopes the
+   * starter's connection asks for. Aligned with the integration's stock reads (ADR 0025), which
+   * take their place as stock lands.
+   */
+  moreTasks: readonly StarterTask[];
+  /**
+   * The integration's stock tools the tool step offers before any task to build (GRA-276), the
+   * curated task's best match first: each a read that runs with nothing the person has to look up
+   * (GRA-217's rule, held by `@graft/stock`'s workspace test), offered only while the catalogue
+   * holds it as read-only (`setupReadyMade`). A task a ready-made tool already does is not offered
+   * to build beside it.
+   */
+  readyMade: readonly StarterReadyMade[];
   /** What the person will see once the tool runs, one sentence, for the integration step. */
   outcome: string;
 };
@@ -100,7 +136,32 @@ export const STARTER_VENDORS = [
     hints:
       "List the five most recent conversations in the inbox with the threads list endpoint, one GET of `users/me/threads` with `maxResults=5` and `labelIds=INBOX`, returning each thread's `id` and its `snippet`, the line of text Gmail shows for it. Make no other call. The tool takes no input. Read only.",
     runInput: null,
-    outcome: "Your five latest inbox conversations, with the first line of each.",
+    outcome: "Your latest inbox emails, with who sent each and its first line.",
+    moreTasks: [
+      {
+        goal: "Show me my unread emails",
+        hints:
+          "List up to ten unread conversations with the threads list endpoint, one GET of `users/me/threads` with `q=is:unread` and `maxResults=10`, returning each thread's `id` and its `snippet`. Make no other call. The tool takes no input. Read only.",
+      },
+      {
+        goal: "Show me the emails I starred",
+        hints:
+          "List up to ten starred conversations with the threads list endpoint, one GET of `users/me/threads` with `labelIds=STARRED` and `maxResults=10`, returning each thread's `id` and its `snippet`. Make no other call. The tool takes no input. Read only.",
+      },
+      {
+        goal: "List my Gmail labels",
+        hints:
+          "List the mailbox's labels with the labels list endpoint, one GET of `users/me/labels`, returning each label's `name` and `type` (system or user). The tool takes no input. Read only.",
+      },
+    ],
+    readyMade: [
+      {
+        tool: "search-messages",
+        goal: "Show me my latest inbox emails",
+        replaces: ["Show me my five latest inbox conversations"],
+      },
+      { tool: "list-labels", goal: "List my Gmail labels" },
+    ],
   },
   {
     id: "google-calendar",
@@ -112,13 +173,33 @@ export const STARTER_VENDORS = [
     scheme: "oauth_authorization_code",
     schemeConfig: {
       ...GOOGLE_OAUTH,
-      scopes: "https://www.googleapis.com/auth/calendar.readonly",
+      // The stock tools write events (create, update, delete, respond), so the consent asks for
+      // event writes beside the read-only calendar list (GRA-249).
+      scopes:
+        "https://www.googleapis.com/auth/calendar.readonly https://www.googleapis.com/auth/calendar.events",
     },
     goal: "Show me what is on my calendar this week",
     hints:
       "List the events on the `primary` calendar for the next seven days with the events list endpoint, a GET, with `timeMin` now, `timeMax` seven days on, `singleEvents=true` and `orderBy=startTime`, returning the title, the start time and the location of each. The tool takes no input. Read only.",
     runInput: null,
     outcome: "Your week ahead: each event's title, when it starts and where.",
+    moreTasks: [
+      {
+        goal: "Show me my next three meetings",
+        hints:
+          "List the next three events on the `primary` calendar with the events list endpoint, a GET, with `timeMin` now, `singleEvents=true`, `orderBy=startTime` and `maxResults=3`, returning the title, the start time and the attendees' emails of each. The tool takes no input. Read only.",
+      },
+      {
+        goal: "List my calendars",
+        hints:
+          "List the calendars the person can see with the calendar list endpoint, a GET of `users/me/calendarList`, returning each calendar's `summary`, whether it is `primary`, and its `timeZone`. The tool takes no input. Read only.",
+      },
+    ],
+    readyMade: [
+      { tool: "list-events", goal: "Show me what is on my calendar this week" },
+      { tool: "find-free-time", goal: "Find my free time this week" },
+      { tool: "list-calendars", goal: "List my calendars" },
+    ],
   },
   {
     id: "google-drive",
@@ -132,7 +213,9 @@ export const STARTER_VENDORS = [
     scheme: "oauth_authorization_code",
     schemeConfig: {
       ...GOOGLE_OAUTH,
-      scopes: "https://www.googleapis.com/auth/drive.metadata.readonly",
+      // `drive`, not a read-only scope: the stock tools (ADR 0025) read content, create folders,
+      // move and share, and a starter asks for what its stock tools need; each write still asks.
+      scopes: "https://www.googleapis.com/auth/drive",
     },
     // Listing files needs nothing looked up; a spreadsheet's rows need its id and a range, and the
     // Google Sheets starter's first run failed on both (GRA-217).
@@ -141,6 +224,49 @@ export const STARTER_VENDORS = [
       "List the ten most recently modified files with Drive's files list endpoint, a GET, with `orderBy=modifiedTime desc`, `pageSize=10` and `fields=files(name,modifiedTime,mimeType,webViewLink)`, returning those four for each. The tool takes no input. Read only.",
     runInput: null,
     outcome: "Your ten most recently edited files, with when each changed and a link to it.",
+    moreTasks: [
+      {
+        goal: "Show me the files shared with me",
+        hints:
+          "List up to ten files shared with the person with Drive's files list endpoint, a GET, with `q=sharedWithMe`, `orderBy=modifiedTime desc`, `pageSize=10` and `fields=files(name,modifiedTime,mimeType,webViewLink)`, returning those four for each. The tool takes no input. Read only.",
+      },
+      {
+        goal: "List my most recent Google Docs",
+        hints:
+          "List the ten most recently modified Google Docs with Drive's files list endpoint, a GET, with `q=mimeType='application/vnd.google-apps.document'`, `orderBy=modifiedTime desc`, `pageSize=10` and `fields=files(name,modifiedTime,webViewLink)`, returning those three for each. The tool takes no input. Read only.",
+      },
+    ],
+    readyMade: [{ tool: "list-recent-files", goal: "Show me my ten most recently edited files" }],
+  },
+  {
+    id: "google-sheets",
+    vendor: "google-sheets",
+    displayName: "Google Sheets",
+    primaryHost: "https://sheets.googleapis.com/v4",
+    // Sheets has no list of spreadsheets: finding one is Drive's search, scoped to the spreadsheet
+    // type, on Drive's host (GRA-259). So a Sheets connection reaches both.
+    hosts: ["sheets.googleapis.com", "www.googleapis.com"],
+    docsUrl: "https://developers.google.com/workspace/sheets/api/reference/rest",
+    scheme: "oauth_authorization_code",
+    // Read and write on spreadsheets, because this proposal is also the stock tools' `connect` and
+    // four of them write (append-rows, update-range, create-spreadsheet, add-tab); the person still
+    // approves each write. Drive's metadata scope is find-spreadsheets' search.
+    schemeConfig: {
+      ...GOOGLE_OAUTH,
+      scopes:
+        "https://www.googleapis.com/auth/spreadsheets https://www.googleapis.com/auth/drive.metadata.readonly",
+    },
+    // A spreadsheet's rows need its id and a range, and the first Sheets task failed on both
+    // (GRA-217): the list needs nothing looked up.
+    goal: "Show me my ten most recently edited spreadsheets",
+    hints:
+      "List the ten most recently modified spreadsheets with Drive's files list endpoint, a GET to `https://www.googleapis.com/drive/v3/files`, with `q=mimeType='application/vnd.google-apps.spreadsheet' and trashed=false`, `orderBy=modifiedTime desc`, `pageSize=10` and `fields=files(id,name,modifiedTime,webViewLink)`, returning those four for each. The tool takes no input. Read only.",
+    runInput: null,
+    outcome: "Your ten most recently edited spreadsheets, with when each changed and a link to it.",
+    moreTasks: [],
+    readyMade: [
+      { tool: "find-spreadsheets", goal: "Show me my ten most recently edited spreadsheets" },
+    ],
   },
   {
     id: "slack",
@@ -153,16 +279,26 @@ export const STARTER_VENDORS = [
     schemeConfig: {
       authorizeUrl: "https://slack.com/oauth/v2/authorize",
       tokenUrl: "https://slack.com/api/oauth.v2.access",
-      scopes: "channels:read",
+      // Comma-separated, as Slack's authorize URL takes them: every method Slack's stock tools call
+      // (GRA-251, `packages/stock/tools/slack/`), so a connection made here runs all of them, the
+      // writes included; the person still approves each write. The curated goal needs
+      // `channels:read` alone.
+      scopes:
+        "channels:read,groups:read,channels:history,groups:history,users:read,users:read.email,chat:write,reactions:write",
     },
-    // `conversations.list` over public channels needs `channels:read` alone, which Pipedream's
-    // `slack_v2` grants (its own List Channels action calls the same method); nothing else is asked
-    // of the token, so a narrower grant still runs.
     goal: "List the public channels in my workspace",
     hints:
       "List the public channels in the Slack workspace with the `conversations.list` method, a GET, with `types=public_channel`, `exclude_archived=true` and `limit=20`, returning the name, the topic and the member count of each. Slack answers 200 with `ok: false` on an error, so treat that as a failure naming Slack's `error`. The tool takes no input. Read only.",
     runInput: null,
     outcome: "Your workspace's public channels, with each one's topic and member count.",
+    moreTasks: [
+      {
+        goal: "List the channels I am in",
+        hints:
+          "List the public channels the connected account is a member of with the `users.conversations` method, a GET, with `types=public_channel`, `exclude_archived=true` and `limit=20`, returning the name and the topic of each. Slack answers 200 with `ok: false` on an error, so treat that as a failure naming Slack's `error`. The tool takes no input. Read only.",
+      },
+    ],
+    readyMade: [{ tool: "list-channels", goal: "List the public channels in my workspace" }],
   },
   {
     id: "notion",
@@ -181,6 +317,15 @@ export const STARTER_VENDORS = [
       "List the users of the Notion workspace with the users list endpoint, a GET, with `page_size=20`, returning the name and the type (person or bot) of each, and send the `Notion-Version` header the documentation names. The tool takes no input. Read only.",
     runInput: null,
     outcome: "The people in your Notion workspace, and which of them are bots.",
+    // Notion lists pages only through its search, a POST (the note on `goal`), so its one read
+    // without input is the users list.
+    moreTasks: [],
+    readyMade: [
+      {
+        tool: "search-pages-and-databases",
+        goal: "Show me my recently edited Notion pages and databases",
+      },
+    ],
   },
   {
     id: "github",
@@ -197,6 +342,21 @@ export const STARTER_VENDORS = [
       "List the authenticated user's ten most recently updated repositories with the authenticated user's repositories endpoint, a GET, with `sort=updated` and `per_page=10`, returning the name, the description, the main language and the star count of each. The tool takes no input. Read only.",
     runInput: null,
     outcome: "Your ten most recently updated repositories, with their language and stars.",
+    moreTasks: [
+      {
+        goal: "Show me the open issues assigned to me",
+        hints:
+          "List up to ten open issues assigned to the authenticated user across their repositories with the `GET /issues` endpoint, with `filter=assigned`, `state=open` and `per_page=10`, returning the title, the repository's full name, the number and the URL of each. The tool takes no input. Read only.",
+      },
+      {
+        goal: "Show me my open pull requests",
+        hints:
+          "List up to ten of the authenticated user's open pull requests with the issue search endpoint, a GET of `/search/issues` with `q=is:pr is:open author:@me` and `per_page=10`, returning the title, the repository and the URL of each. The tool takes no input. Read only.",
+      },
+    ],
+    readyMade: [
+      { tool: "list-my-repositories", goal: "Show me the repositories I updated most recently" },
+    ],
   },
   {
     id: "hubspot",
@@ -214,6 +374,118 @@ export const STARTER_VENDORS = [
       "List ten contacts with the contacts list endpoint, a GET and not the search, with `limit=10` and the `firstname`, `lastname`, `email` and `company` properties, returning those for each. The tool takes no input. Read only.",
     runInput: null,
     outcome: "Ten contacts from your CRM, with each one's email and company.",
+    moreTasks: [
+      {
+        goal: "Show me ten companies from my CRM",
+        hints:
+          "List ten companies with the companies list endpoint, a GET and not the search, with `limit=10` and the `name`, `domain` and `industry` properties, returning those for each. The tool takes no input. Read only.",
+      },
+      {
+        goal: "Show me ten deals from my CRM",
+        hints:
+          "List ten deals with the deals list endpoint, a GET and not the search, with `limit=10` and the `dealname`, `amount`, `dealstage` and `closedate` properties, returning those for each. The tool takes no input. Read only.",
+      },
+    ],
+    readyMade: [
+      { tool: "list-pipelines", goal: "List my deal pipelines and their stages" },
+      { tool: "list-owners", goal: "List the owners in my CRM" },
+    ],
+  },
+  {
+    id: "stripe",
+    vendor: "stripe",
+    displayName: "Stripe",
+    primaryHost: "https://api.stripe.com/v1",
+    hosts: ["api.stripe.com"],
+    docsUrl: "https://docs.stripe.com/api",
+    // A secret or restricted key, sent as a bearer token; the form path's truth. Stripe takes its
+    // writes as form-encoded bodies, which the stock tools built against it send (GRA-261).
+    scheme: "bearer",
+    schemeConfig: {},
+    goal: "Show me my ten most recent payments",
+    hints:
+      "List the ten most recent charges with the charges list endpoint, one GET of `charges` with `limit=10`, returning the amount, the currency, the status, when it was created and the description of each. The tool takes no input. Read only.",
+    runInput: null,
+    outcome: "Your ten most recent payments, with each one's amount and status.",
+    moreTasks: [],
+    readyMade: [
+      { tool: "list-payments", goal: "Show me my ten most recent payments" },
+      { tool: "get-balance", goal: "Show me my Stripe balance" },
+      { tool: "list-invoices", goal: "Show me my latest invoices" },
+    ],
+  },
+  {
+    id: "microsoft-outlook",
+    // Pipedream's app is `microsoft_outlook`, the name its catalogue reads this slug as. Mail and
+    // calendar are one Microsoft Graph host, for a personal account and a work tenant alike.
+    vendor: "microsoft-outlook",
+    displayName: "Microsoft Outlook",
+    primaryHost: "https://graph.microsoft.com/v1.0",
+    hosts: ["graph.microsoft.com"],
+    docsUrl: "https://learn.microsoft.com/en-us/graph/api/resources/mail-api-overview",
+    scheme: "oauth_authorization_code",
+    schemeConfig: {
+      authorizeUrl: "https://login.microsoftonline.com/common/oauth2/v2.0/authorize",
+      tokenUrl: "https://login.microsoftonline.com/common/oauth2/v2.0/token",
+      scopes: "offline_access Mail.Read",
+    },
+    goal: "Show me my ten latest emails",
+    hints:
+      "List the ten most recent messages in the inbox with the mail folder's messages list endpoint, one GET of `me/mailFolders/inbox/messages` with `$top=10`, `$orderby=receivedDateTime desc` and `$select=subject,from,receivedDateTime,bodyPreview`, returning those four for each. Make no other call. The tool takes no input. Read only.",
+    runInput: null,
+    outcome: "Your ten latest emails, with who sent each and its first line.",
+    moreTasks: [],
+    readyMade: [
+      { tool: "search-messages", goal: "Show me my ten latest emails" },
+      { tool: "list-mail-folders", goal: "List my mail folders" },
+      { tool: "list-calendars", goal: "List my Outlook calendars" },
+    ],
+  },
+  {
+    id: "linear",
+    vendor: "linear",
+    displayName: "Linear",
+    primaryHost: "https://api.linear.app",
+    hosts: ["api.linear.app"],
+    docsUrl: "https://linear.app/developers/graphql",
+    // A personal API key, sent bare in `Authorization` (no `Bearer`); the form path's truth. Every
+    // call is a `POST /graphql`, and a query is a read (GRA-260), so the task is read-only.
+    scheme: "api_key_header",
+    schemeConfig: { headerName: "Authorization" },
+    goal: "Show me my open Linear issues",
+    hints:
+      'List up to ten open issues assigned to the authenticated user with one GraphQL query, a POST of `/graphql` whose body is `{ query }` alone with the document written as a string literal: `viewer { assignedIssues(first: 10, filter: { state: { type: { nin: ["completed", "canceled"] } } }) { nodes { identifier title url state { name } } } }`, returning those for each. The tool takes no input. Read only.',
+    runInput: null,
+    outcome: "Your open Linear issues, with each one's state.",
+    moreTasks: [],
+    readyMade: [
+      { tool: "list-my-issues", goal: "Show me my open Linear issues" },
+      { tool: "list-projects", goal: "List my Linear projects" },
+      { tool: "list-teams", goal: "List the teams in my Linear workspace" },
+    ],
+  },
+  {
+    id: "apollo",
+    vendor: "apollo",
+    displayName: "Apollo",
+    primaryHost: "https://api.apollo.io/api/v1",
+    hosts: ["api.apollo.io"],
+    docsUrl: "https://docs.apollo.io/reference/apollo-api",
+    // An API key in the `x-api-key` header; the form path's truth. Apollo's searches are POSTs in
+    // the reviewed read table (`@graft/proxy`'s `read-endpoints.ts`, GRA-260), so the check counts
+    // them as reads and the task below is one.
+    scheme: "api_key_header",
+    schemeConfig: { headerName: "x-api-key" },
+    goal: "Show me ten of my Apollo contacts",
+    hints:
+      "List ten of the team's saved contacts with the contacts search endpoint, one POST of `contacts/search` with `per_page=10` and `page=1`, returning the name, the title, the company and the email of each. It spends no credits. The tool takes no input. Read only.",
+    runInput: null,
+    outcome: "Ten contacts from your Apollo team, with each one's title and company.",
+    moreTasks: [],
+    readyMade: [
+      { tool: "search-contacts", goal: "Show me ten of my Apollo contacts" },
+      { tool: "list-sequences", goal: "List my Apollo sequences" },
+    ],
   },
   {
     id: "open-meteo",
@@ -230,6 +502,16 @@ export const STARTER_VENDORS = [
       "The tool takes a city name as the input `city`, looks up the city's coordinates with Open-Meteo's geocoding API, and returns the current temperature, wind speed and weather there. Read only.",
     runInput: { field: "city", label: "City", defaultValue: "Melbourne" },
     outcome: "The weather right now in a city you choose, with no key to enter.",
+    moreTasks: [
+      {
+        goal: "Tell me tomorrow's forecast for a city I name",
+        hints:
+          "The tool takes a city name as the input `city`, looks up the city's coordinates with Open-Meteo's geocoding API, and returns tomorrow's highest and lowest temperature and chance of rain there from the forecast API's daily values. Read only.",
+      },
+    ],
+    readyMade: [
+      { tool: "current-weather", goal: "Tell me the weather right now in a city I name" },
+    ],
   },
 ] as const satisfies readonly StarterVendor[];
 
@@ -268,7 +550,13 @@ export function starterVendorFor(vendor: string): StarterVendor | null {
 export function setupBuildHints(starter: StarterVendor | null, goal: string): string | null {
   if (!starter) return null;
   const docs = `The vendor's documentation starts at ${starter.docsUrl}.`;
-  return goal.trim() === starter.goal ? `${starter.hints} ${docs}` : docs;
+  const task = starterTasks(starter).find((candidate) => candidate.goal === goal.trim());
+  return task ? `${task.hints} ${docs}` : docs;
+}
+
+/** Every task the tool step offers for a starter: its curated `goal` first, then `moreTasks`. */
+export function starterTasks(starter: StarterVendor): StarterTask[] {
+  return [{ goal: starter.goal, hints: starter.hints }, ...starter.moreTasks];
 }
 
 /**
@@ -355,4 +643,24 @@ export function setupVendorOptions(covered: readonly CoveredStarter[]): SetupVen
         CONNECT_RANK[a.option.connect] - CONNECT_RANK[b.option.connect] || a.index - b.index,
     )
     .map(({ option }) => option);
+}
+
+/**
+ * The scopes a consent asks for on a connection (GRA-249, Greptile on #194): the row's own, and
+ * where the row is a starter's vendor consenting at the starter's own authorize endpoint, the
+ * starter's scopes beside them, so a connection made while the starter asked for less (Google
+ * Calendar before its stock tools wrote events) is upgraded by connecting it again. A row at
+ * another endpoint, or of another vendor, asks for exactly its own.
+ */
+export function consentScopesFor(
+  vendor: string,
+  authorizeUrl: string | undefined,
+  scopes: string | undefined,
+): string | undefined {
+  const starter = starterVendorFor(vendor);
+  const config = starter?.schemeConfig as { authorizeUrl?: string; scopes?: string } | undefined;
+  if (!config?.scopes || !authorizeUrl || config.authorizeUrl !== authorizeUrl) return scopes;
+  const own = scopes?.trim() ? scopes.trim().split(/\s+/) : [];
+  const union = [...own, ...config.scopes.split(/\s+/).filter((scope) => !own.includes(scope))];
+  return union.join(" ");
 }

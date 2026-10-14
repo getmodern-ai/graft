@@ -47,6 +47,40 @@ export type ModelJobContext = {
   skill: string;
   /** The bounds the job holds the model to, so a provider-backed model can pace itself. */
   budget: { maxAttempts: number; tokenCeiling: number };
+  /**
+   * The vendor's ready-made stock tools (ADR 0025; GRA-243), so a new tool does more than one
+   * that already exists rather than duplicating it. Empty or unset when the vendor has none.
+   */
+  stockTools?: readonly StockToolBrief[];
+  /**
+   * A remix's starting point (`acquire`'s `from`, GRA-243): the tool's current module, which the
+   * model changes rather than rewrites, and whose name the job publishes under whatever the draft
+   * says. Null or unset for a new tool.
+   */
+  startingPoint?: StartingPoint | null;
+};
+
+/** A stock tool as the authoring model is told of it: its wire name, what it does, what it takes. */
+export type StockToolBrief = {
+  /** `<vendor>__<name>`. */
+  tool: string;
+  description: string;
+  /** The tool's input schema; the prompt lists its properties. */
+  inputSchema: unknown;
+};
+
+/** The tool a remix changes, at its current version. */
+export type StartingPoint = {
+  /** `<vendor>__<name>`. */
+  tool: string;
+  /** The name every draft of this job is published under. */
+  name: string;
+  version: number;
+  /** Whether the version is a stock tool's copy, which the remix stops following. */
+  stock: boolean;
+  description: string;
+  inputSchema: unknown;
+  files: readonly ModuleFile[];
 };
 
 /** What one answer cost. Whole tokens; the job sums them against the ceiling. */
@@ -57,8 +91,9 @@ export type ModuleFile = { path: string; content: string };
 /**
  * A module as the model drafts it: what the publish takes, plus the test input the dry run needs
  * and the reads that prove the credential and the request shape before anything is published
- * (the skill's step 4). `proofReads` are vendor-relative `GET` paths, `/items?limit=1`, each on
- * the primary host or on another host the connection declares (`ProofReadTarget`); the job runs
+ * (the skill's step 4). `proofReads` are vendor-relative paths, `/items?limit=1`, each on the
+ * primary host or on another host the connection declares, a `GET` or a read `POST`, with the
+ * vendor's own headers where it wants them (`ProofReadTarget`); the job runs
  * each through the connection's execute path with the dry-run claim on and hands the answers back
  * as `ProofRead`s. Empty skips the step.
  */
@@ -81,12 +116,40 @@ export type ModuleDraft = {
  * (GRA-213): Open-Meteo's `/v1/search` is proven on `geocoding-api.open-meteo.com`, not on the
  * forecast host the connection names first. The job refuses a host the connection does not declare
  * before any read is made.
+ *
+ * `headers` are the vendor's own request headers the module sends, `Notion-Version` the case in
+ * point, never a credential (GRA-271): the proxy injects that. `method` is `GET` when absent, or
+ * `POST` with an optional `body`, for a call the proxy's classifier counts as a read (a GraphQL
+ * query, an endpoint in its reviewed read table; ADR 0008 as amended 2026-10-10). The job runs a
+ * `POST` only when that classifier says read, and a dry run stops anything else at its preview.
  */
-export type ProofReadTarget = { path: string; host?: string };
+export type ProofReadTarget = {
+  path: string;
+  host?: string;
+  method?: ProofReadMethod;
+  headers?: Record<string, string>;
+  body?: string;
+};
 
-/** A proof read named as the job's lines and the prompt name it: `/v1/search on geocoding-api.open-meteo.com`, or the path alone. */
-export function proofReadLabel(target: { path: string; host?: string | null }): string {
-  return target.host ? `${target.path} on ${target.host}` : target.path;
+/** The two methods a proof read sends; `GET` when a read names none. */
+export type ProofReadMethod = "GET" | "POST";
+
+/**
+ * A proof read named as the job's lines and the prompt name it: `GET /v1/search on
+ * geocoding-api.open-meteo.com`, `POST /v1/search with notion-version`. Header names only, never
+ * a value: the lines reach the person and the trace (GRA-271).
+ */
+export function proofReadLabel(target: {
+  path: string;
+  host?: string | null;
+  method?: ProofReadMethod | null;
+  headers?: Record<string, string> | null;
+  headerNames?: readonly string[] | null;
+}): string {
+  const names = target.headerNames ?? Object.keys(target.headers ?? {});
+  const on = target.host ? ` on ${target.host}` : "";
+  const sent = names.length > 0 ? ` with ${names.join(", ")}` : "";
+  return `${target.method ?? "GET"} ${target.path}${on}${sent}`;
 }
 
 /** A diagnostic as the check and the publish report one — `@graft/check`'s `Diagnostic`, structurally. */
@@ -109,6 +172,10 @@ export type ProofRead = {
   path: string;
   /** The declared host the read named (GRA-213); null for a read on the primary host. */
   host: string | null;
+  /** The method the read was sent with (GRA-271). */
+  method: ProofReadMethod;
+  /** The names of the headers the read carried, lower case; never their values (GRA-271). */
+  headerNames: string[];
   ok: boolean;
   status: number | null;
   body: string | null;

@@ -1,0 +1,14 @@
+{
+  "name": "list-channels",
+  "description": "Lists up to 200 public, unarchived channels in the Slack workspace, each with its id, name, topic, purpose and member count. The channel id or name is what read-channel-history, read-thread, post-message, reply-in-thread and add-reaction take.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {},
+    "additionalProperties": false
+  },
+  "hosts": ["slack.com"],
+  "annotations": {
+    "readOnly": true,
+    "destructive": false
+  }
+}

@@ -1,0 +1,36 @@
+{
+  "format": 1,
+  "tool": "hubspot__create-contact",
+  "recordedAt": "2026-10-09T19:28:13.466Z",
+  "input": {
+    "email": "iysz.jul@example.com",
+    "firstName": "Ejxj",
+    "lastName": "Zbd"
+  },
+  "exchanges": [
+    {
+      "kind": "write",
+      "method": "POST",
+      "url": "https://api.hubapi.com/crm/v3/objects/contacts",
+      "body": {
+        "json": {
+          "properties": {
+            "email": "iysz.jul@example.com",
+            "firstname": "Ejxj",
+            "lastname": "Zbd"
+          }
+        }
+      }
+    }
+  ],
+  "result": {
+    "created": false,
+    "sent": {
+      "properties": {
+        "email": "iysz.jul@example.com",
+        "firstname": "Ejxj",
+        "lastname": "Zbd"
+      }
+    }
+  }
+}

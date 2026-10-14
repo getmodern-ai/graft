@@ -179,6 +179,15 @@ export function createAuth(options: CreateAuthOptions) {
     secret: options.secret,
     baseURL: options.baseURL,
     trustedOrigins: [...(options.trustedOrigins ?? [])],
+    /**
+     * An error Better Auth answers with a redirect, an orphaned sign-in callback above all (a
+     * browser Back onto the provider's authorize page replays a state the first callback already
+     * consumed: `state_mismatch`), lands on the console's sign-in door with its `error` code,
+     * whose guard sends a signed-in person on into the console, rather than on the API's root.
+     */
+    ...(options.consoleUrl
+      ? { onAPIError: { errorURL: `${options.consoleUrl.replace(/\/$/, "")}/login` } }
+      : {}),
     emailAndPassword: {
       enabled: true,
       /**

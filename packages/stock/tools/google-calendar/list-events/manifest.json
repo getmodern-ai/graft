@@ -1,0 +1,40 @@
+{
+  "name": "list-events",
+  "description": "Lists the events (meetings, appointments) on a Google Calendar in a time window, by default the week ahead (the next seven days from now), optionally filtered by free text: what is on the calendar, upcoming or past, with each event's id, title, times, location, organizer and attendees. calendarId defaults to \"primary\"; google-calendar__list-calendars supplies others. The event id is the eventId google-calendar__get-event, google-calendar__update-event, google-calendar__delete-event and google-calendar__respond-to-event take.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "calendarId": {
+        "type": "string",
+        "description": "Calendar ID to list. Defaults to 'primary'; use list-calendars to obtain other calendar IDs."
+      },
+      "timeMin": {
+        "type": "string",
+        "format": "date-time",
+        "description": "RFC 3339 lower time bound. Defaults to the current time."
+      },
+      "timeMax": {
+        "type": "string",
+        "format": "date-time",
+        "description": "RFC 3339 upper time bound. Defaults to seven days after timeMin."
+      },
+      "query": {
+        "type": "string",
+        "description": "Free-text search passed to Google Calendar as q."
+      },
+      "maxResults": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 250,
+        "default": 50,
+        "description": "Maximum total number of events to return. Defaults to 50."
+      }
+    },
+    "additionalProperties": false
+  },
+  "hosts": ["www.googleapis.com"],
+  "annotations": {
+    "readOnly": true,
+    "destructive": false
+  }
+}

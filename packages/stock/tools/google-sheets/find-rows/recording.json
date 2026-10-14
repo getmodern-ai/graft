@@ -1,0 +1,184 @@
+{
+  "format": 1,
+  "tool": "google-sheets__find-rows",
+  "recordedAt": "2026-10-10T05:56:41.489Z",
+  "input": {
+    "spreadsheet": "https://docs.google.com/spreadsheets/d/1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms/edit",
+    "column": "Major",
+    "value": "English"
+  },
+  "exchanges": [
+    {
+      "kind": "read",
+      "method": "GET",
+      "url": "https://sheets.googleapis.com/v4/spreadsheets/1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms?fields=sheets.properties.title",
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json; charset=UTF-8"
+        },
+        "body": {
+          "json": {
+            "sheets": [
+              {
+                "properties": {
+                  "title": "Class Data"
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "kind": "read",
+      "method": "GET",
+      "url": "https://sheets.googleapis.com/v4/spreadsheets/1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms/values/%27Class%20Data%27%21A1%3AZ?majorDimension=ROWS",
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json; charset=UTF-8"
+        },
+        "body": {
+          "json": {
+            "range": "'Sqeao Auuy'!T1:G814",
+            "majorDimension": "QESP",
+            "values": [
+              [
+                "Idtqitt Kdpb",
+                "Rrkvzj",
+                "Tyody Gcuig",
+                "Ysan Isazz",
+                "Major",
+                "Yovkfkpoegxftak Unthxfja"
+              ],
+              ["Sdnfrhihz", "Vmyurx", "6. Sbixvi", "PE", "English", "Qkqfu Ahsi"],
+              ["Wgpbpv", "Bzcs", "6. Fkvjhfbf", "QP", "Igfa", "Ikjpxbqm"],
+              ["Vsdr", "Vmyurx", "6. Fkvjhfbf", "PX", "English", "Toftlmbewp"],
+              ["Xdequ", "Vmyurx", "7. Covbpsfch", "QP", "Frc", "Ugwrqggg"],
+              ["Eoedaucf", "Bzcs", "6. Sbixvi", "KE", "English", "Toftlmbewp"],
+              ["Kyah", "Bzcs", "1. Bccdcw", "VJ", "Frc", "Vdxcyp"],
+              ["Zgetgz", "Vmyurx", "1. Bccdcw", "LI", "English", "Xhzqu & Ywiqn"],
+              ["Gfavynv", "Vmyurx", "6. Sbixvi", "VJ", "Igfa", "Ikjpxbqm"],
+              ["Sswnm", "Bzcs", "6. Fkvjhfbf", "BM", "Igfa", "Ugwrqggg"],
+              ["Cdtqcb", "Bzcs", "1. Bccdcw", "GQ", "English", "Qkqfu Ahsi"],
+              ["Ipbzm", "Vmyurx", "6. Fkvjhfbf", "KE", "Gfvrfci", "Qkqfu Ahsi"],
+              ["Ikvzr", "Vmyurx", "6. Fkvjhfbf", "BM", "Frc", "Vdxcyp"],
+              ["Nojp", "Bzcs", "1. Bccdcw", "PE", "Gfvrfci", "Toftlmbewp"],
+              ["Dcuhffsm", "Bzcs", "7. Covbpsfch", "TT", "Igfa", "Vdxcyp"],
+              ["Pgvcuw", "Bzcs", "6. Fkvjhfbf", "EK", "English", "Qkqfu Ahsi"],
+              ["Lgijfdygr", "Vmyurx", "6. Fkvjhfbf", "OI", "Igfa", "Vdxcyp"],
+              ["Vfxae", "Vmyurx", "7. Covbpsfch", "MK", "English", "Toftlmbewp"],
+              ["Ezbch", "Bzcs", "7. Covbpsfch", "LI", "Gfvrfci", "Qkqfu Ahsi"],
+              ["Azdh", "Vmyurx", "1. Bccdcw", "TT", "Frc", "Ikjpxbqm"],
+              ["Waho", "Vmyurx", "7. Covbpsfch", "EK", "Gfvrfci", "Xhzqu & Ywiqn"],
+              ["Plwdojy", "Vmyurx", "6. Fkvjhfbf", "PE", "Gfvrfci", "Toftlmbewp"],
+              ["Nich", "Bzcs", "6. Sbixvi", "OI", "Frc", "Ugwrqggg"],
+              ["Lanhkj", "Vmyurx", "6. Sbixvi", "PX", "Gfvrfci", "Xhzqu & Ywiqn"],
+              ["Resnax", "Vmyurx", "1. Bccdcw", "WX", "Igfa", "Ugwrqggg"],
+              ["Vekgzve", "Bzcs", "6. Fkvjhfbf", "OI", "Frc", "Ikjpxbqm"],
+              ["Ecjadl", "Bzcs", "6. Fkvjhfbf", "PE", "English", "Xhzqu & Ywiqn"],
+              ["Gvgs", "Bzcs", "6. Fkvjhfbf", "MK", "Gfvrfci", "Xhzqu & Ywiqn"],
+              ["Maqlf", "Vmyurx", "6. Fkvjhfbf", "OI", "Igfa", "Ugwrqggg"],
+              ["Sjwoeo", "Bzcs", "7. Covbpsfch", "WX", "Frc", "Ikjpxbqm"],
+              ["Ncmg", "Bzcs", "6. Sbixvi", "GQ", "Igfa", "Vdxcyp"]
+            ]
+          }
+        }
+      }
+    }
+  ],
+  "result": {
+    "tab": "Class Data",
+    "matches": [
+      {
+        "rowNumber": 2,
+        "row": {
+          "Idtqitt Kdpb": "Sdnfrhihz",
+          "Rrkvzj": "Vmyurx",
+          "Tyody Gcuig": "6. Sbixvi",
+          "Ysan Isazz": "PE",
+          "Major": "English",
+          "Yovkfkpoegxftak Unthxfja": "Qkqfu Ahsi"
+        }
+      },
+      {
+        "rowNumber": 4,
+        "row": {
+          "Idtqitt Kdpb": "Vsdr",
+          "Rrkvzj": "Vmyurx",
+          "Tyody Gcuig": "6. Fkvjhfbf",
+          "Ysan Isazz": "PX",
+          "Major": "English",
+          "Yovkfkpoegxftak Unthxfja": "Toftlmbewp"
+        }
+      },
+      {
+        "rowNumber": 6,
+        "row": {
+          "Idtqitt Kdpb": "Eoedaucf",
+          "Rrkvzj": "Bzcs",
+          "Tyody Gcuig": "6. Sbixvi",
+          "Ysan Isazz": "KE",
+          "Major": "English",
+          "Yovkfkpoegxftak Unthxfja": "Toftlmbewp"
+        }
+      },
+      {
+        "rowNumber": 8,
+        "row": {
+          "Idtqitt Kdpb": "Zgetgz",
+          "Rrkvzj": "Vmyurx",
+          "Tyody Gcuig": "1. Bccdcw",
+          "Ysan Isazz": "LI",
+          "Major": "English",
+          "Yovkfkpoegxftak Unthxfja": "Xhzqu & Ywiqn"
+        }
+      },
+      {
+        "rowNumber": 11,
+        "row": {
+          "Idtqitt Kdpb": "Cdtqcb",
+          "Rrkvzj": "Bzcs",
+          "Tyody Gcuig": "1. Bccdcw",
+          "Ysan Isazz": "GQ",
+          "Major": "English",
+          "Yovkfkpoegxftak Unthxfja": "Qkqfu Ahsi"
+        }
+      },
+      {
+        "rowNumber": 16,
+        "row": {
+          "Idtqitt Kdpb": "Pgvcuw",
+          "Rrkvzj": "Bzcs",
+          "Tyody Gcuig": "6. Fkvjhfbf",
+          "Ysan Isazz": "EK",
+          "Major": "English",
+          "Yovkfkpoegxftak Unthxfja": "Qkqfu Ahsi"
+        }
+      },
+      {
+        "rowNumber": 18,
+        "row": {
+          "Idtqitt Kdpb": "Vfxae",
+          "Rrkvzj": "Vmyurx",
+          "Tyody Gcuig": "7. Covbpsfch",
+          "Ysan Isazz": "MK",
+          "Major": "English",
+          "Yovkfkpoegxftak Unthxfja": "Toftlmbewp"
+        }
+      },
+      {
+        "rowNumber": 27,
+        "row": {
+          "Idtqitt Kdpb": "Ecjadl",
+          "Rrkvzj": "Bzcs",
+          "Tyody Gcuig": "6. Fkvjhfbf",
+          "Ysan Isazz": "PE",
+          "Major": "English",
+          "Yovkfkpoegxftak Unthxfja": "Xhzqu & Ywiqn"
+        }
+      }
+    ]
+  }
+}

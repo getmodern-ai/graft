@@ -66,7 +66,9 @@ export const SERVER_INFO = { name: "graft", version: "0.1.0" } as const;
  * `ctx.fetch` and an absolute URL is the authoring skill's alone
  * (`packages/runner/skills/authoring-a-tool/SKILL.md`): it is a rule for the model that writes the
  * module, which is Graft's and not the client's, and at 2,039 of 2,048 the budget had no room for
- * it without tightening a rule of conduct.
+ * it without tightening a rule of conduct. GRA-238's first rule, "a ready-made or demoted match may
+ * exist; run or promote it" (ADR 0025's stock tools), was paid for by "while it runs," before
+ * `poll acquire_status`, which the poll itself says: 2,045 of 2,048.
  */
 
 /**
@@ -81,7 +83,7 @@ export const BLOB_RULE =
 
 export const SERVER_INSTRUCTIONS = [
   "Your working set: authored tools promoted for you as vendor__name, and the fixed ones.",
-  "When a task has no tool, work in this order. Call find_tool first: a demoted match may exist; promote it, no authoring needed. No vendor connection in your scope: call request_connection. Call acquire only when nothing fits; while it runs, poll acquire_status and relay the newest progress line in a sentence. Do not start a second acquire for the same goal. There is no route to a vendor except through a Graft tool. Do not drive the authoring tools or execute__ tools unless the person asked you to author by hand.",
+  "When a task has no tool, work in this order. Call find_tool first: a ready-made or demoted match may exist; run or promote it, no authoring needed. No vendor connection in your scope: call request_connection. Call acquire only when nothing fits; poll acquire_status and relay the newest progress line in a sentence. Do not start a second acquire for the same goal. There is no route to a vendor except through a Graft tool. Do not drive the authoring tools or execute__ tools unless the person asked you to author by hand.",
   "An answer with a url and an awaiting_ word (approval, connection, credential, scope) is a handoff: the next step is the person's, in the console. Send the link exactly as returned, then wait; when they say so, call the same tool again with the same arguments. If cardShown is true the ask is on a card in this conversation: relay the url only if they say they cannot see it. Never ask the person for an API key, a password or a token in chat, by any name. The console is where secrets go; you never see one. Never propose a made-up key for a vendor that documents none. A rotated or expired credential is request_credential on the existing connection, never a new one. The connection page offers the build approval, on by default; left on, acquire starts without a second link, so do not tell the person to expect one.",
   // The blob rule (GRA-190; ADR 0023) rides with run_tool's paragraph, since both are about what a
   // tool's result and the next call's input carry. The facts behind it (the `blobs` list, the

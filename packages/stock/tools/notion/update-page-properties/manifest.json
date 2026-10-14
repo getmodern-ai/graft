@@ -1,0 +1,38 @@
+{
+  "name": "update-page-properties",
+  "description": "Updates a Notion page's or database row's properties, such as its status, a date or a select, given as Notion's own property values keyed by property name, and renames it with title (titleProperty names the title column: Name by default, title for a page under a page). A row's id comes from notion__query-database, whose rows also show the property names; a page's id from notion__search-pages-and-databases. Answers updated and the page's id and url.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "pageId": {
+        "type": "string",
+        "minLength": 1,
+        "description": "A Notion page ID or URL. For URLs, the trailing 32 hexadecimal characters are used as the page ID."
+      },
+      "properties": {
+        "type": "object",
+        "additionalProperties": {
+          "type": "object"
+        },
+        "description": "Notion property values keyed by property name, such as { \"Status\": { \"status\": { \"name\": \"Done\" } } }. Give properties, a title, or both."
+      },
+      "title": {
+        "type": "string",
+        "minLength": 1,
+        "description": "Optional plain-text title to set."
+      },
+      "titleProperty": {
+        "type": "string",
+        "minLength": 1,
+        "description": "Name of the title property. Defaults to Name; use title for a page nested under another page."
+      }
+    },
+    "required": ["pageId"],
+    "additionalProperties": false
+  },
+  "hosts": ["api.notion.com"],
+  "annotations": {
+    "readOnly": false,
+    "destructive": false
+  }
+}
