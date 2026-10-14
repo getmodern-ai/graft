@@ -61,6 +61,14 @@ const FOUND = {
   ],
 };
 
+const TOKEN_PREFIXED = {
+  ...FOUND,
+  parameters: [
+    { name: "headerName", value: "Authorization" },
+    { name: "prefix", value: "Token " },
+  ],
+};
+
 function adapter(
   triage: MockLanguageModelV4,
   options: { telemetry?: ModelTelemetry; timeoutMs?: number } = {},
@@ -190,6 +198,13 @@ describe("proposeConnection, provider-backed", () => {
     const answer = await propose(adapter(failing).model);
     expect(answer.outcome).toBe("failed");
     expect(answer.error).toContain("529 overloaded");
+  });
+});
+
+describe("connection proposal parameters", () => {
+  it("trims a prefix, since the proxy puts its own space between the prefix and the key", async () => {
+    const answer = await propose(adapter(mockModel(() => TOKEN_PREFIXED)).model);
+    expect(answer.proposal?.schemeConfig).toEqual({ headerName: "Authorization", prefix: "Token" });
   });
 });
 
