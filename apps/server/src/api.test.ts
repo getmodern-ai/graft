@@ -1194,6 +1194,64 @@ describe("the working set", () => {
   });
 });
 
+describe("an integration's tools", () => {
+  /** GRA-293: the Tools tab's read, over the person, with the last run and its agent. */
+  it("answers the vendor's tools under the person, shadowed stock and versionless rows left out", async () => {
+    const integrationTools = {
+      listAuthoredToolsForVendor: vi.fn(async () => [
+        { ...toolRow, vendor: "gmail", name: "find-invoices", currentVersionId: "ver_1" },
+        { ...toolRow, id: "tool_2", vendor: "gmail", name: "draft-reply", currentVersionId: null },
+      ]),
+      listCurrentStockToolsForVendor: vi.fn(async () => []),
+      lastRunByToolForPerson: vi.fn(async () => [
+        {
+          toolId: "tool_1",
+          lastRunAt: NOW,
+          outcome: "ok" as const,
+          agentId: "agent_1",
+          agentName: "Codex",
+        },
+      ]),
+    };
+    const { deps } = harness({ user: { id: "person_1" } });
+    const { app } = harness(
+      { user: { id: "person_1" } },
+      { deps: { db: fakeDb as unknown as DbOrTx, ...deps, integrationTools } },
+    );
+    const res = await app.request("/api/integrations/gmail/tools");
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({
+      tools: [
+        {
+          source: "toolbox",
+          toolId: "tool_1",
+          name: "find-invoices",
+          tool: "gmail__find-invoices",
+          description: toolRow.description,
+          annotations: { readOnly: true, destructive: false },
+          inputSchema: toolRow.inputSchema,
+          lastRun: {
+            at: NOW.toISOString(),
+            outcome: "ok",
+            agent: { id: "agent_1", name: "Codex" },
+          },
+        },
+      ],
+    });
+    expect(integrationTools.listAuthoredToolsForVendor).toHaveBeenCalledWith(
+      fakeDb,
+      "person_1",
+      "gmail",
+    );
+  });
+
+  it("refuses a slug that is not one, before any read", async () => {
+    const { app } = harness({ user: { id: "person_1" } });
+    const res = await app.request("/api/integrations/Not_A_Slug/tools");
+    expect(res.status).toBe(400);
+  });
+});
+
 describe("the working-set history", () => {
   /** GRA-24: every demotion has a recorded cause, and the console's history reads it. */
   it("answers each change with its cause and the tool by vendor and name, newest first", async () => {
