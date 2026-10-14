@@ -113,6 +113,18 @@ export const CALL_OUTCOME_CHIP = {
   refused: { variant: "outline", label: "Refused" },
 } as const satisfies Record<ConnectionCall["outcome"], StatusChip>;
 
+/**
+ * A run in the activity (GRA-319; Figma 2095:10473), in the person's words. Not the success tone
+ * for a run that went through: the row records a call that ended, not a state that holds, so it is
+ * the neutral rest; a failure is destructive, and a call Graft stopped before it ran is outline,
+ * as a refused call is above.
+ */
+export const ACTIVITY_OUTCOME_CHIP = {
+  ok: { variant: "secondary", label: "Ran" },
+  error: { variant: "destructive", label: "Failed" },
+  refused: { variant: "outline", label: "Blocked" },
+} as const satisfies Record<ConnectionCall["outcome"], StatusChip>;
+
 /** A dry run reached the vendor for reads only (CONTEXT.md, *Dry run*); the chip rides beside the tool name. */
 export const DRY_RUN_CHIP: StatusChip = { variant: "outline", label: "Dry run" };
 
