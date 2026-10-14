@@ -15,6 +15,7 @@ import {
   issueAwaitingAgentToken,
   removeConnectionFromAgentScope,
   revokeAgent,
+  rotateAgentToken,
   setAgentScope,
   toAgentOutput,
   updateAgentLimits,
@@ -353,6 +354,58 @@ describe("issueAwaitingAgentToken", () => {
     await expect(issueAwaitingAgentToken(ctx, PRINCIPAL, "agent_1", missing)).rejects.toMatchObject(
       { code: "NOT_FOUND" },
     );
+  });
+});
+
+/** ADR 0007 as amended 2026-10-14 (GRA-306): an active static-token agent's token, replaced by hash. */
+describe("rotateAgentToken", () => {
+  it("mints a new token and writes its hash over the one it read, never a first issue", async () => {
+    const deps = fakeDeps({
+      issueAgentToken: vi.fn(async (_db, _p, _a, token) => ({ ...row, ...token })),
+    });
+    const result = await rotateAgentToken(ctx, PRINCIPAL, "agent_1", deps);
+    expect(result.token.startsWith("grft_")).toBe(true);
+    const written = vi.mocked(deps.issueAgentToken).mock.calls[0];
+    expect(written?.slice(1, 3)).toEqual(["person_1", "agent_1"]);
+    expect(written?.[3]).toEqual({
+      tokenHash: hashAgentToken(result.token),
+      tokenPrefix: result.token.slice(0, 8),
+    });
+    // The hash replaced is the one read, so the old token stops resolving the moment this lands.
+    expect(written?.[4]).toBe(row.tokenHash);
+    expect(result.agent.tokenPrefix).toBe(result.token.slice(0, 8));
+    expect(JSON.stringify(result.agent)).not.toContain(result.token);
+  });
+
+  it.each([
+    ["revoked", { revokedAt: NOW }, /is revoked/],
+    [
+      "connected by a client",
+      { connectedViaClientId: "client_1", connectedViaClientName: "Claude" },
+      /connected through Claude, which holds its own tokens/,
+    ],
+    ["awaiting its harness", { tokenHash: null, tokenPrefix: null }, /has no token yet/],
+  ])("refuses an agent %s before minting anything", async (_case, patch, message) => {
+    const deps = fakeDeps({ findAgent: vi.fn(async () => ({ ...row, ...patch })) });
+    await expect(rotateAgentToken(ctx, PRINCIPAL, "agent_1", deps)).rejects.toMatchObject({
+      code: "CONFLICT",
+      message: expect.stringMatching(message),
+      details: { reason: "agent_token_not_rotatable" },
+    });
+    expect(deps.issueAgentToken).not.toHaveBeenCalled();
+  });
+
+  it("refuses when the guarded write matched nothing, and another person's agent as not found", async () => {
+    const raced = fakeDeps({ issueAgentToken: vi.fn(async () => null) });
+    await expect(rotateAgentToken(ctx, PRINCIPAL, "agent_1", raced)).rejects.toMatchObject({
+      code: "CONFLICT",
+      details: { reason: "agent_token_not_rotatable" },
+    });
+    const missing = fakeDeps({ findAgent: vi.fn(async () => null) });
+    await expect(rotateAgentToken(ctx, PRINCIPAL, "agent_1", missing)).rejects.toMatchObject({
+      code: "NOT_FOUND",
+    });
+    expect(missing.issueAgentToken).not.toHaveBeenCalled();
   });
 });
 

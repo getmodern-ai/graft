@@ -1195,6 +1195,13 @@ and every row's menu has View agent, revoked rows included; the detail drawer is
 page keeps scope and limit editors, the working set, approvals, history and standalone revocation;
 revoked records are read-only. `GET /api/agents` includes `workingSetCount`, counted against each
 person-scoped agent in the same statement; the table shows count/cap with Cando's status dot.
+**A lost static token is rotated, not a new agent** (GRA-306; ADR 0007 as amended 2026-10-14):
+the page's *Rotate token* (`rotate-token-dialog.tsx`, drawn when `lib/agent-token.ts`'s
+`tokenRotatable` says so) confirms, then calls `POST /api/agents/:id/token/rotate`, `@graft/core`'s
+`rotateAgentToken`, which writes the new hash over the one it read through `issueAgentToken`'s
+`replacing` and answers the token once; an agent a client holds, one awaiting its first token and a
+revoked one are `409 agent_token_not_rotatable`. The door reads the token per request, so the old
+one is refused at once, on its open session too (`mcp.test.ts`), and the new one continues there.
 
 **Setup is one record per person and three routes** (GRA-204; ADR 0024). The `setup` table
 (`packages/db/src/schema/setup.ts`, migration 0012) keys on the person: the step reached, the
@@ -1606,7 +1613,11 @@ which removes the session entry and clears the cache before anyone navigates. Th
 written once, with `useScreenTitle` (`shell/screen-title.tsx`), and shown by two bars — the 48px
 `PageNav` strip at `md` and up, which also carries `PageNavCollapsedSidebar`, and `MobileTopBar`
 below it; the strip is mounted once in the shell rather than per screen as in Cando, for the
-reason that file gives. Every screen is a `PageContainer` (`large` for the agents table and the
+reason that file gives. **⌘K (Ctrl+K) opens the command palette** (GRA-289), mounted once in
+the shell beside a Search row under the wordmark (`shell/command-palette.tsx`, over the ported
+`command` primitive and `cmdk`): its rows, their filter and their groups are
+`src/lib/command-palette.ts` (`PaletteItem`, `PALETTE_GROUPS`, `filterPalette`), so a new kind of
+result is rows and a group name there, never a filter in the component. Every screen is a `PageContainer` (`large` for the agents table and the
 agent detail, `medium` for the card stacks and settings) opening with `PageHeader`; a detail screen
 titles the bars with `PageNavBreadcrumb`. The doors share `AuthHeader` and `AuthCard` (`max-w-md`,
 the `xs` container inside); `route-not-found.tsx`, `route-error.tsx` and `loader.tsx` are Cando's.

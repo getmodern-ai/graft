@@ -65,6 +65,7 @@ export {
   listAgents,
   removeConnectionFromAgentScope,
   revokeAgent,
+  rotateAgentToken,
   type SetAgentScopeInput,
   setAgentScope,
   toAgentOutput,
@@ -85,6 +86,7 @@ export {
   type AskedVersion,
   allowVendor,
   allowVendorWhenConnecting,
+  type ConsoleApprovalResult,
   decideToolCall,
   getApproval,
   getBuildApproval,
@@ -94,8 +96,11 @@ export {
   listApprovals,
   listVendorApprovals,
   revokeApproval,
+  SETTING_ANSWER_VIA,
   setApproval,
+  setApprovalFromConsole,
   setAskEveryCall,
+  setVendorApprovalDestructive,
   withdrawVendorApproval,
 } from "./approval/approval.service";
 export {
@@ -550,6 +555,15 @@ export {
   requirePerson,
   type SessionLike,
 } from "./tenancy";
+export {
+  defaultIntegrationToolsDeps,
+  type IntegrationToolsDeps,
+} from "./tool/integration-tools.deps";
+export {
+  type IntegrationTool,
+  type IntegrationToolLastRun,
+  listIntegrationTools,
+} from "./tool/integration-tools.service";
 export { defaultToolDeps, type ToolDeps } from "./tool/tool.deps";
 export {
   activateToolVersion,
