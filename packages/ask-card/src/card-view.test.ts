@@ -1,12 +1,14 @@
 // @vitest-environment happy-dom
 import { describe, expect, it } from "vitest";
 
-import { type CardHost, createCardView } from "./card-view";
+import { type CardHost, createCardView, WAITING_CLASS, WAITING_TEXT } from "./card-view";
 import { contentHeightOf } from "./frame-size";
 import type { AskCard } from "./shape";
 
 /**
- * The card's frame size (GRA-275), with the host and the `ResizeObserver` faked: a result with no
+ * The card's frame size (GRA-275, GRA-335), with the host and the `ResizeObserver` faked: before
+ * any result the frame holds one waiting line at its height, never Claude's blank 150 px default,
+ * and the tool's input arriving changes nothing; a result with no
  * card renders nothing and reports 0, so the host collapses the frame instead of drawing an empty
  * one; a card reports its content height on the render itself, before anything else happens; and
  * a later layout change reports again. Every report is written to `<html>` too, which is what
@@ -45,6 +47,8 @@ class FakeObserver {
   }
 }
 
+const LINE = 28;
+
 function setup(cardHeight = 412) {
   FakeObserver.instances = [];
   document.documentElement.removeAttribute("style");
@@ -54,8 +58,11 @@ function setup(cardHeight = 412) {
   mount.hidden = true;
   document.body.append(mount);
   let height = cardHeight;
+  const waitingOnly = () => mount.firstElementChild?.classList.contains(WAITING_CLASS) === true;
   mount.getBoundingClientRect = () =>
-    ({ height: mount.childElementCount > 0 ? height : 0 }) as DOMRect;
+    ({
+      height: mount.childElementCount === 0 ? 0 : waitingOnly() ? LINE : height,
+    }) as DOMRect;
   const sizes: { height: number }[] = [];
   const host: CardHost = {
     callServerTool: async () => ({ structuredContent: undefined }),
@@ -76,11 +83,92 @@ function setup(cardHeight = 412) {
 }
 
 describe("the card's frame size", () => {
-  it("sends nothing before a tool result arrives", () => {
+  it("measures nothing until the page asks it to", () => {
     const { sizes } = setup();
     expect(sizes).toEqual([]);
     expect(FakeObserver.instances).toEqual([]);
     expect(document.documentElement.style.height).toBe("");
+  });
+
+  it("holds one waiting line before any result, sized to the line and not to a default", () => {
+    const { mount, sizes, view } = setup();
+    view.waiting();
+    expect(mount.hidden).toBe(false);
+    expect(mount.childElementCount).toBe(1);
+    expect(mount.textContent).toBe(WAITING_TEXT);
+    expect(mount.firstElementChild?.getAttribute("role")).toBe("status");
+    expect(sizes).toEqual([{ height: LINE }]);
+    expect(document.documentElement.style.height).toBe(`${LINE}px`);
+    expect(FakeObserver.instances[0]?.observed).toEqual([mount]);
+  });
+
+  it("sends the waiting height again once connected, keeping the line it shipped with", () => {
+    const { mount, sizes, view } = setup();
+    mount.hidden = false;
+    mount.innerHTML = `<p class="${WAITING_CLASS}" role="status">${WAITING_TEXT}</p>`;
+    const shipped = mount.firstElementChild;
+    view.waiting();
+    view.waiting();
+    expect(mount.firstElementChild).toBe(shipped);
+    expect(sizes).toEqual([{ height: LINE }, { height: LINE }]);
+  });
+
+  it("stays at the waiting line when the tool's input arrives before the result", () => {
+    const { sizes, view } = setup();
+    view.waiting();
+    view.input();
+    expect(sizes).toEqual([{ height: LINE }]);
+    expect(document.documentElement.style.height).toBe(`${LINE}px`);
+  });
+
+  it("grows from the waiting line to the card when its result arrives", () => {
+    const { mount, sizes, view } = setup(412);
+    view.waiting();
+    view.input();
+    view.show({ structuredContent: { card: BUILD } });
+    expect(mount.querySelector(`.${WAITING_CLASS}`)).toBeNull();
+    expect(mount.querySelector(".ask")).not.toBeNull();
+    expect(sizes).toEqual([{ height: LINE }, { height: 412 }]);
+    expect(document.documentElement.style.height).toBe("412px");
+    expect(FakeObserver.instances).toHaveLength(1);
+  });
+
+  it("collapses from the waiting line when the result carries no card", () => {
+    const { mount, sizes, view } = setup();
+    view.waiting();
+    view.show({ structuredContent: { tools: [], connections: [] } });
+    expect(mount.hidden).toBe(true);
+    expect(mount.childElementCount).toBe(0);
+    expect(sizes).toEqual([{ height: LINE }, { height: 0 }]);
+    expect(document.documentElement.style.height).toBe("0px");
+  });
+
+  it("never brings the waiting line back once a result has been shown", () => {
+    const { mount, sizes, view } = setup(412);
+    view.waiting();
+    view.show({ structuredContent: { card: BUILD } });
+    view.waiting();
+    view.input();
+    expect(mount.querySelector(`.${WAITING_CLASS}`)).toBeNull();
+    expect(sizes).toEqual([{ height: LINE }, { height: 412 }]);
+  });
+
+  it("still writes <html>'s height when the bridge is not connected yet", () => {
+    const { mount } = setup();
+    const throwing = createCardView(
+      {
+        callServerTool: async () => ({}),
+        openLink: async () => undefined,
+        sendSizeChanged: () => {
+          throw new Error("Not connected");
+        },
+      },
+      document,
+      mount,
+      FakeObserver,
+    );
+    expect(() => throwing.waiting()).not.toThrow();
+    expect(document.documentElement.style.height).toBe(`${LINE}px`);
   });
 
   it("renders nothing and collapses the frame for a result with no card data", () => {

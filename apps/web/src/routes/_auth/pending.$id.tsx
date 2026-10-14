@@ -16,13 +16,13 @@ import {
   EmptyMedia,
   EmptyTitle,
 } from "@/components/ui/empty";
-import { ApiError } from "@/lib/api";
 import {
   afterAnswer,
   HANDOFF_ANSWERED,
   HANDOFF_CLOSE_CHECK_MS,
   HANDOFF_CLOSE_MS,
   handoffTitle,
+  handoffView,
 } from "@/lib/handoff-page";
 import { announceConsent } from "@/lib/oauth-consent";
 import { pendingActionQuery, pendingActionsQuery } from "@/lib/pending-action-queries";
@@ -56,28 +56,6 @@ export const Route = createFileRoute("/_auth/pending/$id")({
   component: PendingActionRoute,
 });
 
-/** The refusal's headline by the server's `details.reason`, else by its status. */
-function handoffRefusal(error: unknown): { title: string; message: string } {
-  if (error instanceof ApiError) {
-    const reason =
-      typeof error.details === "object" && error.details !== null && "reason" in error.details
-        ? String((error.details as { reason: unknown }).reason)
-        : null;
-    const title =
-      reason === "tampered"
-        ? "This link is not one Graft issued"
-        : reason === "expired"
-          ? "This link has expired"
-          : reason === "consumed"
-            ? "This link was already used"
-            : error.status === 404
-              ? "There is no such pending action"
-              : "This link cannot be opened";
-    return { title, message: error.message };
-  }
-  return { title: "This link cannot be opened", message: "Could not reach the server." };
-}
-
 function PendingActionRoute() {
   const { id } = Route.useParams();
   const search = Route.useSearch();
@@ -85,6 +63,8 @@ function PendingActionRoute() {
   const fromCard = from === "card";
   const navigate = useNavigate();
   const [closeRefused, setCloseRefused] = React.useState(false);
+  // Set once this page's answer succeeded: a later read refused as consumed is that answer taken.
+  const [answeredHere, setAnsweredHere] = React.useState(false);
 
   const byLink = useQuery({ ...pendingActionQuery(id, t ?? ""), enabled: t !== undefined });
   const fromList = useQuery({ ...pendingActionsQuery, enabled: t === undefined });
@@ -102,6 +82,7 @@ function PendingActionRoute() {
   // The card stays on screen and re-reads as settled, so the person sees the sentence before the
   // page goes; a browser that refuses to close a hand-opened tab leaves the answered state instead.
   const onAnswered = () => {
+    setAnsweredHere(true);
     const next = afterAnswer(search);
     if (next.kind === "back-to-list") {
       void navigate({ to: "/pending" });
@@ -126,13 +107,22 @@ function PendingActionRoute() {
   if (closeRefused) {
     content = <Answered />;
   } else if (t !== undefined) {
-    content = byLink.isPending ? (
-      <Loader />
-    ) : byLink.error || !action ? (
-      <Refusal {...handoffRefusal(byLink.error)} />
-    ) : (
-      <PendingActionCard action={action} onAnswered={onAnswered} />
-    );
+    const view = handoffView({
+      pending: byLink.isPending,
+      error: byLink.error,
+      action,
+      answeredHere,
+    });
+    content =
+      view.kind === "loading" ? (
+        <Loader />
+      ) : view.kind === "answered" ? (
+        <Answered />
+      ) : view.kind === "refused" ? (
+        <Refusal title={view.title} message={view.message} />
+      ) : (
+        <PendingActionCard action={view.action} onAnswered={onAnswered} />
+      );
   } else if (fromList.isPending) {
     content = <Loader />;
   } else if (!action) {
@@ -192,9 +182,8 @@ function Answered() {
 }
 
 /**
- * The refusal page: what the link was, why it does not open, and that nothing was answered. The
- * frame and voice are `RouteNotFound`'s — the server's sentence, then the reassurance after the
- * dash — with the server's own full stop lifted so the two read as one sentence.
+ * The refusal page: what the link was and why it does not open, in `RouteNotFound`'s frame. The
+ * sentence is `handoffRefusal`'s, which says nothing was answered only where that is true.
  */
 function Refusal({ title, message }: { title: string; message: string }) {
   return (
@@ -204,9 +193,7 @@ function Refusal({ title, message }: { title: string; message: string }) {
           <DangerousIcon />
         </EmptyMedia>
         <EmptyTitle>{title}</EmptyTitle>
-        <EmptyDescription>
-          {message.replace(/\.$/, "")} — nothing has been approved or declined.
-        </EmptyDescription>
+        <EmptyDescription>{message}</EmptyDescription>
       </EmptyHeader>
       <Button variant="outline" nativeButton={false} render={<Link to="/pending" />}>
         See every pending action

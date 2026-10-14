@@ -212,6 +212,13 @@ describe("where Setup can go back to (GRA-215)", () => {
     expect(setupStepReachable("connect", { ...asking, pendingActionId: null })).toBe(false);
   });
 
+  it("reaches the result of a ready-made tool, which holds no job, and Back skips the building step", () => {
+    const readyMade = { ...held, acquireJobId: null, step: "finish" as const };
+    expect(setupStepReachable("result", readyMade)).toBe(true);
+    expect(setupStepReachable("building", readyMade)).toBe(false);
+    expect(previousSetupStep({ ...readyMade, step: "result" })).toBe("goal");
+  });
+
   it("names the step before as Back's, and none on the first", () => {
     expect(previousSetupStep({ ...held, step: "result" })).toBe("building");
     expect(previousSetupStep({ ...held, step: "vendor" })).toBe("harness");
