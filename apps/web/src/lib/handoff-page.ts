@@ -236,15 +236,23 @@ export function handoffView<A extends { answeredAt: string | null }>(read: {
  * where a secret is typed, that Graft keeps it encrypted, else where to go once answered.
  */
 export function handoffFootnote(
-  input: { expiresAt: string; agentName: string | null; secret: boolean },
+  input: {
+    expiresAt: string;
+    agentName: string | null;
+    secret: boolean;
+    /** The Requests dialog (GRA-311): the person is in the console already, so no "go back". */
+    inConsole?: boolean;
+  },
   now: Date = new Date(),
 ): string {
   const left = formatRelative(input.expiresAt, now);
   const expires = left ? `Expires ${left}` : "";
   const then = input.secret
     ? "Your key is stored by Graft, encrypted"
-    : `After you answer, go back to ${input.agentName ?? "your agent"}`;
-  return expires ? `${expires} · ${then}` : then;
+    : input.inConsole
+      ? ""
+      : `After you answer, go back to ${input.agentName ?? "your agent"}`;
+  return [expires, then].filter((part) => part !== "").join(" · ");
 }
 
 /** The document title while the page is up: the agent's name when the ask names one. */
