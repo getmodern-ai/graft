@@ -1,15 +1,18 @@
 import type { IntegrationConnectionOutput, IntegrationOutput } from "@graft/core";
 import type {
+  ConnectBody,
   ConnectionAcquireBody,
   ConnectionAcquireJob,
   ConnectionGoalSuggestions,
+  ConsoleConnectResult,
   IntegrationSuggestions,
   IntegrationToolsOutput,
 } from "@graft/server/api";
-import { queryOptions } from "@tanstack/react-query";
+import { infiniteQueryOptions, queryOptions } from "@tanstack/react-query";
 
 import { api, type Jsonified } from "./api";
 import { connectionKeys } from "./connection-queries";
+import type { DirectoryHome, DirectoryPage } from "./setup-queries";
 
 /**
  * The integrations list (GRA-291): one row per vendor the person holds a live connection of, with
@@ -94,6 +97,54 @@ export const suggestedIntegrationsQuery = queryOptions({
   queryKey: integrationKeys.suggested,
   queryFn: () => api<Jsonified<IntegrationSuggestions>>("/integrations/suggested"),
 });
+
+export type ConsoleConnect = Jsonified<ConsoleConnectResult>;
+
+/**
+ * The integration directory outside Setup (GRA-305; ADR 0001 as amended 2026-10-14): the same
+ * answers as Setup's routes, read from `/api/integrations/directory`. Its own key, not Setup's
+ * `setup-directory`, so Setup's cached-logo lookup (`cachedDirectoryLogo`) reads only its own.
+ */
+export const integrationDirectoryKeys = {
+  all: ["integration-directory"] as const,
+};
+
+/** Discover's first view: the count and the categories (none under the starters). */
+export const integrationDirectoryHomeQuery = queryOptions({
+  queryKey: [...integrationDirectoryKeys.all, "home"] as const,
+  queryFn: () => api<DirectoryHome>("/integrations/directory"),
+  staleTime: 5 * 60_000,
+});
+
+/** How many tiles one page of Discover's grid asks for: two rows of four. */
+export const DISCOVER_PAGE = 8;
+
+/**
+ * One grid of Discover, a page at a time: words, a category, both, or neither, which the directory
+ * answers in its own order (*Popular*). *Show more* asks for the next page with the last cursor.
+ */
+export function integrationDirectorySearchQuery(query: string, category: string | null) {
+  return infiniteQueryOptions({
+    queryKey: [...integrationDirectoryKeys.all, "search", query, category] as const,
+    queryFn: ({ pageParam }) => {
+      const params = new URLSearchParams({ q: query, limit: String(DISCOVER_PAGE) });
+      if (category) params.set("category", category);
+      if (pageParam) params.set("cursor", pageParam);
+      return api<DirectoryPage>(`/integrations/directory/search?${params}`);
+    },
+    initialPageParam: null as string | null,
+    getNextPageParam: (last) => last.nextCursor,
+    staleTime: 60_000,
+  });
+}
+
+/**
+ * Connect an integration with no agent asking (`POST /api/connect`, GRA-304; ADR 0006 and ADR 0008
+ * as amended 2026-10-14): connected at once, the keyring's form to fill, or a provider's sign-in.
+ */
+export function connectIntegration(body: ConnectBody) {
+  return api<ConsoleConnect>("/connect", { method: "POST", body });
+}
 
 /**
  * One integration's tools (GRA-293): the person's tools of the vendor with a current version, then

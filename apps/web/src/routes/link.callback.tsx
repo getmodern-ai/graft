@@ -49,19 +49,36 @@ export const Route = createFileRoute("/link/callback")({
 });
 
 function LinkCallbackRoute() {
-  const { status, pendingActionId, connectionId, message, fromCard = false } = Route.useSearch();
+  const {
+    status,
+    pendingActionId,
+    connectionId,
+    message,
+    connectId,
+    fromCard = false,
+  } = Route.useSearch();
   const navigate = useNavigate();
 
   useEffect(() => {
-    announceConsent(linkCallbackMessage({ status, pendingActionId, connectionId, message }), {
-      opener: window.opener,
-      origin: window.location.origin,
-      channel: "BroadcastChannel" in window ? new BroadcastChannel(LINK_CHANNEL) : null,
-    });
+    // `connectId` is how a console connect (GRA-304), which answers no ask, knows the outcome.
+    announceConsent(
+      linkCallbackMessage({
+        status,
+        pendingActionId,
+        connectionId,
+        message,
+        ...(connectId ? { connectId } : {}),
+      }),
+      {
+        opener: window.opener,
+        origin: window.location.origin,
+        channel: "BroadcastChannel" in window ? new BroadcastChannel(LINK_CHANNEL) : null,
+      },
+    );
     if (status !== "connected") return;
     const timer = setTimeout(() => window.close(), OAUTH_CALLBACK_CLOSE_MS);
     return () => clearTimeout(timer);
-  }, [status, pendingActionId, connectionId, message]);
+  }, [status, pendingActionId, connectionId, message, connectId]);
 
   const close = () => {
     window.close();
