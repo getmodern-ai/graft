@@ -1,10 +1,14 @@
-import { integrationNameFor } from "@graft/core/approval/vendor-approval.rules";
-import type { ActivityRowOutput } from "@graft/server/api";
 import { queryOptions } from "@tanstack/react-query";
 
+import {
+  type ActivityRow,
+  activityAnswerCopy,
+  activityIntegrationName,
+  type IntegrationNames,
+} from "./activity-screen";
 import { groupAgents } from "./agent-cards";
 import type { AgentListItem } from "./agent-queries";
-import { api, type Jsonified } from "./api";
+import { api } from "./api";
 import { count } from "./format";
 import {
   type ActivityPage,
@@ -14,7 +18,6 @@ import {
 } from "./integration-activity";
 import type { Integration, SuggestedIntegration } from "./integration-queries";
 import { agentsPhrase, integrationsListOf, suggestedVendorsOf } from "./integrations-list";
-import { toolActionWords } from "./request-row";
 
 /**
  * Home (GRA-327; Figma 2040:5486), as pure decisions over the reads each panel owns: how many
@@ -104,8 +107,6 @@ export function suggestionLine(suggestion: Pick<SuggestedIntegration, "agent" | 
   }
 }
 
-export type HomeActivityRow = Jsonified<ActivityRowOutput>;
-
 /** The person's latest runs and answers: the activity read's first page, at Home's length. */
 export const homeActivityQuery = queryOptions({
   queryKey: [...activityKeys.all, "home"] as const,
@@ -114,22 +115,26 @@ export const homeActivityQuery = queryOptions({
   staleTime: 0,
 });
 
+/**
+ * What Home knows of the person's integrations to name a row's, from the integrations read alone:
+ * a live integration by its slug, a live connection by its id. A row for a connection revoked
+ * since names the slug, as the Activity screen does for one deleted (`activityIntegrationName`).
+ */
+export function homeIntegrationNames(integrations: readonly Integration[]): IntegrationNames {
+  return {
+    byVendor: new Map(integrations.map((row) => [row.vendor, row.displayName])),
+    byConnection: new Map(
+      integrations.flatMap((row) =>
+        row.connections.map((connection) => [connection.id, connection.displayName] as const),
+      ),
+    ),
+  };
+}
+
 /** How a row ended, for its sub-line's colour: a failure or a block reads as needing a look. */
 export type HomeActivityTone = "muted" | "destructive";
 
 export type HomeActivityCopy = { title: string; detail: string; tone: HomeActivityTone };
-
-/**
- * The integration a row names: a starter's own name, else the live integration's, else the slug,
- * which is all a row for a connection since revoked has. Null where no vendor was recorded.
- */
-export function activityIntegrationName(
-  vendor: string | null,
-  names: ReadonlyMap<string, string>,
-): string | null {
-  if (!vendor) return null;
-  return integrationNameFor(vendor, names.get(vendor) ?? vendor);
-}
 
 /**
  * A failed run's sub-line by the ledger's `reason` (`@graft/db`'s `schema/usage.ts`). None of the
@@ -147,103 +152,41 @@ export function failureSentence(reason: string | null): string {
   return (reason ? FAILURE_SENTENCES[reason] : undefined) ?? "It could not finish";
 }
 
-function possessive(name: string): string {
-  return `${name}'s`;
-}
-
 /**
- * A run's or an answer's sentence and sub-line, in the Activity screen's words (GRA-330): "Codex
- * ran Find invoices in Gmail", "Ran without asking". An answer never claims "always": an allow may
- * still ask on every call (`askEveryCall`, ADR 0008), which the read does not carry.
+ * A row as one sentence and a sub-line: "Codex ran Find invoices in Gmail", "Ran without asking".
+ * A run is said here from the Activity table's own pieces (`activityToolLabel`,
+ * `refusalSentence`); an answer is the Activity screen's sentence (`activityAnswerCopy`).
  */
-export function homeActivityCopy(
-  row: HomeActivityRow,
-  names: ReadonlyMap<string, string>,
-): HomeActivityCopy {
-  const agent = row.agent.name;
-  const integration = activityIntegrationName(row.vendor, names);
-  const where = integration ? ` in ${integration}` : "";
-  if (row.kind === "run") {
-    const tool = activityToolLabel(row.tool.wireName);
-    switch (row.outcome) {
-      case "ok":
-        return {
-          title: `${agent} ran ${tool}${where}`,
-          detail: row.asked === false ? "Ran without asking" : row.asked ? "You allowed it" : "Ran",
-          tone: "muted",
-        };
-      case "refused":
-        return {
-          title: `${agent} was blocked from ${tool}${where}`,
-          detail: refusalSentence(row.reason) ?? "Graft stopped it before it ran",
-          tone: "destructive",
-        };
-      default:
-        return {
-          title: `${possessive(agent)} ${tool} failed`,
-          detail: failureSentence(row.reason),
-          tone: "destructive",
-        };
-    }
+export function homeActivityCopy(row: ActivityRow, names: IntegrationNames): HomeActivityCopy {
+  const integration = activityIntegrationName(row, names);
+  if (row.kind === "approval") {
+    return {
+      title: activityAnswerCopy(row, integration).sentence,
+      detail: "Your answer",
+      tone: "muted",
+    };
   }
-
-  const name = integration ?? "an integration";
-  const answer = row.answer ?? {};
-  const allowed = answer.allow === true;
-  const connected = typeof answer.connectionId === "string" && answer.connectionId !== "";
-  const said = (title: string): HomeActivityCopy => ({
-    title,
-    detail: "Your answer",
-    tone: "muted",
-  });
-  switch (row.source) {
-    case "tool": {
-      const words = row.tool ? toolActionWords(row.tool.wireName) : null;
-      const action = words ? `${words} in ${name}` : `use a ${name} tool`;
-      return said(
-        row.decision === "deny"
-          ? `You denied ${agent} permission to ${action}`
-          : `You allowed ${agent} to ${action}`,
-      );
-    }
-    case "vendor":
-      return said(
-        row.includesDestructive === true
-          ? `You allowed ${agent} every ${name} tool, including ones that can delete`
-          : `You allowed ${agent} every ${name} tool that cannot delete`,
-      );
-    case "ask":
-      switch (row.askKind) {
-        case "build":
-          return said(
-            allowed
-              ? `You let ${agent} build its own ${name} tools`
-              : `You declined ${possessive(agent)} request to build ${name} tools`,
-          );
-        case "scope":
-          return said(
-            allowed
-              ? `You let ${agent} use ${name}`
-              : `You declined ${possessive(agent)} request to use ${name}`,
-          );
-        case "connection":
-          return said(
-            connected
-              ? `You connected ${name} for ${agent}`
-              : `You declined ${possessive(agent)} request to connect ${name}`,
-          );
-        case "credential":
-          return said(
-            connected
-              ? `You reconnected ${name} for ${agent}`
-              : `You declined ${possessive(agent)} request to reconnect ${name}`,
-          );
-        default:
-          return said(
-            allowed || connected
-              ? `You answered ${possessive(agent)} request`
-              : `You declined ${possessive(agent)} request`,
-          );
-      }
+  const agent = row.agent.name;
+  const tool = activityToolLabel(row.tool.wireName);
+  const where = integration ? ` in ${integration}` : "";
+  switch (row.outcome) {
+    case "ok":
+      return {
+        title: `${agent} ran ${tool}${where}`,
+        detail: row.asked === false ? "Ran without asking" : row.asked ? "You allowed it" : "Ran",
+        tone: "muted",
+      };
+    case "refused":
+      return {
+        title: `${agent} was blocked from ${tool}${where}`,
+        detail: refusalSentence(row.reason) ?? "Graft stopped it before it ran",
+        tone: "destructive",
+      };
+    default:
+      return {
+        title: `${agent}'s ${tool} failed`,
+        detail: failureSentence(row.reason),
+        tone: "destructive",
+      };
   }
 }

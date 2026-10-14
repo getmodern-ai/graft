@@ -1,4 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
+import { Link } from "@tanstack/react-router";
 import { useEffect, useRef } from "react";
 
 import {
@@ -11,14 +12,15 @@ import {
 import { IntegrationMark } from "@/components/marks";
 import { RequestList, RequestListNote } from "@/components/pending/request-row";
 import { Time } from "@/components/time";
-import { activityIntegrationName, homeActivityCopy, homeActivityQuery } from "@/lib/home";
+import { activityIntegrationName } from "@/lib/activity-screen";
+import { homeActivityCopy, homeActivityQuery, homeIntegrationNames } from "@/lib/home";
 import { integrationsQuery } from "@/lib/integration-queries";
 import { pendingActionsQuery } from "@/lib/pending-action-queries";
 import { cn } from "@/lib/utils";
 
 /**
  * *Recent activity* (GRA-327): the person's latest runs and answers from the activity read
- * (GRA-308), in the Activity screen's words, "Ran without asking" included. The integrations read
+ * (GRA-308), in the Activity screen's words (GRA-330), "Ran without asking" included. The integrations read
  * only names a row's integration; until it lands, or if it fails, a row names the slug.
  *
  * An answer given on Home (a row of *Needs you*) refreshes the open requests and nothing of
@@ -39,16 +41,14 @@ export function ActivityPanel() {
     // The first answer of the read is no change: the activity read started beside it.
     if (!first) void refetch();
   }, [openIds, refetch]);
-  const names = new Map(
-    (integrations.data?.integrations ?? []).map((row) => [row.vendor, row.displayName]),
-  );
+  const names = homeIntegrationNames(integrations.data?.integrations ?? []);
   const rows = activity.data?.rows ?? [];
 
   return (
     <HomePanel
       title="Recent activity"
       description="Including what ran without asking you."
-      // "View all" opens `/activity` once the Activity screen (GRA-330, PR #260) is on main.
+      more={{ label: "View all", render: <Link to="/activity" /> }}
     >
       <RequestList aria-label="Recent activity" aria-busy={activity.isPending}>
         {activity.isPending ? (
@@ -64,7 +64,7 @@ export function ActivityPanel() {
               <HomeRow key={row.key}>
                 <IntegrationMark
                   slug={row.vendor}
-                  name={activityIntegrationName(row.vendor, names)}
+                  name={activityIntegrationName(row, names)}
                   tile="none"
                   className="size-5"
                 />

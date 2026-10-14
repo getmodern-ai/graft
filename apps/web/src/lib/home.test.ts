@@ -1,12 +1,12 @@
 import { describe, expect, it } from "vitest";
-
+import type { ActivityRow } from "./activity-screen";
 import {
   firstOf,
   HOME_AGENT_ROWS,
   HOME_INTEGRATION_ROWS,
-  type HomeActivityRow,
   homeActivityCopy,
   homeAgents,
+  homeIntegrationNames,
   homeIntegrations,
   homeSuggestions,
   integrationUsageLine,
@@ -149,7 +149,7 @@ const base = {
   vendor: "apollo",
   connectionId: "conn_1",
 };
-const run = (overrides: Record<string, unknown>): HomeActivityRow =>
+const run = (overrides: Record<string, unknown>): ActivityRow =>
   ({
     ...base,
     kind: "run",
@@ -161,8 +161,8 @@ const run = (overrides: Record<string, unknown>): HomeActivityRow =>
     latencyMs: 300,
     dryRun: false,
     ...overrides,
-  }) as HomeActivityRow;
-const answer = (overrides: Record<string, unknown>): HomeActivityRow =>
+  }) as ActivityRow;
+const answer = (overrides: Record<string, unknown>): ActivityRow =>
   ({
     ...base,
     kind: "approval",
@@ -174,9 +174,15 @@ const answer = (overrides: Record<string, unknown>): HomeActivityRow =>
     askKind: null,
     answer: null,
     ...overrides,
-  }) as HomeActivityRow;
+  }) as ActivityRow;
 
-const names = new Map([["apollo", "Apollo"]]);
+const names = homeIntegrationNames([
+  integration({
+    vendor: "apollo",
+    displayName: "Apollo",
+    connections: [{ id: "conn_1", displayName: "Apollo" } as Integration["connections"][number]],
+  }),
+]);
 
 describe("homeActivityCopy", () => {
   it("reads a run that went through without asking", () => {
@@ -209,12 +215,12 @@ describe("homeActivityCopy", () => {
   });
 
   it("names a vendor it does not hold by its slug", () => {
-    expect(homeActivityCopy(run({ vendor: "zapier" }), names).title).toBe(
+    expect(homeActivityCopy(run({ vendor: "zapier", connectionId: null }), names).title).toBe(
       "Codex ran Find leads in zapier",
     );
   });
 
-  it("reads the person's answers without claiming always", () => {
+  it("reads the person's answers in the Activity screen's sentence", () => {
     expect(homeActivityCopy(answer({}), names).title).toBe(
       "You allowed Codex to find leads in Apollo",
     );
@@ -231,11 +237,6 @@ describe("homeActivityCopy", () => {
         names,
       ).title,
     ).toBe("You connected Apollo for Codex");
-    expect(
-      homeActivityCopy(
-        answer({ source: "ask", tool: null, askKind: "build", answer: { allow: false } }),
-        names,
-      ).title,
-    ).toBe("You declined Codex's request to build Apollo tools");
+    expect(homeActivityCopy(answer({}), names).detail).toBe("Your answer");
   });
 });
