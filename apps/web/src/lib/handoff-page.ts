@@ -55,12 +55,12 @@ export function handoffRefusalReason(error: unknown): HandoffRefusalReason | nul
 
 /**
  * Whether a failed link read stays out of the global query toast (the read's `meta.quietError`,
- * which `query-error-retry.ts` asks). An answer from the server never toasts: the page draws it,
- * and Retry cannot reopen a link that was used, expired or never issued (GRA-334). A request that
- * never arrived still toasts, since Retry is what helps there.
+ * which `query-error-retry.ts` asks). A refusal (a 4xx: used, expired, never issued, not found)
+ * never toasts: the page draws it, and Retry cannot change it (GRA-334). A server failure and a
+ * request that never arrived still toast, since Retry is what helps there.
  */
 export function handoffReadIsQuiet(error: unknown): boolean {
-  return error instanceof ApiError;
+  return error instanceof ApiError && error.status >= 400 && error.status < 500;
 }
 
 /** The refusal page's headline and sentence for a link that does not open. */

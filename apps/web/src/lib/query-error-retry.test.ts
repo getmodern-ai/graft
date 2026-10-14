@@ -205,4 +205,29 @@ describe("a query that draws its own failure (GRA-334)", () => {
 
     expect(toast.error).toHaveBeenCalledWith("Could not reach the server", expect.anything());
   });
+
+  it("takes down a louder failure's toast when its Retry ends in a quiet refusal", async () => {
+    vi.mocked(toast.dismiss).mockClear();
+    const client = createQueryClient();
+    let attempt = 0;
+    const queryKey = ["pending-actions", "pa_3", "h_token"];
+    await client
+      .fetchQuery({
+        queryKey,
+        queryFn: async () => {
+          attempt += 1;
+          if (attempt === 1) throw new TypeError("Failed to fetch");
+          throw new ApiError(409, "CONFLICT", "used", { reason: "consumed" });
+        },
+        retry: false,
+        meta: quietOnRefusal,
+      })
+      .catch(() => {});
+    const { id, action } = lastToast();
+
+    action.onClick();
+
+    await vi.waitFor(() => expect(toast.dismiss).toHaveBeenCalledWith(id));
+    expect(toast.error).toHaveBeenCalledTimes(1);
+  });
 });

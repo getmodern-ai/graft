@@ -128,7 +128,13 @@ describe("the refusal's words", () => {
 
   it("keeps a refusal out of the toast, where Retry cannot help, and not a transport failure", () => {
     expect(handoffReadIsQuiet(consumed)).toBe(true);
+    expect(handoffReadIsQuiet(expired)).toBe(true);
+    expect(handoffReadIsQuiet(tampered)).toBe(true);
+    expect(handoffReadIsQuiet(new ApiError(404, "NOT_FOUND", "Pending action not found"))).toBe(
+      true,
+    );
     expect(handoffReadIsQuiet(new TypeError("Failed to fetch"))).toBe(false);
+    expect(handoffReadIsQuiet(new ApiError(503, "INTERNAL", "Unavailable"))).toBe(false);
   });
 });
 

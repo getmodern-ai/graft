@@ -65,7 +65,11 @@ export function createQueryErrorRetry(
   const failing = new Set<string>();
 
   const onError: QueryCacheHandlers["onError"] = (error, query) => {
-    if (isQuietError(query.meta, error)) return;
+    if (isQuietError(query.meta, error)) {
+      // A Retry from an earlier, louder failure that ends in a quiet one takes its toast with it.
+      if (failing.delete(query.queryHash)) toast.dismiss(query.queryHash);
+      return;
+    }
     failing.add(query.queryHash);
     toast.error(error instanceof ApiError ? error.message : "Could not reach the server", {
       id: query.queryHash,
