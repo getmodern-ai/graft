@@ -1,6 +1,7 @@
 import {
   AppsIcon,
   HelpIcon,
+  HistoryIcon,
   HomeIcon,
   InboxIcon,
   SettingsIcon,
@@ -8,7 +9,7 @@ import {
 } from "@/components/icons";
 
 /** Narrowed to the paths that exist, so a row cannot point at one that does not. */
-export type NavTarget = "/" | "/pending" | "/agents" | "/integrations" | "/settings";
+export type NavTarget = "/" | "/pending" | "/agents" | "/integrations" | "/activity" | "/settings";
 
 type NavIcon = typeof SmartToyIcon;
 
@@ -29,8 +30,8 @@ export type NavItem = {
  *
  * Labels are CONTEXT.md's person-facing words: *Requests* for the pending actions and
  * *Integrations* for the connections (GRA-282), whose list is `/integrations` (GRA-321) and whose
- * pages under it keep the row lit. Activity, which the frame draws after Integrations, joins when
- * its screen does (GRA-330).
+ * pages under it keep the row lit. Activity, after Integrations as the frame draws it, is every
+ * call and answer across them (GRA-330).
  *
  * A pure data module — no router, no auth client — so a test can import the array and assert on
  * its actual contents rather than scanning `main-sidebar.tsx`'s source for these labels, which
@@ -42,6 +43,7 @@ export const NAV_ITEMS: readonly NavItem[] = [
   { label: "Requests", icon: InboxIcon, to: "/pending", match: "/pending" },
   { label: "Agents", icon: SmartToyIcon, to: "/agents", match: "/agents" },
   { label: "Integrations", icon: AppsIcon, to: "/integrations", match: "/integrations" },
+  { label: "Activity", icon: HistoryIcon, to: "/activity", match: "/activity" },
 ];
 
 /** The footer group's console screen, under Docs & help, as the frame draws it. */

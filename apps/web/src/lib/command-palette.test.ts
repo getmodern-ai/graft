@@ -45,6 +45,7 @@ describe("filterPalette", () => {
   it("matches the words a screen answers to beside its label", () => {
     expect(labels("pending")).toEqual(["Requests"]);
     expect(labels("conn")).toEqual(["Integrations"]);
+    expect(labels("history")).toEqual(["Activity"]);
   });
 
   it("omits a group with nothing left, so no heading stands over an empty list", () => {
