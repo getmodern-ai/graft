@@ -39,6 +39,9 @@ export type AnalyticsEvent =
   | "scope_changed"
   | "model_key_set"
   | "model_key_removed"
+  // A first password for a social-only account (GRA-298), at `POST /me/password`. No properties.
+  // A change of an existing one is Better Auth's own route and is not counted.
+  | "password_set"
   // Setup (ADR 0024; GRA-204), at its routes: the start, on the harness step, and the skip. Property
   // `harness`: the harness picked, or null when Setup adopted an agent that already existed or was
   // skipped before a harness was picked. `setup_step_completed` (GRA-206) carries `step` too, the

@@ -465,6 +465,24 @@ export function createFakeDeps(store: FakeStore): FakeDeps {
           workingSetCount: [...store.workingSet.values()].filter(
             (entry) => entry.agentId === row.id,
           ).length,
+          connectionIds:
+            row.scopeMode === "all"
+              ? [...store.connections.values()]
+                  .filter((connection) => connection.personId === personId)
+                  .map((connection) => connection.id)
+                  .sort()
+              : // The person's rows alone, as the real statement reads them off `connection`.
+                [...(store.agentConnections.get(row.id) ?? [])]
+                  .filter((id) => store.connections.get(id)?.personId === personId)
+                  .sort(),
+          lastActiveAt:
+            store.usage
+              .filter((usage) => usage.agentId === row.id && !usage.dryRun)
+              .map((usage) => usage.createdAt)
+              .sort((a, b) => b.getTime() - a.getTime())[0] ?? null,
+          hasRunTool: store.usage.some(
+            (usage) => usage.agentId === row.id && !usage.dryRun && usage.outcome === "ok",
+          ),
         })),
     updateAgent: async (_db, personId, agentId, patch) => {
       const row = store.agents.get(agentId);
@@ -1197,6 +1215,27 @@ export function createFakeDeps(store: FakeStore): FakeDeps {
         createdAt: store.now(),
       };
       store.buildApprovals.set(key(row.agentId, row.connectionId), row);
+      return row;
+    },
+    listBuildApprovals: async (_db, scope) => {
+      if (!ownsAgent(scope)) return [];
+      return [...store.buildApprovals.values()]
+        .filter((row) => row.agentId === scope.agentId)
+        .flatMap((row) => {
+          const conn = store.connections.get(row.connectionId);
+          if (!conn || conn.personId !== scope.personId) return [];
+          return [{ ...row, vendor: conn.vendor, displayName: conn.displayName }];
+        })
+        .sort(
+          (a, b) =>
+            a.displayName.localeCompare(b.displayName) ||
+            a.connectionId.localeCompare(b.connectionId),
+        );
+    },
+    deleteBuildApproval: async (_db, scope, connectionId) => {
+      if (!ownsAgent(scope)) return null;
+      const row = store.buildApprovals.get(key(scope.agentId, connectionId)) ?? null;
+      store.buildApprovals.delete(key(scope.agentId, connectionId));
       return row;
     },
     findVendorApproval: async (_db, scope, vendor) =>

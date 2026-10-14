@@ -1,4 +1,5 @@
-import type { SocialProviderName } from "@graft/auth";
+import type { SetFirstPasswordOutcome, SocialProviderName } from "@graft/auth";
+import { MAX_PASSWORD_LENGTH, MIN_PASSWORD_LENGTH } from "@graft/auth/password.rules";
 import {
   type AgentDeps,
   type AgentScopeToggleOutput,
@@ -7,6 +8,7 @@ import {
   answerPendingAction,
   type ConnectionDeps,
   createAgent,
+  createIntegrationDeps,
   defaultAcquireJobDeps,
   defaultIntegrationToolsDeps,
   defaultSetupDeps,
@@ -20,6 +22,7 @@ import {
   getPendingActionForPerson,
   getPersonModelKey,
   getSetupState,
+  type IntegrationDeps,
   type IntegrationDirectory,
   type IntegrationTool,
   type IntegrationToolsDeps,
@@ -28,7 +31,9 @@ import {
   type LedgerDeps,
   listAgents,
   listApprovals,
+  listBuildApprovals,
   listConnections,
+  listIntegrations,
   listIntegrationTools,
   listOpenPendingActions,
   listSuggestedIntegrations,
@@ -78,6 +83,7 @@ import {
   updateAgentLimits,
   validateVendor,
   type WorkingSetDeps,
+  withdrawBuildApproval,
   withdrawVendorApproval,
 } from "@graft/core";
 import type { DbOrTx } from "@graft/db";
@@ -269,7 +275,19 @@ export type ModelOutput = ModelDeployment & { personKey: boolean };
 export type AuthHandle = {
   handler: (request: Request) => Promise<Response>;
   getSession: (headers: Headers) => Promise<SessionLike>;
+  /**
+   * `@graft/auth`'s `setFirstPassword` over the session's headers (GRA-298), behind
+   * `POST /me/password`. Optional so a harness that never sets a password binds nothing; absent,
+   * the route refuses saying so.
+   */
+  setFirstPassword?: (headers: Headers, newPassword: string) => Promise<SetFirstPasswordOutcome>;
 };
+
+/** `POST /me/password`'s body: the new password, held to Better Auth's lengths (GRA-298). */
+const setPasswordBody = z.object({
+  newPassword: z.string().min(MIN_PASSWORD_LENGTH).max(MAX_PASSWORD_LENGTH),
+});
+export type SetPasswordBody = z.input<typeof setPasswordBody>;
 
 /**
  * How a person may sign in at this deployment (GRA-81): email and password always, and the
@@ -292,6 +310,11 @@ export type ApiDeps = {
   pendingAction: PendingActionDeps;
   /** The person's own model key (GRA-31, ADR 0014) — the vault's encrypt half rides inside. */
   modelKey: ModelKeyDeps;
+  /**
+   * The integrations list's four reads (GRA-291). Optional, and the real reads under
+   * `connection.providers` when absent; a suite that reaches `/integrations` passes fakes.
+   */
+  integration?: IntegrationDeps;
   /**
    * The person's Setup record (ADR 0024; GRA-204). Optional, and `defaultSetupDeps` when absent,
    * so a harness that never reaches `/setup` binds nothing; a suite that does passes fakes.
@@ -772,6 +795,17 @@ export type ToolboxToolOutput = ToolOutput & {
 };
 
 /**
+ * One build approval on the agent's page (ADR 0008 as amended 2026-09-18; GRA-295): the connection
+ * `acquire` may work against without asking, the integration it names, and when it was granted.
+ */
+export type BuildApprovalOutput = {
+  connectionId: string;
+  vendor: string;
+  displayName: string;
+  grantedAt: Date;
+};
+
+/**
  * `GET /integrations/:vendor/tools` (GRA-293): the integration page's Tools tab. The person's tools
  * of the vendor that have a current version and the stock tools they hold none of the name of, each
  * with its last run across the person's agents (dry runs and refusals not counted), the most
@@ -1163,6 +1197,29 @@ export function createApi(options: ApiOptions): Hono {
   api.delete("/me/model-key", async (c) => {
     const principal = await principalOf(c.req.raw.headers);
     return c.json({ deleted: await deletePersonModelKey(ctx, principal, modelKeyDeps) });
+  });
+
+  /**
+   * A first password for a person who signed up with Google or GitHub (GRA-298; ADR 0020), so the
+   * email door opens for them too. Better Auth keeps this server-only, so it is here, behind the
+   * session and the origin check; a person who already holds a password is refused 409 and changes
+   * it at Better Auth's own `/change-password` with the current one. The lengths are checked
+   * before Better Auth is asked, so the refusal is this API's shape.
+   */
+  api.post("/me/password", async (c) => {
+    await principalOf(c.req.raw.headers);
+    const body = await parseBody(c.req.raw, setPasswordBody);
+    if (!options.auth.setFirstPassword) {
+      throw new ServiceError("BAD_REQUEST", "This server cannot set a password");
+    }
+    const outcome = await options.auth.setFirstPassword(c.req.raw.headers, body.newPassword);
+    if (outcome === "password_exists") {
+      throw new ServiceError(
+        "CONFLICT",
+        "You already have a password. Change it with your current one instead.",
+      );
+    }
+    return c.json({ set: true });
   });
 
   /**
@@ -1634,7 +1691,7 @@ export function createApi(options: ApiOptions): Hono {
 
   api.get("/agents", async (c) => {
     const principal = await principalOf(c.req.raw.headers);
-    return c.json({ agents: await listAgents(ctx, principal, agentDeps) });
+    return c.json(await listAgents(ctx, principal, agentDeps));
   });
 
   api.post("/agents", async (c) => {
@@ -1817,6 +1874,42 @@ export function createApi(options: ApiOptions): Hono {
     return c.json({ changes });
   });
 
+  /**
+   * The agent's build approvals, one per connection, for the agent's page to list and withdraw
+   * (ADR 0008 as amended 2026-09-18). Granted only from an answer (the build ask, a connection's
+   * `approveBuild`, Setup's Build), never here. A revoked agent's still answer, as its history does.
+   */
+  api.get("/agents/:id/build-approvals", async (c) => {
+    const principal = await principalOf(c.req.raw.headers);
+    const agent = orNotFound(
+      await getAgent(ctx, principal, c.req.param("id"), agentDeps),
+      "Agent not found",
+    );
+    const rows = await listBuildApprovals(
+      ctx,
+      { personId: principal.personId, agentId: agent.id },
+      approvalDeps,
+    );
+    const buildApprovals: BuildApprovalOutput[] = rows.map((row) => ({
+      connectionId: row.connectionId,
+      vendor: row.vendor,
+      displayName: row.displayName,
+      grantedAt: row.grantedAt,
+    }));
+    return c.json({ buildApprovals });
+  });
+
+  /** Withdraw one: the agent's next `acquire` against the connection asks again. */
+  api.delete("/agents/:id/build-approvals/:connectionId", async (c) => {
+    const principal = await principalOf(c.req.raw.headers);
+    const scope = { personId: principal.personId, agentId: c.req.param("id") };
+    const row = orNotFound(
+      await withdrawBuildApproval(ctx, scope, c.req.param("connectionId"), approvalDeps),
+      "No build approval for this connection and agent",
+    );
+    return c.json({ buildApproval: { agentId: row.agentId, connectionId: row.connectionId } });
+  });
+
   api.put("/agents/:id/scope", async (c) => {
     const principal = await principalOf(c.req.raw.headers);
     const body = await parseBody(c.req.raw, scopeBody);
@@ -1885,6 +1978,23 @@ export function createApi(options: ApiOptions): Hono {
   api.get("/connections", async (c) => {
     const principal = await principalOf(c.req.raw.headers);
     return c.json({ connections: await listConnections(ctx, principal, connectionDeps) });
+  });
+
+  /**
+   * The integrations list (GRA-291): one row per vendor the person holds a live connection of, with
+   * its connections and their states, the active agents whose scope reaches any of them, the live
+   * tool count, the last call and the worst connection's reason for needing the person
+   * (`@graft/core`'s `IntegrationOutput`). Four statements whatever the person holds.
+   */
+  api.get("/integrations", async (c) => {
+    const principal = await principalOf(c.req.raw.headers);
+    const integrations = await listIntegrations(
+      ctx,
+      principal,
+      { executeToolName },
+      options.deps.integration ?? createIntegrationDeps(connectionDeps.providers),
+    );
+    return c.json({ integrations });
   });
 
   /**
