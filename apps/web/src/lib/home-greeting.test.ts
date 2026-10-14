@@ -1,6 +1,14 @@
 import { describe, expect, it } from "vitest";
 
-import { homeGreeting } from "./home-greeting";
+import { homeGreeting, welcomeGreeting } from "./home-greeting";
+
+describe("welcomeGreeting", () => {
+  it("welcomes by the first name, or alone", () => {
+    expect(welcomeGreeting(" Seb Poole")).toBe("Welcome to Graft, Seb");
+    expect(welcomeGreeting(null)).toBe("Welcome to Graft");
+    expect(welcomeGreeting("  ")).toBe("Welcome to Graft");
+  });
+});
 
 const at = (hour: number) => new Date(2026, 9, 14, hour, 30);
 
