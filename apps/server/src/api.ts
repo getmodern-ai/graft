@@ -9,6 +9,7 @@ import {
   type ConnectionOutput,
   createAgent,
   defaultAcquireJobDeps,
+  defaultIntegrationToolsDeps,
   defaultSetupDeps,
   defaultStockDeps,
   deletePersonModelKey,
@@ -20,12 +21,15 @@ import {
   getPersonModelKey,
   getSetupState,
   type IntegrationDirectory,
+  type IntegrationTool,
+  type IntegrationToolsDeps,
   isOAuthAuthorizationCode,
   issueConsoleAgentToken,
   type LedgerDeps,
   listAgents,
   listApprovals,
   listConnections,
+  listIntegrationTools,
   listOpenPendingActions,
   listTools,
   listToolVersionOrigins,
@@ -69,6 +73,7 @@ import {
   stockLineageOf,
   type ToolDeps,
   updateAgentLimits,
+  validateVendor,
   type WorkingSetDeps,
   withdrawVendorApproval,
 } from "@graft/core";
@@ -266,6 +271,11 @@ export type ApiDeps = {
    * so a harness that never reaches `/setup` binds nothing; a suite that does passes fakes.
    */
   setup?: SetupDeps;
+  /**
+   * An integration's tools read (GRA-293): the toolbox, the stock catalogue and the ledger's last
+   * run per tool. Optional, and `defaultIntegrationToolsDeps` when absent.
+   */
+  integrationTools?: IntegrationToolsDeps;
   /**
    * The stock catalogue's reads (ADR 0025), for Setup's ready-made tools (GRA-276). Optional, and
    * `defaultStockDeps` when absent, as `setup` is; a suite that offers ready-made tools passes the
@@ -733,6 +743,14 @@ export type ToolboxToolOutput = ToolOutput & {
   lineage: StockLineage;
   versions: ToolVersionOutput[];
 };
+
+/**
+ * `GET /integrations/:vendor/tools` (GRA-293): the integration page's Tools tab. The person's tools
+ * of the vendor that have a current version and the stock tools they hold none of the name of, each
+ * with its last run across the person's agents (dry runs and refusals not counted), the most
+ * recently run first (`@graft/core`'s `listIntegrationTools`).
+ */
+export type IntegrationToolsOutput = { tools: IntegrationTool[] };
 
 /** One promoted tool in an agent's working set, with the tool — the console's working-set view (ADR 0003). */
 export type WorkingSetEntryOutput = {
@@ -1751,6 +1769,27 @@ export function createApi(options: ApiOptions): Hono {
       };
     });
     return c.json({ tools: answer });
+  });
+
+  /**
+   * One integration's tools, by vendor slug (GRA-293): the toolbox's and stock's, with the last run
+   * of each. A slug the person has nothing of and stock has nothing of answers an empty list, not a
+   * 404, since an integration need not be connected for its stock tools to be listed.
+   */
+  api.get("/integrations/:vendor/tools", async (c) => {
+    const principal = await principalOf(c.req.raw.headers);
+    const vendor = c.req.param("vendor");
+    const problem = validateVendor(vendor);
+    if (problem) throw new ServiceError("BAD_REQUEST", problem);
+    const answer: IntegrationToolsOutput = {
+      tools: await listIntegrationTools(
+        ctx,
+        principal,
+        vendor,
+        options.deps.integrationTools ?? defaultIntegrationToolsDeps,
+      ),
+    };
+    return c.json(answer);
   });
 
   api.get("/connections", async (c) => {
