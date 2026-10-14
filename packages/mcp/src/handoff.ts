@@ -91,14 +91,14 @@ export function verifyHandoff(args: {
     return {
       ok: false,
       reason: "consumed",
-      message: "This handoff link was already used — the agent has taken the answer",
+      message: "This handoff link was already used; the agent has taken the answer",
     };
   }
   if (args.subject.expiresAt.getTime() <= args.now.getTime()) {
     return {
       ok: false,
       reason: "expired",
-      message: "This handoff link has expired — the agent will ask again if it still needs to",
+      message: "This handoff link has expired; the agent will ask again if it still needs to",
     };
   }
   return { ok: true };

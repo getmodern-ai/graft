@@ -1,4 +1,4 @@
-import type { RunInputView } from "./setup-run-input";
+import { canRun, initialValues, type RunInputView, runInputOf } from "./setup-run-input";
 
 /**
  * The result step's pure half (GRA-215): which tool it may show and run on arrival.
@@ -16,11 +16,20 @@ export function resultToolOf<T extends { id: string }>(
 }
 
 /**
- * Whether the step runs the tool on arrival, before the person presses anything: only a tool that
- * takes no input (Greptile on #172). A tool with inputs shows its fields, prefilled where there is
- * a starting value (Open-Meteo's Melbourne), and waits for Run, so the first answer is for what
- * the person chose and never for a default they did not pick.
+ * Whether the step runs the tool on arrival, before the person presses anything: a read-only tool
+ * whose form, as drawn, already holds everything the run needs: no input at all, or every
+ * required field at a starting value (the starter's `runInput`, the schema's `default` or its
+ * first `examples` entry) and every value in its field's type. The ready-made
+ * `gmail__search-messages`, both fields optional and prefilled, waited behind *Not run yet* on the
+ * production walk of 2026-10-14; Open-Meteo's prefilled city now runs too, and the person runs it
+ * again for another. A required field nothing fills, or a JSON input, whose skeleton is only a
+ * placeholder, waits for Run. A tool that is not read-only never runs unasked: the run route
+ * refuses it anyway (`tool_not_read_only`).
  */
-export function runsOnArrival(view: RunInputView): boolean {
-  return view.kind === "none";
+export function runsOnArrival(view: RunInputView, tool: { readOnly: boolean }): boolean {
+  if (!tool.readOnly) return false;
+  if (view.kind === "none") return true;
+  if (view.kind !== "form") return false;
+  const values = initialValues(view);
+  return canRun(view, values, "") && runInputOf(view, values).ok;
 }
