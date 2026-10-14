@@ -584,4 +584,25 @@ describe("what Greptile's review of #238 asked for", () => {
     expect(row?.providerRef).not.toBe("acct_2");
     expect(approvalsOf(h)).toEqual({ build: [], vendor: [] });
   });
+
+  it("a new link is never taken for spent by an older row revoked during its window", async () => {
+    const h = harness();
+    const old = await read(await h.app.request("/api/connect", post({ proposal: GMAIL })));
+    h.broker.connectAccount({ personId: PERSON, target: "gmail", id: "acct_1" });
+    await landing(h, h.broker.minted.at(-1)?.success ?? "");
+    const fresh = await read(await h.app.request("/api/connect", post({ proposal: GMAIL })));
+    const freshSuccess = h.broker.minted.at(-1)?.success ?? "";
+    // The older row is revoked (and released) while the new link is open.
+    h.clock.at += 1_000;
+    await h.app.request(`/api/connections/${old.connectId}/revoke`, {
+      method: "POST",
+      headers: { origin: AUTH_URL },
+    });
+    h.broker.connectAccount({ personId: PERSON, target: "gmail", id: "acct_2" });
+    const landed = consoleOutcome(await landing(h, freshSuccess));
+    expect(landed).toMatchObject({ status: "connected", connectionId: fresh.connectId });
+    // A new row of its own: the released one is not reconnected in place under the old id.
+    expect(h.store.connections.get(fresh.connectId)?.providerRef).toBe("acct_2");
+    expect(h.store.connections.get(old.connectId)?.revokedAt).not.toBeNull();
+  });
 });

@@ -510,9 +510,10 @@ export type ConnectThroughProviderInput = {
   /** The provider's reference for what the person connected — a broker's account id — as `complete` answered it. */
   ref: string;
   /**
-   * The id a new row takes, when the caller names one: the console connect's record id (GRA-304),
-   * so a landing repeated finds the row by it and two landings cannot insert two. A released row
-   * reconnected in place keeps its own.
+   * The id the row takes, when the caller names one: the console connect's record id (GRA-304),
+   * so a landing repeated finds the row by that id alone and two landings cannot insert two. Named,
+   * the row is always a new one and no released row is reconnected in place, whose id would not
+   * be the record's; the console connect grants no listed agent anything either way.
    */
   id?: string;
 };
@@ -580,12 +581,14 @@ export async function connectThroughProvider(
   // provider let go (`recordProviderRelease`), and still set while the release is outstanding. The
   // hosts need not match (GRA-122; the header): the row is a candidate when the provider covers the
   // union of its hosts and the proposal's, and the most recently revoked candidate is the one.
-  const released = await releasedRowFor(
-    await deps.listConnections(ctx.db, principal.personId),
-    provider,
-    input.vendor,
-    hostSet.hosts,
-  );
+  const released = input.id
+    ? null
+    : await releasedRowFor(
+        await deps.listConnections(ctx.db, principal.personId),
+        provider,
+        input.vendor,
+        hostSet.hosts,
+      );
   const claimed = () =>
     new ServiceError(
       "CONFLICT",

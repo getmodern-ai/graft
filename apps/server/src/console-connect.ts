@@ -389,7 +389,7 @@ async function startConsoleLink(
     });
   } catch {
     const keyring = providerNamed(deps.connection.providers, KEYRING_PROVIDER);
-    if (!keyring || keyring.connect.kind !== "form") throw new Error("The keyring is missing");
+    if (keyring?.connect.kind !== "form") throw new Error("The keyring is missing");
     return {
       kind: "form",
       provider: keyring.name,
@@ -494,22 +494,15 @@ export async function completeConsoleLink(
   }
   // What this record already made, judged before the provider is asked again (Greptile on #238):
   // asked again, with the first account among the taken ones, a provider holding a second account
-  // for the person would answer it and a refresh would connect that too. The row this link inserted
-  // carries the record's id; a released row it reconnected in place keeps its own, and is the one
-  // of this provider and integration made before the record was issued and touched since.
+  // for the person would answer it and a refresh would connect that too. The row this link makes
+  // carries the record's id and is always a new one (`connectThroughProvider`'s `id`), so the row
+  // with that id, the person's, is exactly what this record made; nothing else is mistaken for it.
   //
   // A record that made its row is spent even once that row is revoked (Greptile on #238): landing
-  // on it again would reconnect the released row to whatever account the provider holds next and
-  // write the old record's access over the revoke's sweep, so it says what happened instead.
-  const issuedAt = record.expiresAt - LINK_STATE_TTL_MS;
+  // on it again would connect the provider's next account and write the old record's access over
+  // the revoke's sweep, so it says what happened instead.
   const madeByThisLink = async (scoped: ServiceContext) =>
-    (await listConnections(scoped, principal, deps.connection)).find(
-      (row) =>
-        row.provider === provider.name &&
-        row.vendor === record.vendor &&
-        (row.id === record.connectId ||
-          (row.createdAt.getTime() < issuedAt && row.updatedAt.getTime() >= issuedAt)),
-    ) ?? null;
+    deps.connection.findConnection(scoped.db, principal.personId, record.connectId);
   const already = (row: Pick<ConnectionOutput, "id" | "revokedAt">) =>
     row.revokedAt
       ? outcome(
