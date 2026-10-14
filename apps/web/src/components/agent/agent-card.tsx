@@ -1,8 +1,6 @@
 import { Link } from "@tanstack/react-router";
-import { useRef, useState } from "react";
 
 import { AgentActions } from "@/components/agent/agent-actions";
-import { AgentConnectionDialog } from "@/components/agent/agent-connection-dialog";
 import { HarnessMark, IntegrationMark } from "@/components/marks";
 import { StatusChip } from "@/components/status-chip";
 import { Time } from "@/components/time";
@@ -18,7 +16,7 @@ import {
   requestsLabel,
   toolsReadyLabel,
 } from "@/lib/agent-cards";
-import type { AgentListItem } from "@/lib/agent-queries";
+import type { Agent, AgentListItem } from "@/lib/agent-queries";
 import type { Connection } from "@/lib/connection-queries";
 import type { SetupStateData } from "@/lib/setup-queries";
 import { agentStatusChip } from "@/lib/status-chips";
@@ -36,6 +34,7 @@ export function AgentCard({
   connectionsFailed = false,
   requests,
   setup,
+  onConnectAgent,
 }: {
   agent: AgentListItem;
   /**
@@ -47,6 +46,8 @@ export function AgentCard({
   connectionsFailed?: boolean;
   requests: number;
   setup: SetupStateData | undefined;
+  /** Opens *Connect an agent*, which the screen holds above the cards (GRA-336). */
+  onConnectAgent: ConnectAgent;
 }) {
   const canUse = connections ? agentCanUse(agent, connections) : null;
   const target = connectAgentTarget(agent, setup);
@@ -70,7 +71,7 @@ export function AgentCard({
         </div>
         <StatusChip chip={agentStatusChip(agent)} />
         <div className="-mr-2 shrink-0">
-          <AgentActions agent={agent} />
+          <AgentActions agent={agent} onConnectAgent={onConnectAgent} />
         </div>
       </div>
 
@@ -131,7 +132,14 @@ export function AgentCard({
             Connect its agent
           </Button>
         ) : target === "dialog" ? (
-          <ConnectItsAgent agent={agent} />
+          <Button
+            variant="outline"
+            size="sm"
+            aria-label={`Connect ${agent.name}`}
+            onClick={(event) => onConnectAgent(agent, event.currentTarget)}
+          >
+            Connect its agent
+          </Button>
         ) : requests > 0 ? (
           <Badge render={<Link to="/pending" search={{ agent: agent.id }} />}>
             {requestsLabel(requests)}
@@ -142,28 +150,9 @@ export function AgentCard({
   );
 }
 
-/** *Connect its agent* through the dialog; Home's *Your agents* (GRA-327) draws it too. */
-export function ConnectItsAgent({ agent }: { agent: AgentListItem }) {
-  const trigger = useRef<HTMLButtonElement>(null);
-  const [connecting, setConnecting] = useState(false);
-  return (
-    <>
-      <Button
-        ref={trigger}
-        variant="outline"
-        size="sm"
-        aria-label={`Connect ${agent.name}`}
-        onClick={() => setConnecting(true)}
-      >
-        Connect its agent
-      </Button>
-      {connecting ? (
-        <AgentConnectionDialog
-          agent={agent}
-          onClose={() => setConnecting(false)}
-          returnFocus={trigger}
-        />
-      ) : null}
-    </>
-  );
-}
+/**
+ * Opens *Connect an agent* for one agent, with the control that asked, for the dialog to return
+ * focus to. The screen holds the dialog, never the card: issuing a token ends the agent's wait,
+ * which swaps the card's *Connect its agent* away, and the token is shown once (GRA-336).
+ */
+export type ConnectAgent = (agent: Agent, trigger: HTMLButtonElement | null) => void;

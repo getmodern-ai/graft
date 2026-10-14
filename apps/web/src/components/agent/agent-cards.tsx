@@ -1,6 +1,6 @@
 import { useId, useState } from "react";
 
-import { AgentCard } from "@/components/agent/agent-card";
+import { AgentCard, type ConnectAgent } from "@/components/agent/agent-card";
 import { AddIcon, InfoIcon, KeyboardArrowDownIcon, KeyboardArrowUpIcon } from "@/components/icons";
 import { HarnessMark } from "@/components/marks";
 import { RetryNotice } from "@/components/retry-notice";
@@ -46,6 +46,7 @@ export function AgentCards({
   retrying,
   onRetry,
   onAdd,
+  onConnectAgent,
 }: {
   agents: readonly AgentListItem[];
   /** Undefined until read: each card then draws its marks as loading, or as failed. */
@@ -59,6 +60,8 @@ export function AgentCards({
   retrying: boolean;
   onRetry: () => void;
   onAdd: () => void;
+  /** Opens the screen's *Connect an agent*, held above the cards (GRA-336). */
+  onConnectAgent: ConnectAgent;
 }) {
   if (isPending) {
     return (
@@ -107,6 +110,7 @@ export function AgentCards({
       connectionsFailed={connectionsFailed}
       requests={requests.get(agent.id) ?? 0}
       setup={setup}
+      onConnectAgent={onConnectAgent}
     />
   );
 

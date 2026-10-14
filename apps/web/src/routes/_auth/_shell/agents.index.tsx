@@ -1,8 +1,10 @@
 import { useQuery } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
-import { useState } from "react";
+import { useRef, useState } from "react";
 
+import type { ConnectAgent } from "@/components/agent/agent-card";
 import { AgentCards } from "@/components/agent/agent-cards";
+import { AgentConnectionDialog } from "@/components/agent/agent-connection-dialog";
 import { CreateAgentDialog } from "@/components/agent/create-agent-dialog";
 import { AddIcon } from "@/components/icons";
 import { PageContainer } from "@/components/page/page-container";
@@ -15,7 +17,7 @@ import {
 } from "@/components/page/page-header";
 import { useScreenTitle } from "@/components/shell/screen-title";
 import { Button } from "@/components/ui/button";
-import { agentsQuery } from "@/lib/agent-queries";
+import { type Agent, agentsQuery } from "@/lib/agent-queries";
 import { connectionsQuery } from "@/lib/connection-queries";
 import { pendingActionsQuery } from "@/lib/pending-action-queries";
 import { setupQuery } from "@/lib/setup-queries";
@@ -48,7 +50,18 @@ function AgentsRoute() {
   const pending = useQuery(pendingActionsQuery);
   // The shell's intercept read it already; the cards read which agent Setup runs as.
   const setup = useQuery(setupQuery);
+  // The two dialogs that show a token once live here, above the cards, never inside one: creating
+  // an agent swaps the empty screen for the cards, and issuing a token ends an agent's wait, which
+  // swaps its card's *Connect its agent* away; a dialog inside either would take the token with it
+  // (GRA-336). The connect dialog keeps the agent as clicked and the token it issued over the
+  // refreshed list. Revoke and Edit show nothing once, so they stay in the card's menu.
   const [creating, setCreating] = useState(false);
+  const [connecting, setConnecting] = useState<Agent | null>(null);
+  const connectTrigger = useRef<HTMLButtonElement | null>(null);
+  const openConnect: ConnectAgent = (agent, trigger) => {
+    connectTrigger.current = trigger;
+    setConnecting(agent);
+  };
   const rows = agents.data?.agents ?? [];
 
   useScreenTitle("Agents");
@@ -83,6 +96,7 @@ function AgentsRoute() {
         retrying={agents.isFetching}
         onRetry={() => void agents.refetch()}
         onAdd={() => setCreating(true)}
+        onConnectAgent={openConnect}
       />
 
       <CreateAgentDialog
@@ -99,6 +113,15 @@ function AgentsRoute() {
             : undefined
         }
       />
+
+      {connecting ? (
+        <AgentConnectionDialog
+          key={connecting.id}
+          agent={connecting}
+          onClose={() => setConnecting(null)}
+          returnFocus={connectTrigger}
+        />
+      ) : null}
     </PageContainer>
   );
 }

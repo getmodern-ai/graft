@@ -162,6 +162,10 @@ beforeEach(() => {
         approvals = [];
         return new Response(null, { status: 204 });
       }
+      if (url === "/api/agents/agent_1/token" && method === "POST") {
+        current = { ...current, tokenPrefix: "grft_new" };
+        return Response.json({ agent: current, token: "grft_new_shown_once" });
+      }
       if (url === "/api/agents/agent_1/revoke" && method === "POST") {
         current = { ...current, revokedAt: at };
         return Response.json({ agent: current });
@@ -310,6 +314,33 @@ describe("standalone agent management", () => {
     });
     expect(router.state.location.pathname).toBe("/agents/agent_1");
     expect(document.body.textContent).toContain("History");
+  });
+
+  it("keeps a token issued from a card's Connect its agent until it is dismissed", async () => {
+    // Awaiting its agent: no token, no client (ADR 0024). Issuing one ends the wait, which swaps
+    // the card's button away; the dialog lives above the cards, so the token stays (GRA-336).
+    current = { ...agent, tokenPrefix: null };
+    await mount();
+    await waitFor(() => expect(document.body.textContent).toContain("Connect its agent"));
+    await click("Connect Laptop");
+    const dialog = () => document.querySelector("[role=dialog]");
+    await waitFor(() => expect(dialog()?.textContent).toContain("Issue a token"));
+    await click("Issue a token", dialog() ?? document);
+    await waitFor(() => expect(dialog()?.textContent).toContain("grft_new_shown_once"));
+    // The list refetched and the card no longer awaits its agent, yet the token is still shown.
+    await waitFor(() =>
+      expect(
+        requests.filter((request) => request.url === "/api/agents" && request.method === "GET")
+          .length,
+      ).toBeGreaterThan(1),
+    );
+    await waitFor(() =>
+      expect(document.querySelector('button[aria-label="Connect Laptop"]')).toBeNull(),
+    );
+    expect(dialog()?.textContent).toContain("grft_new_shown_once");
+    expect(dialog()?.textContent).toContain("This token is shown once");
+    await click("Done", dialog() ?? document);
+    await waitFor(() => expect(dialog()).toBeNull());
   });
 
   it("keeps a revoked agent's records reachable and read-only", async () => {
