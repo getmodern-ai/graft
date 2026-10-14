@@ -10,6 +10,7 @@ import {
   KeyboardArrowDownIcon,
   SearchIcon,
 } from "@/components/icons";
+import { AddCustomApiDialog } from "@/components/integration/add-custom-api-dialog";
 import { CategoryChips } from "@/components/integration/category-chips";
 import {
   type ConnectForm,
@@ -30,7 +31,7 @@ import {
 import { InputGroup, InputGroupAddon, InputGroupInput } from "@/components/ui/input-group";
 import { Item, ItemActions, ItemContent, ItemDescription, ItemTitle } from "@/components/ui/item";
 import { Skeleton } from "@/components/ui/skeleton";
-import { draftFromProposal, emptyDraft } from "@/lib/connection-form";
+import { draftFromProposal } from "@/lib/connection-form";
 import {
   integrationDirectoryHomeQuery,
   integrationDirectorySearchQuery,
@@ -63,8 +64,7 @@ const SEARCH_DEBOUNCE_MS = 300;
  *
  * A tile's Connect is the connect dialog (`POST /api/connect`, GRA-304). A docs link pasted into the
  * search, *Add a custom API* and a search that finds nothing hand off to Flow C (GRA-323) through
- * the screen's `custom` param, which `customApiSeed` reads; until Flow C's dialogs land, `custom`
- * opens the ordinary form with the name filled in.
+ * the screen's `custom` param, which `customApiSeed` reads into `AddCustomApiDialog`'s seed.
  */
 export function DiscoverTab({ q, custom }: { q?: string; custom?: string }) {
   const navigate = useNavigate();
@@ -251,7 +251,7 @@ export function DiscoverTab({ q, custom }: { q?: string; custom?: string }) {
           void navigate({ to: "/integrations/$vendor", params: { vendor } });
         }}
       />
-      <CustomApiFallback
+      <CustomApi
         custom={custom}
         onClose={() =>
           void navigate({ to: "/integrations", search: { tab: "discover", ...(q ? { q } : {}) } })
@@ -432,20 +432,17 @@ function NoResults({ name, onAdd }: { name: string; onAdd: () => void }) {
   );
 }
 
-/**
- * Until Flow C's dialogs land (GRA-323), `custom` opens the ordinary form with the typed name in
- * it, so every hand-off above reaches a way to connect. GRA-323 replaces this with its own dialog,
- * reading the same param through `customApiSeed`.
- */
-function CustomApiFallback({ custom, onClose }: { custom?: string; onClose: () => void }) {
+/** `custom` opens Flow C's dialog (GRA-323), seeded with the name typed or the docs link pasted. */
+function CustomApi({ custom, onClose }: { custom?: string; onClose: () => void }) {
   const seed = custom !== undefined ? customApiSeed(custom) : null;
   return (
-    <AddConnectionDialog
+    <AddCustomApiDialog
       open={seed !== null}
       onOpenChange={(open) => {
         if (!open) onClose();
       }}
-      initialDraft={seed ? { ...emptyDraft(), displayName: seed.name } : undefined}
+      initialName={seed?.name}
+      initialDocsUrl={seed?.docsUrl ?? undefined}
     />
   );
 }
