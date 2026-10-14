@@ -229,7 +229,7 @@ describe("an ask over MCP, answered over HTTP", () => {
       expect(listed.pendingActions).toEqual([
         expect.objectContaining({
           id: said.pendingActionId,
-          agent: { id: AGENT, name: "laptop Hermes" },
+          agent: { id: AGENT, name: "laptop Hermes", clientName: null },
           kind: "tool",
           url: said.url,
         }),
@@ -261,10 +261,10 @@ describe("an ask over MCP, answered over HTTP", () => {
       // The link is spent: the agent took the answer, so the card refuses it as reused.
       const reused = await app.request(`/api/pending-actions/${said.pendingActionId}?t=${token}`);
       expect(reused.status).toBe(409);
-      expect(await reused.json()).toMatchObject({
-        error: "CONFLICT",
-        details: { reason: "consumed" },
-      });
+      const spent = (await reused.json()) as { details: Record<string, unknown> };
+      expect(spent).toMatchObject({ error: "CONFLICT", details: { reason: "consumed" } });
+      // A spent link names nobody: only an expired or closed ask's refusal says who asked.
+      expect(spent.details).not.toHaveProperty("agentName");
     } finally {
       await a.close();
     }
@@ -456,6 +456,23 @@ describe("an answer after the connection was revoked (GRA-69)", () => {
       expect(closed?.consumedAt).not.toBeNull();
       expect(closed?.expiresAt.getTime()).toBeLessThanOrEqual(Date.now());
 
+      // The link the agent relayed now reads as closed by the revoke, not as one Graft never
+      // issued, though the close moved the expiry its mark was made over (GRA-314).
+      const link = new URL(said.url as string);
+      const read = await app.request(`/api/pending-actions/${actionId}${link.search}`);
+      expect(read.status).toBe(410);
+      expect(await read.json()).toMatchObject({
+        error: "GONE",
+        details: {
+          reason: "closed",
+          closedReason: "connection_revoked",
+          kind: "tool",
+          agentName: "racing Hermes",
+          integrationName: "Demo Orders",
+          askedAt: expect.any(String),
+        },
+      });
+
       // While revoked, the call is refused before any ask; reconnected, it asks afresh: nothing stood.
       expect(body(await c.call("demo__create-item", {}))).toMatchObject({
         error: "refused",
@@ -470,4 +487,43 @@ describe("an answer after the connection was revoked (GRA-69)", () => {
       await c.close();
     }
   }, 30_000);
+});
+
+describe("an expired link (GRA-314)", () => {
+  it("answers 410 with the agent's name, the integration and when it asked, for the owning person", async () => {
+    const createdAt = new Date(Date.now() - 25 * 60 * 60 * 1000);
+    const row = {
+      id: "pa_expired",
+      agentId: AGENT,
+      kind: "connection",
+      payload: { vendor: "unleashed", displayName: "Acme Unleashed", hosts: [] },
+      connectionId: null,
+      expiresAt: new Date(createdAt.getTime() + 24 * 60 * 60 * 1000),
+      answeredAt: null,
+      answer: null,
+      consumedAt: null,
+      closedReason: null,
+      owner: "person" as const,
+      createdAt,
+      updatedAt: createdAt,
+    };
+    store.pendingActions.set(row.id, row);
+    try {
+      const token = signHandoffToken(row, mcp.handoff.secret);
+      const read = await app.request(`/api/pending-actions/${row.id}?t=${token}`);
+      expect(read.status).toBe(410);
+      expect(await read.json()).toMatchObject({
+        error: "GONE",
+        details: {
+          reason: "expired",
+          kind: "connection",
+          agentName: "laptop Hermes",
+          integrationName: "Acme Unleashed",
+          askedAt: createdAt.toISOString(),
+        },
+      });
+    } finally {
+      store.pendingActions.delete(row.id);
+    }
+  });
 });

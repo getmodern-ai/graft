@@ -11,13 +11,11 @@ import { cn } from "@/lib/utils";
  * only in what sits on the right. `SettingsRow` is that frame plus the standard
  * label/description stack; the variants below fill in the control.
  *
- * Labels are Regular weight, not medium. That is what the spec says, and it is a
- * deliberate departure from the ad-hoc rows this replaces.
- *
- * The type ramp is `text-base` over `text-sm` — 16/24 above 14/20, per the row's
- * own frame in the product designs. The description wraps rather than truncating,
- * which is the other thing the frame shows: it is a sentence, and a clipped
- * sentence is worse than a two-line one.
+ * The type is App v2's row (GRA-331; Figma 2100:10414), not Cando's: a medium `text-sm` title over
+ * a `text-xs` description, 14/20 above 12/16, in a `py-3.5` frame. Cando's spec drew Regular
+ * `text-base` over `text-sm`; Graft's settings screen is the only reader of these rows, so the
+ * frame follows the design it is drawn to. The description wraps rather than truncating: it is a
+ * sentence, and a clipped sentence is worse than a two-line one.
  */
 function SettingsRow({
   title,
@@ -50,15 +48,15 @@ function SettingsRow({
     <div
       data-slot="settings-row"
       className={cn(
-        "flex items-center justify-between gap-4 px-4 py-3",
-        stacked && "flex-col items-start gap-3 py-4 md:flex-row md:items-center md:gap-4 md:py-3",
+        "flex items-center justify-between gap-4 px-4 py-3.5",
+        stacked && "flex-col items-start gap-3 py-4 md:flex-row md:items-center md:gap-4 md:py-3.5",
         className,
       )}
       {...props}
     >
-      <div className="flex min-w-0 flex-col">
-        <div className="truncate text-base">{title}</div>
-        {description ? <div className="text-muted-foreground text-sm">{description}</div> : null}
+      <div className="flex min-w-0 flex-col gap-0.5">
+        <div className="truncate font-medium text-sm">{title}</div>
+        {description ? <div className="text-muted-foreground text-xs">{description}</div> : null}
       </div>
       {action ? (
         <div className={cn("shrink-0", stacked && "w-full md:w-auto")}>{action}</div>

@@ -469,6 +469,7 @@ export {
   type PendingActionSubject,
   pendingActionDoneState,
   pendingActionFinishedAt,
+  pendingActionIntegrationName,
   pendingActionSubject,
 } from "./pending-action/pending-action.rules";
 export {

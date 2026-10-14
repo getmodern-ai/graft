@@ -113,6 +113,18 @@ export const CALL_OUTCOME_CHIP = {
   refused: { variant: "outline", label: "Refused" },
 } as const satisfies Record<ConnectionCall["outcome"], StatusChip>;
 
+/**
+ * A run in the activity (GRA-319; Figma 2095:10473), in the person's words. Not the success tone
+ * for a run that went through: the row records a call that ended, not a state that holds, so it is
+ * the neutral rest; a failure is destructive, and a call Graft stopped before it ran is outline,
+ * as a refused call is above.
+ */
+export const ACTIVITY_OUTCOME_CHIP = {
+  ok: { variant: "secondary", label: "Ran" },
+  error: { variant: "destructive", label: "Failed" },
+  refused: { variant: "outline", label: "Blocked" },
+} as const satisfies Record<ConnectionCall["outcome"], StatusChip>;
+
 /** A dry run reached the vendor for reads only (CONTEXT.md, *Dry run*); the chip rides beside the tool name. */
 export const DRY_RUN_CHIP: StatusChip = { variant: "outline", label: "Dry run" };
 
@@ -157,6 +169,17 @@ export const MODEL_KEY_STATUS_CHIP = {
 } as const satisfies Record<"set" | "unset", StatusChip>;
 
 /**
+ * The person's own address and sign-in accounts on Settings › Account (GRA-331): a verified address
+ * and a linked provider work; an unverified address waits on the emailed link.
+ */
+export const EMAIL_STATUS_CHIP = {
+  verified: { variant: "success", label: "Verified" },
+  unverified: { variant: "outline", label: "Not verified" },
+} as const satisfies Record<"verified" | "unverified", StatusChip>;
+
+export const SIGN_IN_ACCOUNT_CHIP: StatusChip = { variant: "success", label: "Connected" };
+
+/**
  * What answers the person's `acquire` jobs (GRA-297; `lib/model-status.ts` decides which): the
  * deployment's model or their own key work; a deployment that needs a key, or has no model at
  * all, builds nothing until someone acts.
@@ -187,18 +210,21 @@ export function toolAnnotationChip(readOnly: boolean, destructive: boolean): Sta
 }
 
 /**
- * A tool's annotations as the integration page's Access column words them (GRA-317; GRA-287 item
- * 9): `Read` or `Changes data`, and `Can delete` beside `Changes data` for a destructive tool. The
- * tones are `TOOL_ANNOTATION_CHIP`'s, by the same rule.
+ * A tool's access in App v2's words (GRA-320; GRA-287: "Can delete" on Tools): what the tool does
+ * to the person's data, from the same annotations. Reads never ask (ADR 0008), so a read is the
+ * neutral tone, a write waits on the person's first answer, and a delete keeps the red.
  */
 export const TOOL_ACCESS_CHIP = {
   read: { variant: "secondary", label: "Read" },
-  write: { variant: "outline", label: "Changes data" },
-  delete: { variant: "destructive", label: "Can delete" },
-} as const satisfies Record<"read" | "write" | "delete", StatusChip>;
+  changes: { variant: "outline", label: "Changes data" },
+  deletes: { variant: "destructive", label: "Can delete" },
+} as const satisfies Record<"read" | "changes" | "deletes", StatusChip>;
 
-export function toolAccessChips(readOnly: boolean, destructive: boolean): StatusChip[] {
-  if (readOnly) return [TOOL_ACCESS_CHIP.read];
-  if (destructive) return [TOOL_ACCESS_CHIP.write, TOOL_ACCESS_CHIP.delete];
-  return [TOOL_ACCESS_CHIP.write];
+export function toolAccessChip(annotations: {
+  readOnlyHint: boolean;
+  destructiveHint: boolean;
+}): StatusChip {
+  if (annotations.readOnlyHint) return TOOL_ACCESS_CHIP.read;
+  if (annotations.destructiveHint) return TOOL_ACCESS_CHIP.deletes;
+  return TOOL_ACCESS_CHIP.changes;
 }

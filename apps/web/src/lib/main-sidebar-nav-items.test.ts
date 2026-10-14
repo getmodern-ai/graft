@@ -18,8 +18,8 @@ describe("NAV_ITEMS", () => {
     ]);
   });
 
-  it("puts Home at the root and Integrations on the connections list until GRA-321", () => {
-    expect(NAV_ITEMS.map((item) => item.to)).toEqual(["/", "/pending", "/agents", "/connections"]);
+  it("puts Home at the root and Integrations on the integrations list", () => {
+    expect(NAV_ITEMS.map((item) => item.to)).toEqual(["/", "/pending", "/agents", "/integrations"]);
   });
 
   it("puts Settings in the footer, under the docs link", () => {

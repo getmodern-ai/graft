@@ -25,7 +25,7 @@ import {
   toolStatusLine,
 } from "@/lib/integration-tools";
 import { pendingActionsQuery } from "@/lib/pending-action-queries";
-import { toolAccessChips } from "@/lib/status-chips";
+import { toolAccessChip } from "@/lib/status-chips";
 import { cn } from "@/lib/utils";
 
 /**
@@ -257,11 +257,12 @@ function ToolRow({
         </div>
       </TableCell>
       <TableCell className="whitespace-normal py-3.5 align-top">
-        <span className="flex flex-wrap gap-1">
-          {toolAccessChips(tool.annotations.readOnly, tool.annotations.destructive).map((chip) => (
-            <StatusChip key={chip.label} chip={chip} />
-          ))}
-        </span>
+        <StatusChip
+          chip={toolAccessChip({
+            readOnlyHint: tool.annotations.readOnly,
+            destructiveHint: tool.annotations.destructive,
+          })}
+        />
       </TableCell>
       <TableCell className="hidden whitespace-normal py-3.5 align-top md:table-cell">
         <Approval approval={approval} vendor={vendor} />

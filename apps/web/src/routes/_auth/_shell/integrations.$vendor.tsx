@@ -2,6 +2,7 @@ import { useSuspenseQuery } from "@tanstack/react-query";
 import { createFileRoute, Link } from "@tanstack/react-router";
 
 import { PowerIcon } from "@/components/icons";
+import { ActivityTab } from "@/components/integration/activity-tab";
 import { ConnectionTab } from "@/components/integration/connection-tab";
 import { IntegrationHeader } from "@/components/integration/integration-header";
 import { IntegrationTabs } from "@/components/integration/integration-tabs";
@@ -19,6 +20,7 @@ import {
   EmptyTitle,
 } from "@/components/ui/empty";
 import { connectionsQuery, toolsQuery } from "@/lib/connection-queries";
+import { readActivityFilters } from "@/lib/integration-activity";
 import {
   DEFAULT_INTEGRATION_TAB,
   type IntegrationTab,
@@ -35,7 +37,11 @@ import { integrationsQuery } from "@/lib/integration-queries";
  * is a deep link. Tools, Agents and Activity are filled by GRA-317, GRA-318 and GRA-319.
  */
 export const Route = createFileRoute("/_auth/_shell/integrations/$vendor")({
-  validateSearch: readIntegrationSearch,
+  // The Activity tab's filters ride beside `tab` (GRA-319); `readActivityFilters` reads them only there.
+  validateSearch: (search: Record<string, unknown>) => ({
+    ...readIntegrationSearch(search),
+    ...readActivityFilters(search),
+  }),
   loader: ({ context }) =>
     Promise.all([
       context.queryClient.ensureQueryData(integrationsQuery),
@@ -53,7 +59,8 @@ const PLACEHOLDERS: Record<Exclude<IntegrationTab, "connection">, (name: string)
 
 function IntegrationRoute() {
   const { vendor } = Route.useParams();
-  const { tab = DEFAULT_INTEGRATION_TAB } = Route.useSearch();
+  const { tab = DEFAULT_INTEGRATION_TAB, agent, outcome } = Route.useSearch();
+  const navigate = Route.useNavigate();
   const { data: integrationData } = useSuspenseQuery(integrationsQuery);
   const { data: connectionData } = useSuspenseQuery(connectionsQuery);
   const { data: toolData } = useSuspenseQuery(toolsQuery);
@@ -66,7 +73,7 @@ function IntegrationRoute() {
   const name = page.kind === "integration" ? page.displayName : vendor;
 
   useScreenTitle(
-    <PageNavBreadcrumb parentLabel="Integrations" parentTo="/connections">
+    <PageNavBreadcrumb parentLabel="Integrations" parentTo="/integrations">
       {name}
     </PageNavBreadcrumb>,
   );
@@ -112,6 +119,18 @@ function IntegrationRoute() {
           vendor={page.vendor}
           integrationName={page.displayName}
           connections={page.connections}
+        />
+      ) : tab === "activity" ? (
+        <ActivityTab
+          vendor={page.vendor}
+          integrationName={page.displayName}
+          filters={{ agent, outcome }}
+          onFiltersChange={(next) =>
+            void navigate({
+              search: { tab: "activity", agent: next.agent, outcome: next.outcome },
+              replace: true,
+            })
+          }
         />
       ) : (
         <p className="text-muted-foreground text-sm">{PLACEHOLDERS[tab](page.displayName)}</p>
