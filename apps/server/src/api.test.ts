@@ -834,6 +834,56 @@ describe("agents", () => {
     expect(text).toContain('"tokenPrefix":"grft_abc"');
   });
 
+  /** GRA-306 (ADR 0007 as amended 2026-10-14): rotation, for an active static-token agent alone. */
+  describe("rotating a token", () => {
+    const rotate = (app: ReturnType<typeof harness>["app"], id = "agent_1") =>
+      app.request(`/api/agents/${id}/token/rotate`, json({}));
+
+    it("answers the new token once and writes its hash over the old one", async () => {
+      const { app, deps } = harness({ user: { id: "person_1" } });
+      vi.mocked(deps.agent.issueAgentToken).mockImplementation(async (_db, _p, _a, token) => ({
+        ...agentRow,
+        ...token,
+      }));
+      const res = await rotate(app);
+      expect(res.status).toBe(201);
+      const body = (await res.json()) as { token: string; agent: Record<string, unknown> };
+      expect(body.token.startsWith("grft_")).toBe(true);
+      expect(body.agent).not.toHaveProperty("tokenHash");
+      expect(body.agent.tokenPrefix).toBe(body.token.slice(0, 8));
+      const call = vi.mocked(deps.agent.issueAgentToken).mock.calls[0];
+      expect(call?.[1]).toBe("person_1");
+      expect(call?.[4]).toBe("the-hash");
+    });
+
+    it("refuses an agent a client connected with a 409 and a sentence", async () => {
+      const { app, deps } = harness({ user: { id: "person_1" } });
+      vi.mocked(deps.agent.findAgent).mockResolvedValue({
+        ...agentRow,
+        tokenHash: null,
+        tokenPrefix: null,
+        connectedViaClientId: "client_claude",
+        connectedViaClientName: "Claude",
+      });
+      const res = await rotate(app);
+      expect(res.status).toBe(409);
+      expect(await res.json()).toMatchObject({
+        message: expect.stringContaining("connected through Claude"),
+      });
+      expect(deps.agent.issueAgentToken).not.toHaveBeenCalled();
+    });
+
+    it("answers another person's agent as not found", async () => {
+      const { app, deps } = harness({ user: { id: "person_2" } });
+      vi.mocked(deps.agent.findAgent).mockImplementation(async (_db, personId) =>
+        personId === agentRow.personId ? agentRow : null,
+      );
+      const res = await rotate(app);
+      expect(res.status).toBe(404);
+      expect(deps.agent.issueAgentToken).not.toHaveBeenCalled();
+    });
+  });
+
   /** ADR 0007 as amended 2026-09-19: a body naming no mode makes an agent on every connection. */
   it("creates an agent on all connections when the body names no mode, writing no list and answering the resolved scope", async () => {
     const { app, deps } = harness({ user: { id: "person_1" } });

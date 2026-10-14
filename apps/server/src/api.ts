@@ -47,6 +47,7 @@ import {
   retryProviderRelease,
   revokeAgent,
   revokeApproval,
+  rotateAgentToken,
   type ServiceContext,
   ServiceError,
   type ServiceErrorCode,
@@ -1530,6 +1531,19 @@ export function createApi(options: ApiOptions): Hono {
       await issueConsoleAgentToken(ctx, principal, c.req.param("id"), setupDeps, agentDeps),
       201,
     );
+  });
+
+  /**
+   * Rotate an active static-token agent's token (ADR 0007 as amended 2026-10-14; GRA-306),
+   * answered once, `201 { agent, token }` as the issue above answers: the old token is refused from
+   * the next request on. An agent a client connected, one awaiting its harness (the issue route
+   * above gives its first token) and a revoked one are `409 agent_token_not_rotatable`, another
+   * person's a 404 (`rotateAgentToken`).
+   */
+  api.post("/agents/:id/token/rotate", async (c) => {
+    const principal = await principalOf(c.req.raw.headers);
+    await parseBody(c.req.raw, z.object({}), { emptyIs: {} });
+    return c.json(await rotateAgentToken(ctx, principal, c.req.param("id"), agentDeps), 201);
   });
 
   /**

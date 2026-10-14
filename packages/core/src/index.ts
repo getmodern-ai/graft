@@ -65,6 +65,7 @@ export {
   listAgents,
   removeConnectionFromAgentScope,
   revokeAgent,
+  rotateAgentToken,
   type SetAgentScopeInput,
   setAgentScope,
   toAgentOutput,
