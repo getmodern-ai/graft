@@ -52,7 +52,10 @@ export type SetupToolContext = {
   /** Null when Setup adopted an agent whose harness was already connected. */
   harness: SetupHarness | null;
   connection: { id: string; vendor: string; displayName: string } | null;
-  /** The goal the job was started with; null with no job on the record. */
+  /**
+   * The goal the job was started with, or the task a ready-made tool does (GRA-276); null with
+   * neither on the record.
+   */
   goal: string | null;
   /** Where the job stands, with the failure's sentence once it failed. */
   job: { id: string; status: AcquireJobStatus; failure: string | null } | null;
@@ -101,7 +104,8 @@ export async function setupToolContext(
     connection: connection
       ? { id: connection.id, vendor: connection.vendor, displayName: connection.displayName }
       : null,
-    goal: job?.goal ?? null,
+    // A ready-made tool's task is the record's (GRA-276): it was taken, not built by a job.
+    goal: job?.goal ?? (record?.stockTool && record.toolId ? record.goal : null),
     job: job
       ? {
           id: job.id,
@@ -131,7 +135,8 @@ export async function completeSetupResult(
   deps: Pick<SetupFinishRouteDeps, "setup" | "agent">,
 ): Promise<SetupState> {
   const record = await deps.setup.findSetup(ctx.db, principal.personId);
-  if (record?.step !== "result" || !record.acquireJobId) {
+  // A ready-made tool (GRA-276) reached the result with no job; the tool is what the step shows.
+  if (record?.step !== "result" || !record.toolId) {
     throw new ServiceError("CONFLICT", "Setup is not on the result step", {
       details: { reason: "setup_step", step: record?.step ?? null },
     });
