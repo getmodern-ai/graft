@@ -12,8 +12,10 @@ import type {
   SetupGoalContext,
   SetupGoalSuggestions,
   SetupNextBody,
+  SetupReadyMade,
   SetupStartBody,
   SetupStarterBody,
+  SetupStockBody,
   SetupTaskBody,
   SetupToolContext,
   ToolRunBody,
@@ -110,6 +112,32 @@ export function chooseSetupStarter(body: SetupStarterBody) {
  */
 export function chooseSetupTask(body: SetupTaskBody) {
   return api<SetupStateData>("/setup/task", { method: "POST", body });
+}
+
+export type SetupReadyMadeList = Jsonified<SetupReadyMade>;
+export type SetupReadyMadeTool = SetupReadyMadeList["tools"][number];
+
+/**
+ * The ready-made tools Setup offers for a starter (`GET /api/setup/stock`, GRA-276): the curated
+ * stock tools this release holds as read-only, the curated task's match first, or none. Keyed by the
+ * starter outside `["setup"]`, since the list follows the release and not the record.
+ */
+export function setupReadyMadeQuery(starterId: string) {
+  return queryOptions({
+    queryKey: ["setup-stock", starterId] as const,
+    queryFn: () =>
+      api<SetupReadyMadeList>(`/setup/stock?starterId=${encodeURIComponent(starterId)}`),
+    staleTime: 5 * 60_000,
+  });
+}
+
+/**
+ * A ready-made tool chosen instead of a task to build (`POST /api/setup/stock`, GRA-276): on the
+ * tool screen the server saves it and connects the starter, and takes it the moment the connection
+ * lands; on the task step it is taken at once, and the record moves to the result.
+ */
+export function chooseSetupStock(body: SetupStockBody) {
+  return api<SetupStateData>("/setup/stock", { method: "POST", body });
 }
 
 export type DirectoryEntry = Jsonified<SetupDirectoryEntry>;
