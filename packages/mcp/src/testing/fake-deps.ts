@@ -471,7 +471,10 @@ export function createFakeDeps(store: FakeStore): FakeDeps {
                   .filter((connection) => connection.personId === personId)
                   .map((connection) => connection.id)
                   .sort()
-              : [...(store.agentConnections.get(row.id) ?? [])].sort(),
+              : // The person's rows alone, as the real statement reads them off `connection`.
+                [...(store.agentConnections.get(row.id) ?? [])]
+                  .filter((id) => store.connections.get(id)?.personId === personId)
+                  .sort(),
           lastActiveAt:
             store.usage
               .filter((usage) => usage.agentId === row.id && !usage.dryRun)
