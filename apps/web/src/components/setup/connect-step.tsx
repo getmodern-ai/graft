@@ -18,6 +18,7 @@ import {
   setupKeys,
   setupQuery,
 } from "@/lib/setup-queries";
+import { connectStepDescription } from "@/lib/setup-ready-made";
 import { connectAskView } from "@/lib/setup-vendors";
 
 /** How often the step re-reads the state while the ask is open, for an answer given elsewhere. */
@@ -63,11 +64,11 @@ function OpenAsk({ state, askId }: { state: SetupStateData; askId: string | null
     <div className="mx-auto flex w-full max-w-[880px] flex-col gap-6">
       <SetupStepHeader
         title={`Connect ${vendorName}`}
-        description={
-          task
-            ? `Graft starts building your tool the moment ${vendorName} is connected.`
-            : `${state.agent?.name ?? "Your agent"} asks for this connection as its own, the way it would from your harness. Answer it here.`
-        }
+        description={connectStepDescription({
+          vendorName,
+          agentName: state.agent?.name ?? "Your agent",
+          record: state.setup,
+        })}
       />
       {view.kind === "card" ? (
         <PendingActionCard

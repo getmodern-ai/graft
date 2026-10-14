@@ -451,7 +451,9 @@ amended 2026-09-20): a `grfta_` request with an unknown session id, or with none
 announcing a protocol version the SDK lacks negotiates instead of being refused** (GRA-162; ADR 0018
 as amended 2026-09-22): the door drops the `MCP-Protocol-Version` header on a session-less
 `initialize` when the SDK does not speak it, so the body's version negotiates to Graft's latest —
-Claude.ai has announced `2026-07-28` on every session since 2026-09-20 — and a request that names a
+Claude.ai has announced `2026-07-28` on every session since 2026-09-20 — and on both of GRA-129's
+re-open paths, where the re-opened session negotiated for the client (GRA-232: Claude opens with a
+session-less `tools/list`, and the 400 outlived #128 by two weeks); a request that names a live
 session keeps the SDK's 400. Under `open`,
 authored code runs on the backing `GRAFT_SANDBOX_BACKEND` names:
 `docker` by default, which needs the `GRAFT_SANDBOX_IMAGE`/`GRAFT_SANDBOX_NETWORK` pair below and,
@@ -492,11 +494,15 @@ as amended 2026-09-18). `packages/ask-card` (`@graft/ask-card`) is one HTML page
 over `@modelcontextprotocol/ext-apps`'s `app-with-deps`, no React — that `vite build` with
 `vite-plugin-singlefile` inlines whole into `dist/ask.html`; hosts block external scripts and styles,
 so nothing may be linked. **The card reports its own frame height** (GRA-275): `autoResize` is
-off, nothing is reported before the first tool result, and every render and every layout change
-of the mount writes the height both as `ui/notifications/size-changed` and on `<html>`, which is
-what Claude.ai reads (anthropics/claude-ai-mcp#69); a result with no card reports 0, so the host
-draws no empty frame under a `find_tool` or `run_tool` that asked nothing (`src/frame-size.ts`,
-`src/card-view.ts`). Its stylesheet carries a copy of the console's `cando:tokens` block and
+off, and every render and every layout change of the mount writes the height both as
+`ui/notifications/size-changed` and on `<html>`, which is what Claude.ai reads
+(anthropics/claude-ai-mcp#69); a result with no card reports 0, so the host draws no empty frame
+under a `find_tool` or `run_tool` that asked nothing (`src/frame-size.ts`, `src/card-view.ts`).
+Before any result the mount holds one *Waiting for Graft…* line, shipped in `ask.html` and
+reported on the page's first run and again after `connect()`, so a call that waits on an approval
+shows that line rather than Claude's blank 150 px default; the tool-input notification keeps it
+(GRA-335). A line rather than 0, because a zero-height frame is the one the card would have to
+grow out of nothing, and an ask hidden there is one the model was told not to relay. Its stylesheet carries a copy of the console's `cando:tokens` block and
 `src/bundle.test.ts` fails on a colour literal outside the `:root`/`.dark` rules (ADR 0017 over one
 file). The MCP server (`packages/mcp/src/ask-card.ts`, `session.ts`) declares `resources`, lists the
 one resource `ui://graft/ask` (`text/html;profile=mcp-app`, an empty `_meta.ui.csp` said outright:
@@ -1343,9 +1349,11 @@ only where the field names match, else the schema's `default` or first `examples
 required field with no value says *This tool needs …* and Run waits (`canRun`), the required fields
 drawn first since a stored schema's keys come back in jsonb's order; JSON only for a
 schema too complex to draw (a nested object, a list of objects, a union, a composed root), where a
-required key still at the skeleton's empty object or list counts as missing. It runs the tool once
-on arrival only when the tool takes no input (`lib/setup-result.ts`'s `runsOnArrival`; a tool with
-inputs, Open-Meteo's prefilled city included, waits for Run) and shows the answer in `CodeBlock`; a
+required key still at the skeleton's empty object or list counts as missing. It runs a read-only
+tool once on arrival when the form as drawn needs nothing from the person: no input, or every
+required field at a starting value and every value in its type (`lib/setup-result.ts`'s
+`runsOnArrival`, so the ready-made Gmail search and Open-Meteo's prefilled city run at once; a
+required field nothing fills, or a JSON input, waits for Run) and shows the answer in `CodeBlock`; a
 refusal or a failure is one sentence with the raw text, cut to 500 characters, behind *Details*
 (`lib/short-failure.ts`'s `shortFailure` and `runFailure`: an HTML body reads *The integration
 answered with a web page instead of data (status N)*), and the building step's and the finish

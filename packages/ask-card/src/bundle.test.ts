@@ -3,6 +3,7 @@ import { fileURLToPath } from "node:url";
 
 import { describe, expect, it } from "vitest";
 
+import { WAITING_CLASS, WAITING_TEXT } from "./card-view";
 import { ASK_CARD_HTML_PATH } from "./index";
 import { SETUP_TITLE } from "./render";
 
@@ -53,6 +54,18 @@ describe("dist/ask.html", () => {
     expect(page).toContain('id="ask"');
     expect(page).toContain('name="color-scheme"');
     expect(page.match(/<script/g)?.length).toBe(1);
+  });
+
+  it("ships the waiting line inside the mount, visible, as card-view.ts draws it (GRA-335)", () => {
+    const page = html();
+    const mount = page.match(/<div id="ask"([^>]*)>([\s\S]*?)<\/div>/);
+    expect(mount, "the #ask mount").not.toBeNull();
+    expect(mount?.[1]).not.toMatch(/hidden/);
+    expect(mount?.[2]?.trim()).toBe(
+      `<p class="${WAITING_CLASS}" role="status">${WAITING_TEXT}</p>`,
+    );
+    const source = readFileSync(STYLES_SOURCE, "utf8");
+    expect(source).toMatch(new RegExp(`\\.${WAITING_CLASS} \\{[^}]*[{;\\s]height: \\d+px;`));
   });
 
   it("carries the Setup offer's kind and words in the one script (GRA-210)", () => {
