@@ -140,7 +140,8 @@ export function AgentCard({
   );
 }
 
-function ConnectItsAgent({ agent }: { agent: AgentListItem }) {
+/** *Connect its agent* through the dialog; Home's *Your agents* (GRA-327) draws it too. */
+export function ConnectItsAgent({ agent }: { agent: AgentListItem }) {
   const trigger = useRef<HTMLButtonElement>(null);
   const [connecting, setConnecting] = useState(false);
   return (
