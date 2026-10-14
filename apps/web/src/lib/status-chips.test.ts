@@ -20,7 +20,9 @@ import {
   RECONNECT_CHIP,
   SIGN_IN_ACCOUNT_CHIP,
   type StatusChip,
+  TOOL_ACCESS_CHIP,
   TOOL_ANNOTATION_CHIP,
+  toolAccessChip,
   toolAnnotationChip,
   VENDOR_APPROVAL_DESTRUCTIVE_CHIP,
   WORKING_SET_CHANGE_CHIP,
@@ -47,6 +49,7 @@ const EVERY_CHIP: StatusChip[] = [
   SIGN_IN_ACCOUNT_CHIP,
   ...Object.values(MODEL_STATUS_CHIP),
   ...Object.values(TOOL_ANNOTATION_CHIP),
+  ...Object.values(TOOL_ACCESS_CHIP),
 ];
 
 describe("status chips", () => {
@@ -144,6 +147,16 @@ describe("status chips", () => {
     // The check never emits both, but were it to, read-only is what lets a call pass unasked, so
     // it is the one to show.
     expect(toolAnnotationChip(true, true)).toBe(TOOL_ANNOTATION_CHIP["read-only"]);
+  });
+
+  // GRA-287 item 9: a destructive tool says "Can delete".
+  it("words a tool's access as the integration page draws it", () => {
+    const access = (readOnlyHint: boolean, destructiveHint: boolean) =>
+      toolAccessChip({ readOnlyHint, destructiveHint });
+    expect(access(true, false)).toBe(TOOL_ACCESS_CHIP.read);
+    expect(access(false, false)).toBe(TOOL_ACCESS_CHIP.changes);
+    expect(access(false, true)).toBe(TOOL_ACCESS_CHIP.deletes);
+    expect(access(true, true)).toBe(TOOL_ACCESS_CHIP.read);
   });
 
   it("reads an agent's status off its revocation, its token and its client", () => {
