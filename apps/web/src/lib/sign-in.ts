@@ -31,6 +31,17 @@ export const signInMethodsQuery = queryOptions({
   staleTime: 5 * 60_000,
 });
 
+/**
+ * The same read for Settings › Account (GRA-331), under its own key and without the fallback: the
+ * door draws the email form on a failure, but Settings drawing no provider rows would hide the
+ * person's Connect and Disconnect with no sign of why, so a failure there is an error with a Retry.
+ */
+export const settingsSignInMethodsQuery = queryOptions({
+  queryKey: [...signInMethodsKeys.current, "settings"] as const,
+  queryFn: () => api<SignInMethods>("/sign-in-methods"),
+  staleTime: 5 * 60_000,
+});
+
 /** What each button says — the provider's own name, in Cando's "Continue with …" form. */
 export const SOCIAL_PROVIDER_LABELS: Record<SocialProviderName, string> = {
   google: "Google",

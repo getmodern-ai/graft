@@ -66,7 +66,7 @@ function IntegrationRoute() {
   const name = page.kind === "integration" ? page.displayName : vendor;
 
   useScreenTitle(
-    <PageNavBreadcrumb parentLabel="Integrations" parentTo="/connections">
+    <PageNavBreadcrumb parentLabel="Integrations" parentTo="/integrations">
       {name}
     </PageNavBreadcrumb>,
   );
