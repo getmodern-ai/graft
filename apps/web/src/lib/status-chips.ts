@@ -221,3 +221,23 @@ export function toolAnnotationChip(readOnly: boolean, destructive: boolean): Sta
   if (destructive) return TOOL_ANNOTATION_CHIP.destructive;
   return TOOL_ANNOTATION_CHIP.write;
 }
+
+/**
+ * A tool's access in App v2's words (GRA-320; GRA-287: "Can delete" on Tools): what the tool does
+ * to the person's data, from the same annotations. Reads never ask (ADR 0008), so a read is the
+ * neutral tone, a write waits on the person's first answer, and a delete keeps the red.
+ */
+export const TOOL_ACCESS_CHIP = {
+  read: { variant: "secondary", label: "Read" },
+  changes: { variant: "outline", label: "Changes data" },
+  deletes: { variant: "destructive", label: "Can delete" },
+} as const satisfies Record<"read" | "changes" | "deletes", StatusChip>;
+
+export function toolAccessChip(annotations: {
+  readOnlyHint: boolean;
+  destructiveHint: boolean;
+}): StatusChip {
+  if (annotations.readOnlyHint) return TOOL_ACCESS_CHIP.read;
+  if (annotations.destructiveHint) return TOOL_ACCESS_CHIP.deletes;
+  return TOOL_ACCESS_CHIP.changes;
+}
