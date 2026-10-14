@@ -8,26 +8,29 @@ import {
   RequestListNote,
   RequestRow,
 } from "@/components/pending/request-row";
+import { SignInRequestRow } from "@/components/pending/sign-in-request-row";
 import { RetryNotice } from "@/components/retry-notice";
 import { agentsQuery } from "@/lib/agent-queries";
-import { firstOf, NEEDS_YOU_ROWS } from "@/lib/home";
+import { needsYouRows } from "@/lib/home";
+import { integrationsQuery } from "@/lib/integration-queries";
 import { harnessMark } from "@/lib/marks";
 import { pendingActionsQuery } from "@/lib/pending-action-queries";
+import { openRequestCount, signInRequestsOf } from "@/lib/sign-in-requests";
 
 /**
- * *Needs you* (GRA-327): the first open requests as the Requests screen draws them (`RequestRow`,
- * GRA-310, with GRA-311's Allow menu and dialog), then "See all requests". The count is the
- * sidebar's: the same read under the same key and poll, so the two never disagree.
- *
- * Sign-in rows (a connection that needs the person, GRA-313) belong in this list beside the asks
- * once `SignInRequestRow` lands, counted with them as the sidebar will count them; until then the
- * panel lists the asks alone.
+ * *Needs you* (GRA-327): the first rows of Requests' Open list as that screen draws them, the
+ * sign-in rows (`SignInRequestRow`, GRA-313) then the asks (`RequestRow`, GRA-310, with GRA-311's
+ * Allow menu and dialog), and "See all requests". The count is the sidebar's: the same two reads
+ * under the same keys and poll, through `openRequestCount`, so the two never disagree. The sign-in
+ * rows draw whatever the asks' read is doing, as on Requests.
  */
 export function NeedsYouPanel() {
   const requests = useQuery({ ...pendingActionsQuery, refetchInterval: 15_000 });
+  const integrations = useQuery({ ...integrationsQuery, refetchInterval: 15_000 });
   const agents = useQuery(agentsQuery);
-  const all = requests.data?.pendingActions ?? [];
-  const { shown } = firstOf(all, NEEDS_YOU_ROWS);
+  const asks = requests.data?.pendingActions ?? [];
+  const signIns = signInRequestsOf(integrations.data?.integrations ?? []);
+  const shown = needsYouRows(signIns, asks);
   const harnessOf = new Map(
     (agents.data?.agents ?? []).map((agent) => [
       agent.id,
@@ -38,13 +41,16 @@ export function NeedsYouPanel() {
   return (
     <HomePanel
       title="Needs you"
-      count={all.length}
+      count={openRequestCount(asks.length, integrations.data?.integrations)}
       description="Answer what your agents are waiting on."
       more={{ label: "See all requests", render: <Link to="/pending" /> }}
     >
       <RequestList aria-label="Open requests" aria-busy={requests.isPending}>
+        {shown.signIns.map((request) => (
+          <SignInRequestRow key={request.key} request={request} />
+        ))}
         {requests.isPending ? (
-          <RequestListLoading rows={2} />
+          <RequestListLoading rows={signIns.length > 0 ? 1 : 2} />
         ) : requests.isError && !requests.data ? (
           <RequestListNote>
             <RetryNotice
@@ -54,10 +60,10 @@ export function NeedsYouPanel() {
               retrying={requests.isFetching}
             />
           </RequestListNote>
-        ) : shown.length === 0 ? (
+        ) : asks.length + signIns.length === 0 ? (
           <RequestListNote>Nothing is waiting on you.</RequestListNote>
         ) : (
-          shown.map((action) => (
+          shown.asks.map((action) => (
             <RequestRow
               key={action.id}
               action={action}

@@ -8,7 +8,7 @@ import {
   HomeRow,
   HomeRowText,
 } from "@/components/home/home-panel";
-import { SignInButton } from "@/components/integration/integrations-table";
+import { SignInButton } from "@/components/integration/sign-in-button";
 import { IntegrationMark } from "@/components/marks";
 import { RequestList, RequestListNote } from "@/components/pending/request-row";
 import { homeIntegrations, integrationUsageLine } from "@/lib/home";

@@ -39,6 +39,23 @@ export function firstOf<T>(rows: readonly T[], limit: number): { shown: T[]; mor
   return { shown: rows.slice(0, limit), more: Math.max(0, rows.length - limit) };
 }
 
+/**
+ * *Needs you*'s rows: the sign-in rows first, then the asks, as Requests' Open list orders them
+ * (GRA-313), cut to `NEEDS_YOU_ROWS` together, so the first rows here are the first rows there.
+ */
+export function needsYouRows<S, A>(
+  signIns: readonly S[],
+  asks: readonly A[],
+): { signIns: S[]; asks: A[]; more: number } {
+  const shownSignIns = signIns.slice(0, NEEDS_YOU_ROWS);
+  const shownAsks = asks.slice(0, NEEDS_YOU_ROWS - shownSignIns.length);
+  return {
+    signIns: shownSignIns,
+    asks: shownAsks,
+    more: signIns.length + asks.length - shownSignIns.length - shownAsks.length,
+  };
+}
+
 /** The active agents, in the server's order; a revoked agent is the agents screen's to show. */
 export function homeAgents<T extends Pick<AgentListItem, "revokedAt">>(agents: readonly T[]) {
   return firstOf(groupAgents(agents).active, HOME_AGENT_ROWS);

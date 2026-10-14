@@ -106,7 +106,6 @@ export function HomeListLoading({ rows = 3 }: { rows?: number }) {
   return (
     <>
       {Array.from({ length: rows }, (_, row) => (
-        // biome-ignore lint/suspicious/noArrayIndexKey: placeholders with no identity of their own.
         <HomeRow key={row}>
           <Skeleton className="size-5 shrink-0 rounded-sm" />
           <div className="flex flex-1 flex-col gap-1.5">

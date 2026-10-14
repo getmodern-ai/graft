@@ -1,12 +1,9 @@
-import { useMutation } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { useEffect, useState } from "react";
-import { toast } from "sonner";
+import { useState } from "react";
 
-import { ReenterCredentialDialog } from "@/components/connection/reenter-credential-dialog";
 import { RevokeConnectionDialog } from "@/components/connection/revoke-connection-dialog";
-import { useOAuthConsent } from "@/components/connection/use-oauth-consent";
 import { MoreHorizIcon } from "@/components/icons";
+import { SignInButton } from "@/components/integration/sign-in-button";
 import { HarnessMark, IntegrationMark } from "@/components/marks";
 import { RetryNotice } from "@/components/retry-notice";
 import { TableBodyNote, TableLoadingRows } from "@/components/table-body-states";
@@ -23,7 +20,6 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { isKeyringConnection } from "@/lib/connection-queries";
 import type { Integration, IntegrationConnection } from "@/lib/integration-queries";
 import {
   attentionSentence,
@@ -33,7 +29,6 @@ import {
   usedByLabel,
 } from "@/lib/integrations-list";
 import { harnessMark } from "@/lib/marks";
-import { startOAuthConsent } from "@/lib/oauth-consent";
 import { cn } from "@/lib/utils";
 
 const COLUMNS = 5;
@@ -191,79 +186,6 @@ function RowAction({ row }: { row: Integration }) {
     <SignInButton connection={signIn.connection} kind={signIn.action.kind} />
   ) : (
     <RowMenu row={row} />
-  );
-}
-
-/**
- * Sign in, the way the integration page's Connection tab does it (`reconnectActionsOf`): the
- * consent in a popup where the client secret is in place, the credential dialog otherwise. Home's
- * *Connected integrations* (GRA-327) draws it too.
- */
-export function SignInButton({
-  connection,
-  kind,
-}: {
-  connection: IntegrationConnection;
-  kind: "consent" | "credential";
-}) {
-  const [entering, setEntering] = useState(false);
-  const consent = useOAuthConsent({
-    onConnected: () => toast.success(`${connection.displayName} is connected`),
-  });
-  const reconsent = useMutation({
-    mutationFn: () => startOAuthConsent(connection.id),
-    onSuccess: ({ authorizeUrl }) => void consent.run(authorizeUrl, connection),
-    onError: (error) => toast.error("Could not start the sign-in", { description: error.message }),
-  });
-  const { state } = consent;
-  // A row has no room for the Connection tab's status block, so what it would say is a toast.
-  useEffect(() => {
-    if (state.phase === "blocked") {
-      toast.warning("The browser blocked the popup", {
-        description: `Allow popups for this page, or open the sign-in for ${connection.displayName} yourself.`,
-        action: { label: "Open", onClick: () => window.open(state.authorizeUrl, "_blank") },
-      });
-    } else if (
-      state.phase === "done" &&
-      state.outcome !== "connected" &&
-      state.outcome !== "stopped"
-    ) {
-      toast.error(`${connection.displayName} is not connected`, { description: state.message });
-    }
-  }, [state, connection.displayName]);
-  return (
-    <>
-      {consent.running ? (
-        // Closing the popup does not end the wait (`awaitConsent`), so the row offers to stop it,
-        // as `ConsentStatus` does on the Connection tab, and Sign in comes back.
-        <Button
-          variant="ghost"
-          size="sm"
-          aria-label={`Stop waiting for ${connection.displayName}`}
-          onClick={consent.cancel}
-        >
-          Stop waiting
-        </Button>
-      ) : (
-        <Button
-          variant="outline"
-          size="sm"
-          disabled={reconsent.isPending}
-          aria-label={`Sign in to ${connection.displayName}`}
-          onClick={() => (kind === "consent" ? reconsent.mutate() : setEntering(true))}
-        >
-          Sign in
-        </Button>
-      )}
-      {kind === "credential" && isKeyringConnection(connection) ? (
-        <ReenterCredentialDialog
-          key={`${connection.id}:${connection.credentialSetAt ?? "none"}`}
-          connection={connection}
-          open={entering}
-          onOpenChange={setEntering}
-        />
-      ) : null}
-    </>
   );
 }
 

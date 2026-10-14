@@ -10,6 +10,7 @@ import {
   homeIntegrations,
   homeSuggestions,
   integrationUsageLine,
+  needsYouRows,
   suggestionLine,
 } from "./home";
 import type { Integration, SuggestedIntegration } from "./integration-queries";
@@ -34,6 +35,22 @@ describe("firstOf", () => {
   it("cuts a list and counts what it left out", () => {
     expect(firstOf([1, 2, 3, 4, 5], 4)).toEqual({ shown: [1, 2, 3, 4], more: 1 });
     expect(firstOf([1], 4)).toEqual({ shown: [1], more: 0 });
+  });
+});
+
+describe("needsYouRows", () => {
+  it("puts the sign-in rows first and cuts both to four together", () => {
+    expect(needsYouRows(["s1", "s2"], ["a1", "a2", "a3"])).toEqual({
+      signIns: ["s1", "s2"],
+      asks: ["a1", "a2"],
+      more: 1,
+    });
+    expect(needsYouRows(["s1", "s2", "s3", "s4", "s5"], ["a1"])).toEqual({
+      signIns: ["s1", "s2", "s3", "s4"],
+      asks: [],
+      more: 2,
+    });
+    expect(needsYouRows([], ["a1"])).toEqual({ signIns: [], asks: ["a1"], more: 0 });
   });
 });
 
