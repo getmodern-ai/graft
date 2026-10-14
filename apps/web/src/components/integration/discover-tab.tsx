@@ -245,10 +245,10 @@ export function DiscoverTab({ q, custom }: { q?: string; custom?: string }) {
         title={form ? `Connect ${form.name}` : undefined}
         initialDraft={form ? draftFromProposal(form.form.proposal) : undefined}
         access={form?.form.access}
-        onConnected={() => {
-          const vendor = form?.form.proposal.vendor;
+        onConnected={(_, vendor) => {
           setForm(null);
-          if (vendor) void navigate({ to: "/integrations/$vendor", params: { vendor } });
+          // The saved vendor, not the proposal's: the person may have edited the slug.
+          void navigate({ to: "/integrations/$vendor", params: { vendor } });
         }}
       />
       <CustomApiFallback

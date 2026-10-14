@@ -1,5 +1,5 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { toast } from "sonner";
 
 import { ConnectionFormFields, HostsNotice } from "@/components/connection/connection-form";
@@ -51,7 +51,8 @@ export function AddConnectionDialog({
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  onConnected?: (connectionId: string) => void;
+  /** Handed the saved connection's id and vendor, as the server wrote them (the slug may have been edited). */
+  onConnected?: (connectionId: string, vendor: string) => void;
   initialDraft?: ConnectionDraft;
   access?: "full" | "ask";
   title?: string;
@@ -65,8 +66,8 @@ export function AddConnectionDialog({
     setWasOpen(open);
     if (open && initialDraft) setDraft(initialDraft);
   }
-  const connected = (connectionId: string, displayName: string) => {
-    if (onConnected) onConnected(connectionId);
+  const connected = (connectionId: string, displayName: string, vendor: string) => {
+    if (onConnected) onConnected(connectionId, vendor);
     else {
       toast.success(`${displayName} is connected`, {
         description: "Add it to an agent's scope on the agent's page to let that agent use it.",
@@ -74,13 +75,17 @@ export function AddConnectionDialog({
     }
     close();
   };
+  // The vendor the server saved, for the consent's callback, which hands back only the id.
+  const savedVendor = useRef<string | null>(null);
   const consent = useOAuthConsent({
-    onConnected: (connectionId) => connected(connectionId, draft.displayName),
+    onConnected: (connectionId) =>
+      connected(connectionId, draft.displayName, savedVendor.current ?? draft.vendor),
   });
 
   const create = useMutation({
     mutationFn: createConnection,
     onSuccess: ({ connection, authorizeUrl }) => {
+      savedVendor.current = connection.vendor;
       queryClient.invalidateQueries({ queryKey: connectionKeys.all });
       if (authorizeUrl) {
         toast.message(`${connection.displayName}'s client is saved`, {
@@ -89,7 +94,7 @@ export function AddConnectionDialog({
         void consent.run(authorizeUrl, connection);
         return;
       }
-      connected(connection.id, connection.displayName);
+      connected(connection.id, connection.displayName, connection.vendor);
     },
     onError: (error) => {
       if (error instanceof ApiError && error.status === 400) {
