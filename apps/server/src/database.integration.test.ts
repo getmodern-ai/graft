@@ -13,6 +13,7 @@ import {
   createModelKeyDeps,
   createTool,
   decideToolCall,
+  defaultActivityDeps,
   defaultAgentDeps,
   defaultApprovalDeps,
   defaultSetupDeps,
@@ -24,6 +25,7 @@ import {
   describeStockTool,
   findPersonModelKeyRow,
   finishSetup,
+  getAgentActivityStats,
   getAgentScope,
   getApproval,
   getConnection,
@@ -33,6 +35,7 @@ import {
   hashAgentToken,
   issueAwaitingAgentToken,
   issueConsoleAgentToken,
+  listActivity,
   listAgents,
   listConnections,
   listStockToolsForVendor,
@@ -1107,6 +1110,142 @@ describe.skipIf(!adminUrl)("the schema, the account and the services over a real
    * a revoked agent's ask and another person's are left out, and the row's fields and dates come
    * back typed.
    */
+  /**
+   * The console's activity (GRA-308) over real Postgres: the four branches merged under the
+   * person, paged by a cursor that keeps its place while rows are written between pages, to the
+   * microsecond, and the agent page's figures. What a fake cannot show is the union's types, the
+   * row comparison and Postgres's own print of a timestamp coming back as the cursor.
+   */
+  it("pages the person's activity across inserts, merging runs and answers, and counts the agent's week", async () => {
+    const alice = await signUp("activity-alice@example.com");
+    const bob = await signUp("activity-bob@example.com");
+    const ctx: ServiceContext = { db };
+    const conn = await registerConnection(
+      ctx,
+      { personId: alice },
+      {
+        vendor: "gmail",
+        displayName: "Gmail",
+        scheme: "none",
+        primaryHost: "https://gmail.example",
+      },
+      connectionDeps,
+    );
+    const codex = await createAgent(ctx, { personId: alice }, { name: "Codex" }, defaultAgentDeps);
+    const bobs = await createAgent(ctx, { personId: bob }, { name: "b" }, defaultAgentDeps);
+    const at = (minutes: number) => new Date(Date.UTC(2026, 9, 14, 9, minutes));
+    const line = (
+      id: string,
+      agentId: string,
+      minutes: number,
+      extra: Partial<Parameters<typeof insertUsage>[1]> = {},
+    ) =>
+      insertUsage(db, {
+        id,
+        agentId,
+        toolName: `execute__${conn.id}`,
+        outcome: "ok",
+        latencyMs: 5,
+        asked: false,
+        connectionId: conn.id,
+        createdAt: at(minutes),
+        ...extra,
+      });
+    await line("act_1", codex.agent.id, 1);
+    await line("act_2", codex.agent.id, 2, { asked: true });
+    await line("act_dry", codex.agent.id, 3, { dryRun: true });
+    await line("act_meta", codex.agent.id, 4, { toolName: "find_tool", connectionId: null });
+    await line("act_5", codex.agent.id, 5, { outcome: "refused", reason: "tool_denied" });
+    await line("act_bob", bobs.agent.id, 6, { connectionId: null });
+    // Two lines one microsecond apart, inside one millisecond a Date cannot tell apart.
+    await line("act_7a", codex.agent.id, 7);
+    await line("act_7b", codex.agent.id, 7);
+    await db.execute(
+      sql`update usage_ledger set created_at = '2026-10-14 09:07:00.000001' where id = 'act_7a'`,
+    );
+    await db.execute(
+      sql`update usage_ledger set created_at = '2026-10-14 09:07:00.000002' where id = 'act_7b'`,
+    );
+    await upsertVendorApproval(
+      db,
+      { personId: alice, agentId: codex.agent.id },
+      { vendor: "gmail", includesDestructive: false, grantedAt: at(8) },
+    );
+    await insertPendingAction(
+      db,
+      { personId: alice, agentId: codex.agent.id },
+      {
+        id: "pa_act_answered",
+        agentId: codex.agent.id,
+        kind: "connection",
+        payload: { vendor: "gmail" },
+        expiresAt: at(60),
+        createdAt: at(0),
+        answer: { connectionId: conn.id },
+        answeredAt: at(9),
+      },
+    );
+    await insertPendingAction(
+      db,
+      { personId: alice, agentId: codex.agent.id },
+      {
+        id: "pa_act_open",
+        agentId: codex.agent.id,
+        kind: "connection",
+        payload: { vendor: "gmail" },
+        expiresAt: at(60),
+        createdAt: at(10),
+      },
+    );
+
+    const page = (input: Parameters<typeof listActivity>[2]) =>
+      listActivity(ctx, { personId: alice }, input, defaultActivityDeps);
+    const keys = (rows: { position: { key: string } }[]) => rows.map((row) => row.position.key);
+
+    const first = await page({ limit: 3 });
+    expect(keys(first.rows)).toEqual([
+      "ask:pa_act_answered",
+      `vendor_approval:${codex.agent.id}:gmail`,
+      "run:act_7b",
+    ]);
+    expect(first.rows[2]).toMatchObject({ kind: "run", vendor: "gmail", connectionId: conn.id });
+    expect(first.rows[0]).toMatchObject({ kind: "approval", source: "ask", askKind: "connection" });
+
+    // Written between pages: a line newer than everything lands above and moves nothing below.
+    await line("act_new", codex.agent.id, 30);
+    const second = await page({ limit: 3, cursor: first.nextCursor });
+    expect(keys(second.rows)).toEqual(["run:act_7a", "run:act_5", "run:act_2"]);
+    const third = await page({ limit: 3, cursor: second.nextCursor });
+    expect(keys(third.rows)).toEqual(["run:act_1"]);
+    expect(third.nextCursor).toBeNull();
+
+    // Filters narrow the statement: the refused runs alone; dry runs and meta-tools on request.
+    expect(keys((await page({ outcome: "refused" })).rows)).toEqual(["run:act_5"]);
+    const everyRun = await page({
+      kind: "run",
+      includeDryRuns: true,
+      includeMetaTools: true,
+      limit: 3,
+    });
+    expect(keys(everyRun.rows)).toEqual(["run:act_new", "run:act_7b", "run:act_7a"]);
+    const aboutConnection = await page({ connectionId: conn.id, kind: "approval" });
+    expect(keys(aboutConnection.rows)).toEqual(["ask:pa_act_answered"]);
+    // Bob's agent named as a filter from Alice's session matches nothing.
+    expect((await page({ agentId: bobs.agent.id })).rows).toEqual([]);
+
+    const stats = await getAgentActivityStats(
+      ctx,
+      { personId: alice, agentId: codex.agent.id },
+      { ...defaultActivityDeps, now: () => at(40) },
+    );
+    expect(stats).toMatchObject({ runs: 5, ranWithoutAsking: 4, approved: 1 });
+    expect(stats.lastRun).toMatchObject({
+      at: at(30),
+      toolName: `execute__${conn.id}`,
+      outcome: "ok",
+    });
+  });
+
   it("suggests the integrations the person's own agents asked for and the person has not connected", async () => {
     const personId = await signUp("suggested-owner@example.com");
     const other = await signUp("suggested-other@example.com");
