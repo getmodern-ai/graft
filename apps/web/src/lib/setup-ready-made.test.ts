@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   choiceSummary,
+  connectStepDescription,
   initialToolChoice,
   tasksBesideReadyMade,
   toolStepDescription,
@@ -76,5 +77,45 @@ describe("toolStepDescription", () => {
     expect(lines[0]).toMatch(/^Use a ready-made tool/);
     expect(lines[2]).toMatch(/^Pick one read-only tool to build\./);
     for (const line of lines) expect(line).not.toContain("—");
+  });
+});
+
+describe("connectStepDescription", () => {
+  const names = { vendorName: "Gmail", agentName: "Claude" };
+
+  it("says the tool is ready, not built, on the ready-made path", () => {
+    // Production e2e of 2026-10-14: the ready-made path said Graft starts building.
+    const line = connectStepDescription({
+      ...names,
+      record: { stockTool: SEARCH.tool, goal: SEARCH.goal },
+    });
+    expect(line).toBe("Your tool is ready the moment Gmail is connected.");
+    expect(line).not.toMatch(/build/i);
+  });
+
+  it("says Graft starts building on the build path", () => {
+    expect(
+      connectStepDescription({ ...names, record: { stockTool: null, goal: "List my labels" } }),
+    ).toBe("Graft starts building your tool the moment Gmail is connected.");
+  });
+
+  it("asks for the connection as the agent's own with neither chosen", () => {
+    const expected =
+      "Claude asks for this connection as its own, the way it would from your harness. Answer it here.";
+    expect(connectStepDescription({ ...names, record: { stockTool: null, goal: null } })).toBe(
+      expected,
+    );
+    expect(connectStepDescription({ ...names, record: null })).toBe(expected);
+  });
+
+  it("writes no em dash on any path", () => {
+    const records = [
+      { stockTool: SEARCH.tool, goal: SEARCH.goal },
+      { stockTool: null, goal: "List my labels" },
+      null,
+    ];
+    for (const record of records) {
+      expect(connectStepDescription({ ...names, record })).not.toContain("—");
+    }
   });
 });
