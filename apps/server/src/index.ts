@@ -484,6 +484,8 @@ const app = createServer({
       pendingAction: defaultPendingActionDeps,
       modelKey: modelKeyDeps,
     },
+    // What the Settings screen says answers a person's jobs (GRA-297; `GET /api/me/model`).
+    model: modelSetup.deployment,
     corsOrigins: env.GRAFT_CORS_ORIGIN,
     signInMethods,
     // The console's actions counted at the API's mutation routes (GRA-100; `analytics-routes.ts`).
@@ -501,6 +503,8 @@ const app = createServer({
     connectionRouting: mcp,
     // Setup's Build shares `acquire`'s model, job record and runner (GRA-207).
     acquire: mcp,
+    // A connection proposal from an API's docs reads with `acquire`'s model and page reader (GRA-299).
+    connectionProposal: mcp,
     // Setup v2's integration directory: the private package's, or the starters when it has none.
     ...(backings.directory ? { directory: backings.directory } : {}),
     // Setup's result step runs the tool through the same authored-run function (GRA-208).

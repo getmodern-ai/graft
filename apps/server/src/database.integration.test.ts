@@ -48,6 +48,7 @@ import {
   requireAgent,
   revokeAgent,
   revokeConnection,
+  rotateAgentToken,
   type ServiceContext,
   setAgentScope,
   setApproval,
@@ -294,6 +295,34 @@ describe.skipIf(!adminUrl)("the schema, the account and the services over a real
     await expect(requireAgent(ctx, "grft_not_a_token", defaultAgentDeps)).rejects.toMatchObject({
       code: "UNAUTHORIZED",
     });
+  });
+
+  /** GRA-306 (ADR 0007 as amended 2026-10-14), against the real statement: the old hash is gone. */
+  it("rotates an agent's token: the old one is refused, the new one resolves, a revoked agent is refused", async () => {
+    const personId = await signUp("rotate@example.com");
+    const ctx: ServiceContext = { db };
+    const principal = { personId };
+    const created = await createAgent(ctx, principal, { name: "laptop Hermes" }, defaultAgentDeps);
+
+    const rotated = await rotateAgentToken(ctx, principal, created.agent.id, defaultAgentDeps);
+    expect(rotated.token).not.toBe(created.token);
+    await expect(requireAgent(ctx, created.token, defaultAgentDeps)).rejects.toMatchObject({
+      code: "UNAUTHORIZED",
+    });
+    await expect(requireAgent(ctx, rotated.token, defaultAgentDeps)).resolves.toEqual({
+      personId,
+      agentId: created.agent.id,
+    });
+
+    const other = await signUp("rotate-other@example.com");
+    await expect(
+      rotateAgentToken(ctx, { personId: other }, created.agent.id, defaultAgentDeps),
+    ).rejects.toMatchObject({ code: "NOT_FOUND" });
+
+    await revokeAgent(ctx, principal, created.agent.id, defaultAgentDeps);
+    await expect(
+      rotateAgentToken(ctx, principal, created.agent.id, defaultAgentDeps),
+    ).rejects.toMatchObject({ code: "CONFLICT", details: { reason: "agent_token_not_rotatable" } });
   });
 
   /**

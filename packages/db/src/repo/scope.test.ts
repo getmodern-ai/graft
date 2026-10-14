@@ -23,6 +23,7 @@ import {
   listAgents,
   listAllActiveAgents,
   listScopeConnectionIds,
+  removeAgentConnection,
   replaceAgentConnections,
   revokeAgent,
 } from "./agent";
@@ -36,6 +37,7 @@ import {
   findVendorApproval,
   listVendorApprovals,
   updateAskEveryCall,
+  updateVendorApprovalDestructive,
   upsertVendorApproval,
 } from "./approval";
 import {
@@ -54,14 +56,17 @@ import {
   findConnection,
   findConnectionByIdUnscoped,
   findConnectionForUpdate,
+  findVendorConnectionsForUpdate,
   revokeConnection,
   setConnectionProviderRef,
 } from "./connection";
 import {
+  answerOpenToolActions,
   answerPendingAction,
   consumePendingAction,
   expirePendingActionsForConnection,
   findPendingAction,
+  listOpenToolActions,
   listPendingActionsByKind,
   listSuggestedConnectionAsks,
   lockPendingActionKey,
@@ -82,12 +87,13 @@ import {
 import {
   findAuthoredToolForUpdate,
   findToolVersion,
+  listAuthoredToolsForVendor,
   listToolVersionOrigins,
   listToolVersions,
   lockAuthoredToolName,
   setCurrentToolVersion,
 } from "./tool";
-import { listUsage, listUsageForVendor } from "./usage";
+import { lastRunByToolForPerson, listUsage, listUsageForVendor } from "./usage";
 import {
   deleteWorkingSetEntriesForConnection,
   deleteWorkingSetEntry,
@@ -208,6 +214,37 @@ describe("agent-scoped reads take both ids of the scope in the statement", () =>
     expect(s.sql).toContain('"vendor_approval"."vendor" = $1');
     expect(s.sql).toMatch(SCOPED_AGENT);
     expect(s.params).toEqual(["hubspot", "agent_1", "person_1"]);
+  });
+
+  /** ADR 0008 as amended 2026-10-14 (GRA-302): widening or narrowing one that stands. */
+  it("locking a vendor's connections, and the rows open asks name, under the person in id order", async () => {
+    await findVendorConnectionsForUpdate(db, "person_1", "hubspot");
+    const vendorOnly = only();
+    expect(vendorOnly.sql).toMatch(/^select .* from "connection" where/);
+    expect(vendorOnly.sql).toContain('"connection"."person_id" = $1');
+    expect(vendorOnly.sql).toContain('"connection"."vendor" = $2');
+    expect(vendorOnly.sql).toMatch(/order by "connection"\."id" asc for update$/);
+    expect(vendorOnly.params).toEqual(["person_1", "hubspot"]);
+
+    statements = [];
+    await findVendorConnectionsForUpdate(db, "person_1", "hubspot", ["conn_9"]);
+    const named = only();
+    expect(named.sql).toContain(
+      '("connection"."person_id" = $1 and ("connection"."vendor" = $2 or "connection"."id" in ($3)))',
+    );
+    expect(named.params).toEqual(["person_1", "hubspot", "conn_9"]);
+  });
+
+  it("widening or narrowing an integration's standing approval", async () => {
+    await updateVendorApprovalDestructive(db, SCOPE, "hubspot", {
+      includesDestructive: true,
+      grantedAt: new Date("2026-10-14T00:00:00Z"),
+    });
+    const s = only();
+    expect(s.sql).toMatch(/^update "vendor_approval" set "includes_destructive" = \$1/);
+    expect(s.sql).toContain('"vendor_approval"."vendor" = $');
+    expect(s.sql).toMatch(SCOPED_AGENT);
+    expect(s.params).toEqual(expect.arrayContaining([true, "hubspot", "agent_1", "person_1"]));
   });
 
   /**
@@ -445,6 +482,50 @@ describe("agent-scoped writes take both ids too, so a mis-scoped write edits not
     expect(s.sql).toContain('"pending_action"."consumed_at" is null');
   });
 
+  /** ADR 0008 as amended 2026-10-14 (GRA-302): an answer set outright closes the open asks. */
+  it("reading a tool's open asks, plain and locked", async () => {
+    const at = new Date("2026-10-14T00:00:00Z");
+    await listOpenToolActions(db, SCOPE, "tool_1", at);
+    const plain = only();
+    expect(plain.sql).toMatch(/^select .* from "pending_action" where/);
+    expect(plain.sql).toMatch(SCOPED_AGENT);
+    expect(plain.sql).toContain(`"pending_action"."payload" ->> 'toolId' = $`);
+    expect(plain.sql).toContain('"pending_action"."answered_at" is null');
+    expect(plain.sql).toContain('"pending_action"."consumed_at" is null');
+    expect(plain.sql).toContain('"pending_action"."expires_at" > $');
+    expect(plain.sql).toMatch(/order by "pending_action"\."id"( asc)?$/);
+
+    statements = [];
+    await listOpenToolActions(db, SCOPE, "tool_1", at, { forUpdate: true });
+    const locked = only();
+    expect(locked.sql).toMatch(SCOPED_AGENT);
+    expect(locked.sql).toMatch(/ for update$/);
+  });
+
+  it("answering the open asks it locked with the answer the console set", async () => {
+    const at = new Date("2026-10-14T00:00:00Z");
+    await answerOpenToolActions(db, SCOPE, {
+      ids: ["pa_1"],
+      answer: { allow: true, via: "setting" },
+      at,
+    });
+    const s = only();
+    expect(s.sql).toMatch(
+      /^update "pending_action" set "answered_at" = \$1, "answer" = \$2, "consumed_at" = \$3/,
+    );
+    expect(s.sql).toContain('"pending_action"."id" in ($');
+    expect(s.sql).toMatch(SCOPED_AGENT);
+    expect(s.sql).toContain('"pending_action"."kind" = $');
+    expect(s.sql).toContain('"pending_action"."answered_at" is null');
+    expect(s.sql).toContain('"pending_action"."consumed_at" is null');
+    expect(s.sql).toContain('"pending_action"."expires_at" > $');
+    expect(s.params).toContain("pa_1");
+
+    statements = [];
+    await answerOpenToolActions(db, SCOPE, { ids: [], answer: { allow: false }, at });
+    expect(statements).toHaveLength(0);
+  });
+
   it("withdrawing an approval", async () => {
     await deleteApproval(db, SCOPE, "tool_1");
     const s = only();
@@ -511,6 +592,16 @@ describe("agent-scoped writes take both ids too, so a mis-scoped write edits not
     expect(s.params).toEqual(["agent_1", "conn_2"]);
   });
 
+  /** The one-connection removal (GRA-294): one delete under the pair and the connection, no read and no insert. */
+  it("removing one connection from the scope is a single delete under the pair and the connection", async () => {
+    await removeAgentConnection(db, SCOPE, "conn_2");
+    const s = only();
+    expect(s.sql).toMatch(/^delete from "agent_connection"/);
+    expect(s.sql).toMatch(SCOPED_AGENT);
+    expect(s.sql).toContain('"agent_connection"."connection_id" = $3');
+    expect(s.params).toEqual(["agent_1", "person_1", "conn_2"]);
+  });
+
   /** The find-or-make of a scope ask is serialised on a transaction-scoped advisory lock keyed by the pair and the connection. */
   it("locking a pending-action key takes a transaction-scoped advisory lock on the hash of agent, kind and key", async () => {
     await lockPendingActionKey(db, SCOPE, "scope", "conn_2");
@@ -540,6 +631,36 @@ describe("person-scoped statements take the person", () => {
     expect(s.sql).toContain('"agent"."person_id" = $');
     expect(s.sql).toContain('"authored_tool"."vendor" = $');
     expect(s.params).toEqual(["person_1", "demo", "execute__conn_1", 10]);
+  });
+
+  /**
+   * An integration's last run per tool (GRA-293), across the person's agents: under both owners,
+   * the agent's and the tool's, dry runs and refusals left out, the newest line per tool.
+   */
+  it("a vendor's last run per tool, through both owners, no dry run, no refusal", async () => {
+    await lastRunByToolForPerson(db, "person_1", { vendor: "gmail" });
+    const s = only();
+    expect(s.sql).toMatch(/^select distinct on \("usage_ledger"\."tool_id"\) /);
+    expect(s.sql).toContain(
+      'inner join "agent" on "usage_ledger"."agent_id" = "agent"."id" inner join "authored_tool" on "usage_ledger"."tool_id" = "authored_tool"."id"',
+    );
+    expect(s.sql).toContain(
+      'where ("agent"."person_id" = $1 and "authored_tool"."person_id" = $2 and "authored_tool"."vendor" = $3 and "usage_ledger"."dry_run" = $4 and "usage_ledger"."outcome" <> $5)',
+    );
+    expect(s.sql).toMatch(
+      /order by "usage_ledger"\."tool_id", "usage_ledger"\."created_at" desc, "usage_ledger"\."id" desc$/,
+    );
+    expect(s.params).toEqual(["person_1", "person_1", "gmail", false, "refused"]);
+  });
+
+  /** An integration's tools (GRA-293): the person's rows of one vendor, versionless included. */
+  it("a vendor's tools, under the person", async () => {
+    await listAuthoredToolsForVendor(db, "person_1", "gmail");
+    const s = only();
+    expect(s.sql).toMatch(
+      /^select .* from "authored_tool" where \("authored_tool"\."person_id" = \$1 and "authored_tool"\."vendor" = \$2\) order by "authored_tool"\."name" asc$/,
+    );
+    expect(s.params).toEqual(["person_1", "gmail"]);
   });
 
   it("a connection read", async () => {
