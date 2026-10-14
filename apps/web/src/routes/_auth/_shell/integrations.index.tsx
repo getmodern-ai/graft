@@ -4,6 +4,7 @@ import { useState } from "react";
 
 import { ConnectionCard } from "@/components/connection/connection-card";
 import {
+  AddIcon,
   FilterListIcon,
   KeyboardArrowDownIcon,
   KeyboardArrowUpIcon,
@@ -15,6 +16,7 @@ import { SuggestedBanner } from "@/components/integration/suggested-banner";
 import { PageContainer } from "@/components/page/page-container";
 import {
   PageHeader,
+  PageHeaderActions,
   PageHeaderContent,
   PageHeaderDescription,
   PageHeaderTitle,
@@ -49,7 +51,8 @@ import { cn } from "@/lib/utils";
  * The Integrations screen (GRA-321; Figma 2059:7655): what the person has connected, one row per
  * integration (GRA-291), with Connected and Discover tabs. Discover (`?tab=discover`, GRA-322)
  * is the directory, where an integration is connected with no agent asking, so the header carries
- * no Add connection of its own. `/connections` redirects here.
+ * no Add connection of its own; its *Add a custom API* opens Flow C over Discover (GRA-323).
+ * `/connections` redirects here.
  *
  * Revoked connections are on no row (GRA-291), and this is still where one is reconnected or its
  * provider's release retried (ADR 0007, ADR 0019), so they stay below the table as the connection
@@ -84,6 +87,22 @@ function IntegrationsRoute() {
             Sign in once and your agents can use it. They never see your password.
           </PageHeaderDescription>
         </PageHeaderContent>
+        <PageHeaderActions>
+          {/* Flow C (GRA-323) through Discover's `custom` param, so the dialog has one home. */}
+          <Button
+            variant="outline"
+            nativeButton={false}
+            render={
+              <Link
+                to="/integrations"
+                search={{ tab: "discover", ...(q ? { q } : {}), custom: "" }}
+              />
+            }
+          >
+            <AddIcon />
+            Add a custom API
+          </Button>
+        </PageHeaderActions>
       </PageHeader>
 
       <div className="flex flex-col gap-6">
