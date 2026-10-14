@@ -197,6 +197,7 @@ function agentDeps(): AgentDeps {
     setAgentConnectedVia: vi.fn(async () => agentRow),
     replaceAgentConnections: vi.fn(async () => {}),
     addAgentConnection: vi.fn(async () => {}),
+    removeAgentConnection: vi.fn(async () => {}),
     listAgentConnectionIds: vi.fn(async () => ["conn_1"]),
     listScopeConnectionIds: vi.fn(async () => ["conn_1"]),
     findConnectionsByIds: vi.fn(async (_db, _p, ids: readonly string[]) =>
@@ -409,7 +410,17 @@ function approvalDeps(): ApprovalDeps {
     listVendorApprovals: vi.fn(async () => [vendorApprovalRow]),
     upsertVendorApproval: vi.fn(async (_db, _scope, input) => ({ ...vendorApprovalRow, ...input })),
     deleteVendorApproval: vi.fn(async () => vendorApprovalRow),
+    updateVendorApprovalDestructive: vi.fn(async (_db, _scope, _vendor, input) => ({
+      ...vendorApprovalRow,
+      ...input,
+    })),
     settleAnsweredToolActions: vi.fn(async () => []),
+    answerOpenToolActions: vi.fn(async (_db, _scope, args) =>
+      args.ids.map((id: string) => ({ ...openAction, id })),
+    ),
+    listOpenToolActions: vi.fn(async () => []),
+    findVendorConnectionsForUpdate: vi.fn(async () => [connectionRow]),
+    findAgent: vi.fn(async () => agentRow),
     findAuthoredToolById: vi.fn(async () => destructiveTool),
     findAuthoredToolForUpdate: vi.fn(async () => destructiveTool),
     listToolVersionOrigins: vi.fn(async () => []),
@@ -833,6 +844,56 @@ describe("agents", () => {
     expect(text).toContain('"tokenPrefix":"grft_abc"');
   });
 
+  /** GRA-306 (ADR 0007 as amended 2026-10-14): rotation, for an active static-token agent alone. */
+  describe("rotating a token", () => {
+    const rotate = (app: ReturnType<typeof harness>["app"], id = "agent_1") =>
+      app.request(`/api/agents/${id}/token/rotate`, json({}));
+
+    it("answers the new token once and writes its hash over the old one", async () => {
+      const { app, deps } = harness({ user: { id: "person_1" } });
+      vi.mocked(deps.agent.issueAgentToken).mockImplementation(async (_db, _p, _a, token) => ({
+        ...agentRow,
+        ...token,
+      }));
+      const res = await rotate(app);
+      expect(res.status).toBe(201);
+      const body = (await res.json()) as { token: string; agent: Record<string, unknown> };
+      expect(body.token.startsWith("grft_")).toBe(true);
+      expect(body.agent).not.toHaveProperty("tokenHash");
+      expect(body.agent.tokenPrefix).toBe(body.token.slice(0, 8));
+      const call = vi.mocked(deps.agent.issueAgentToken).mock.calls[0];
+      expect(call?.[1]).toBe("person_1");
+      expect(call?.[4]).toBe("the-hash");
+    });
+
+    it("refuses an agent a client connected with a 409 and a sentence", async () => {
+      const { app, deps } = harness({ user: { id: "person_1" } });
+      vi.mocked(deps.agent.findAgent).mockResolvedValue({
+        ...agentRow,
+        tokenHash: null,
+        tokenPrefix: null,
+        connectedViaClientId: "client_claude",
+        connectedViaClientName: "Claude",
+      });
+      const res = await rotate(app);
+      expect(res.status).toBe(409);
+      expect(await res.json()).toMatchObject({
+        message: expect.stringContaining("connected through Claude"),
+      });
+      expect(deps.agent.issueAgentToken).not.toHaveBeenCalled();
+    });
+
+    it("answers another person's agent as not found", async () => {
+      const { app, deps } = harness({ user: { id: "person_2" } });
+      vi.mocked(deps.agent.findAgent).mockImplementation(async (_db, personId) =>
+        personId === agentRow.personId ? agentRow : null,
+      );
+      const res = await rotate(app);
+      expect(res.status).toBe(404);
+      expect(deps.agent.issueAgentToken).not.toHaveBeenCalled();
+    });
+  });
+
   /** ADR 0007 as amended 2026-09-19: a body naming no mode makes an agent on every connection. */
   it("creates an agent on all connections when the body names no mode, writing no list and answering the resolved scope", async () => {
     const { app, deps } = harness({ user: { id: "person_1" } });
@@ -943,6 +1004,94 @@ describe("agents", () => {
 
     const revoked = await app.request("/api/agents/agent_1/revoke", from("POST"));
     expect(await revoked.json()).toMatchObject({ agent: { revokedAt: NOW.toISOString() } });
+  });
+
+  it("tells the agent's session after a scope write", async () => {
+    const { app, notifier } = harness({ user: { id: "person_1" } });
+    await app.request("/api/agents/agent_1/scope", json({ mode: "all" }, "PUT"));
+    expect(notifier.changed.mock.calls).toEqual([["agent_1"]]);
+  });
+});
+
+/** GRA-294: one connection on or off for one agent, under the agent's row lock. */
+describe("PUT and DELETE /api/connections/:id/agents/:agentId", () => {
+  const SCOPE = { personId: "person_1", agentId: "agent_1" };
+
+  it("grants one connection to a listed agent with one insert, and tells its session", async () => {
+    const { app, deps, notifier } = harness({ user: { id: "person_1" } });
+    const res = await app.request("/api/connections/conn_2/agents/agent_1", from("PUT"));
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({
+      agent: { id: "agent_1", scopeMode: "listed" },
+      connectionIds: ["conn_1"],
+      materialised: false,
+    });
+    expect(deps.agent.findAgentForUpdate).toHaveBeenCalledWith(fakeDb, "person_1", "agent_1");
+    expect(deps.agent.addAgentConnection).toHaveBeenCalledWith(fakeDb, SCOPE, "conn_2");
+    expect(deps.agent.replaceAgentConnections).not.toHaveBeenCalled();
+    expect(notifier.changed.mock.calls).toEqual([["agent_1"]]);
+  });
+
+  it("a grant to an agent on all writes nothing and tells nobody", async () => {
+    const { app, deps, notifier } = harness({ user: { id: "person_1" } });
+    vi.mocked(deps.agent.findAgentForUpdate).mockResolvedValueOnce({
+      ...agentRow,
+      scopeMode: "all",
+    });
+    const res = await app.request("/api/connections/conn_2/agents/agent_1", from("PUT"));
+    expect(await res.json()).toMatchObject({ agent: { scopeMode: "all" }, materialised: false });
+    expect(deps.agent.addAgentConnection).not.toHaveBeenCalled();
+    expect(notifier.changed).not.toHaveBeenCalled();
+  });
+
+  it("removes one connection from a listed agent with one delete, and tells its session", async () => {
+    const { app, deps, notifier } = harness({ user: { id: "person_1" } });
+    const res = await app.request("/api/connections/conn_1/agents/agent_1", from("DELETE"));
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ agent: { scopeMode: "listed" }, materialised: false });
+    expect(deps.agent.removeAgentConnection).toHaveBeenCalledWith(fakeDb, SCOPE, "conn_1");
+    expect(notifier.changed.mock.calls).toEqual([["agent_1"]]);
+  });
+
+  it("a removal from an agent on all materialises listed without it, and says so", async () => {
+    const { app, deps, notifier } = harness({ user: { id: "person_1" } });
+    vi.mocked(deps.agent.findAgentForUpdate).mockResolvedValueOnce({
+      ...agentRow,
+      scopeMode: "all",
+    });
+    vi.mocked(deps.agent.listScopeConnectionIds).mockResolvedValueOnce(["conn_1", "conn_2"]);
+    const res = await app.request("/api/connections/conn_1/agents/agent_1", from("DELETE"));
+    expect(await res.json()).toMatchObject({
+      agent: { scopeMode: "listed" },
+      connectionIds: ["conn_2"],
+      materialised: true,
+    });
+    expect(deps.agent.updateAgent).toHaveBeenCalledWith(fakeDb, "person_1", "agent_1", {
+      scopeMode: "listed",
+    });
+    expect(deps.agent.replaceAgentConnections).toHaveBeenCalledWith(fakeDb, SCOPE, ["conn_2"]);
+    expect(notifier.changed.mock.calls).toEqual([["agent_1"]]);
+  });
+
+  it("is a 404 for another person's agent or connection, writing nothing and telling nobody", async () => {
+    for (const method of ["PUT", "DELETE"] as const) {
+      const { app, deps, notifier } = harness({ user: { id: "person_1" } });
+      vi.mocked(deps.agent.findAgentForUpdate).mockResolvedValueOnce(null);
+      const noAgent = await app.request("/api/connections/conn_1/agents/agent_x", from(method));
+      expect(noAgent.status).toBe(404);
+
+      vi.mocked(deps.agent.findConnectionsByIds).mockResolvedValueOnce([]);
+      const noConnection = await app.request(
+        "/api/connections/conn_x/agents/agent_1",
+        from(method),
+      );
+      expect(noConnection.status).toBe(404);
+
+      expect(deps.agent.addAgentConnection).not.toHaveBeenCalled();
+      expect(deps.agent.removeAgentConnection).not.toHaveBeenCalled();
+      expect(deps.agent.replaceAgentConnections).not.toHaveBeenCalled();
+      expect(notifier.changed).not.toHaveBeenCalled();
+    }
   });
 });
 
@@ -2353,6 +2502,142 @@ describe("approvals", () => {
     expect(none.status).toBe(404);
   });
 
+  /** ADR 0008 as amended 2026-10-14 (GRA-302): the console sets an answer outright, per agent. */
+  it("sets a tool's answer for one agent at the tool's current version, and answers the asks it closes", async () => {
+    const { app, deps } = harness({ user: { id: "person_1" } });
+    vi.mocked(deps.approval.listOpenToolActions).mockResolvedValue([openAction]);
+    const res = await app.request(
+      "/api/agents/agent_1/approvals/tool_1",
+      json({ decision: "deny" }, "PUT"),
+    );
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({
+      approval: { toolId: "tool_1", decision: "deny", toolVersionId: "ver_1" },
+      answeredPendingActionIds: ["pa_1"],
+    });
+    expect(deps.approval.findAgent).toHaveBeenCalledWith(fakeDb, "person_1", "agent_1");
+    expect(deps.approval.findAuthoredToolForUpdate).toHaveBeenCalledWith(
+      fakeDb,
+      "person_1",
+      "tool_1",
+    );
+    expect(deps.approval.upsertApproval).toHaveBeenCalledWith(fakeDb, {
+      agentId: "agent_1",
+      toolId: "tool_1",
+      decision: "deny",
+      decidedAt: NOW,
+      toolVersionId: "ver_1",
+    });
+    expect(deps.approval.answerOpenToolActions).toHaveBeenCalledWith(
+      fakeDb,
+      { personId: "person_1", agentId: "agent_1" },
+      { ids: ["pa_1"], answer: { allow: false, via: "setting" }, at: NOW },
+    );
+    // The connections the tool's vendor and the open ask name are locked first, as an answer to
+    // the ask locks its connection; then the asks, then the tool row (`recordApprovalAnswer`).
+    expect(deps.approval.findVendorConnectionsForUpdate).toHaveBeenCalledWith(
+      fakeDb,
+      "person_1",
+      "demo",
+      ["conn_1"],
+    );
+    const order = (fn: { mock: { invocationCallOrder: number[] } }, at = 0) =>
+      fn.mock.invocationCallOrder[at] ?? Number.NaN;
+    expect(order(vi.mocked(deps.approval.findVendorConnectionsForUpdate))).toBeLessThan(
+      order(vi.mocked(deps.approval.listOpenToolActions), 1),
+    );
+    expect(order(vi.mocked(deps.approval.listOpenToolActions), 1)).toBeLessThan(
+      order(vi.mocked(deps.approval.findAuthoredToolForUpdate)),
+    );
+    expect(order(vi.mocked(deps.approval.findAuthoredToolForUpdate))).toBeLessThan(
+      order(vi.mocked(deps.approval.upsertApproval)),
+    );
+
+    const allow = await app.request(
+      "/api/agents/agent_1/approvals/tool_1",
+      json({ decision: "allow" }, "PUT"),
+    );
+    expect(allow.status).toBe(200);
+    expect(await allow.json()).toMatchObject({ approval: { decision: "allow" } });
+  });
+
+  it("refuses a read-only tool with 400, another person's agent or tool with 404, an unconnected integration with 409, and a malformed body", async () => {
+    const { app, deps } = harness({ user: { id: "person_1" } });
+    vi.mocked(deps.approval.findAuthoredToolById).mockResolvedValueOnce({
+      ...destructiveTool,
+      destructive: false,
+      readOnly: true,
+    });
+    const read = await app.request(
+      "/api/agents/agent_1/approvals/tool_1",
+      json({ decision: "allow" }, "PUT"),
+    );
+    expect(read.status).toBe(400);
+
+    vi.mocked(deps.approval.findAgent).mockResolvedValueOnce(null);
+    const agent = await app.request(
+      "/api/agents/agent_x/approvals/tool_1",
+      json({ decision: "allow" }, "PUT"),
+    );
+    expect(agent.status).toBe(404);
+
+    vi.mocked(deps.approval.findAuthoredToolById).mockResolvedValueOnce(null);
+    const tool = await app.request(
+      "/api/agents/agent_1/approvals/tool_x",
+      json({ decision: "allow" }, "PUT"),
+    );
+    expect(tool.status).toBe(404);
+
+    vi.mocked(deps.approval.findVendorConnectionsForUpdate).mockResolvedValueOnce([
+      { ...connectionRow, revokedAt: NOW },
+    ]);
+    const revoked = await app.request(
+      "/api/agents/agent_1/approvals/tool_1",
+      json({ decision: "allow" }, "PUT"),
+    );
+    expect(revoked.status).toBe(409);
+    expect(await revoked.json()).toMatchObject({ details: { reason: "connection_revoked" } });
+
+    const malformed = await app.request(
+      "/api/agents/agent_1/approvals/tool_1",
+      json({ decision: "once" }, "PUT"),
+    );
+    expect(malformed.status).toBe(400);
+    expect(deps.approval.upsertApproval).not.toHaveBeenCalled();
+  });
+
+  it("widens or narrows an integration's standing approval, 404 when none stands", async () => {
+    const { app, deps } = harness({ user: { id: "person_1" } });
+    const wide = await app.request(
+      "/api/agents/agent_1/vendor-approvals/demo",
+      json({ includesDestructive: true }, "PATCH"),
+    );
+    expect(wide.status).toBe(200);
+    expect(await wide.json()).toMatchObject({
+      vendorApproval: { vendor: "demo", includesDestructive: true },
+    });
+    expect(deps.approval.updateVendorApprovalDestructive).toHaveBeenCalledWith(
+      fakeDb,
+      { personId: "person_1", agentId: "agent_1" },
+      "demo",
+      { includesDestructive: true, grantedAt: NOW },
+    );
+
+    vi.mocked(deps.approval.updateVendorApprovalDestructive).mockResolvedValueOnce(null);
+    const none = await app.request(
+      "/api/agents/agent_1/vendor-approvals/demo",
+      json({ includesDestructive: false }, "PATCH"),
+    );
+    expect(none.status).toBe(404);
+    expect(deps.approval.upsertVendorApproval).not.toHaveBeenCalled();
+
+    const malformed = await app.request(
+      "/api/agents/agent_1/vendor-approvals/demo",
+      json({ includesDestructive: "yes" }, "PATCH"),
+    );
+    expect(malformed.status).toBe(400);
+  });
+
   it("answers 401 without a session on every new route", async () => {
     const { app } = harness(null);
     for (const [path, init] of [
@@ -2364,6 +2649,8 @@ describe("approvals", () => {
       ["/api/approvals?agentId=agent_1", undefined],
       ["/api/approvals/tool_1/ask-every-call?agentId=agent_1", json({ on: true }, "PUT")],
       ["/api/approvals/tool_1?agentId=agent_1", from("DELETE")],
+      ["/api/agents/agent_1/approvals/tool_1", json({ decision: "deny" }, "PUT")],
+      ["/api/agents/agent_1/vendor-approvals/demo", json({ includesDestructive: true }, "PATCH")],
     ] as const) {
       const res = await app.request(path, init);
       expect(res.status, path).toBe(401);
@@ -2417,6 +2704,32 @@ describe("the person's model key", () => {
     expect(await gone.json()).toEqual({ deleted: true });
     const again = await app.request("/api/me/model-key", from("DELETE"));
     expect(await again.json()).toEqual({ deleted: false });
+  });
+
+  it("answers the deployment's model with whether the person has a key, and no key or model id", async () => {
+    // A harness that bound no model describes a laptop that configured none.
+    const bare = harness(session).app;
+    expect(await (await bare.request("/api/me/model")).json()).toEqual({
+      model: { fixed: false, provider: null, personKeyAccepted: false, personKey: false },
+    });
+
+    const { app } = harness(session, {
+      model: { fixed: true, provider: "anthropic", personKeyAccepted: true },
+    });
+    expect(await (await app.request("/api/me/model")).json()).toEqual({
+      model: { fixed: true, provider: "anthropic", personKeyAccepted: true, personKey: false },
+    });
+    await app.request(
+      "/api/me/model-key",
+      json({ provider: "openai", apiKey: "sk-the-secret" }, "PUT"),
+    );
+    const read = await (await app.request("/api/me/model")).text();
+    expect(JSON.parse(read)).toEqual({
+      model: { fixed: true, provider: "anthropic", personKeyAccepted: true, personKey: true },
+    });
+    expect(read).not.toContain("sk-the-secret");
+
+    expect((await harness(null).app.request("/api/me/model")).status).toBe(401);
   });
 
   it("refuses a provider it does not know and a body that is not the shape, as 400", async () => {

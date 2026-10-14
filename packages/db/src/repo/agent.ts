@@ -351,6 +351,27 @@ export async function addAgentConnection(
 }
 
 /**
+ * Take one connection out of the list: one `DELETE` under the pair and the connection, so a
+ * mis-scoped call removes nothing and a removal beside a grant of another connection loses neither
+ * (GRA-294) — never a read of the list and a rewrite of the whole. Removing a connection the list
+ * does not name changes nothing.
+ */
+export async function removeAgentConnection(
+  db: DbOrTx,
+  scope: AgentScope,
+  connectionId: string,
+): Promise<void> {
+  await db
+    .delete(agentConnection)
+    .where(
+      and(
+        inArray(agentConnection.agentId, scopedAgentIds(db, scope)),
+        eq(agentConnection.connectionId, connectionId),
+      ),
+    );
+}
+
+/**
  * Replace the scope wholesale: delete what is there, insert what was given. Two statements, so the
  * caller runs it in a transaction; the delete is scoped by the pair, so a mis-scoped call clears
  * nothing and the insert that follows it lands only on an agent the caller has already verified is

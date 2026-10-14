@@ -27,13 +27,46 @@ export type CardHost = {
 };
 
 export type CardView = {
+  /**
+   * Before any result: keep the waiting line in the mount and report its height, every time it is
+   * called (the first call precedes `connect()`, where the notification cannot be delivered yet).
+   * Does nothing once a result has been shown.
+   */
+  waiting(): void;
+  /**
+   * The tool's input has arrived (`ui/notifications/tool-input`, before the result): the frame
+   * stays at the waiting line, and nothing new is reported. Does nothing once a result is shown.
+   */
+  input(): void;
   /** Draw the card for one tool result — or nothing, collapsing the frame — and report the size. */
   show(result: { structuredContent?: unknown }): void;
 };
 
+/**
+ * The one line the frame holds while the tool call is in flight (GRA-335). `ask.html` ships the
+ * same element inside `#ask`, so the page has its height before the script runs;
+ * `bundle.test.ts` holds the two to one spelling.
+ */
+export const WAITING_TEXT = "Waiting for Graft…";
+export const WAITING_CLASS = "ask-waiting";
+
+function waitingLine(doc: Document): HTMLElement {
+  const line = doc.createElement("p");
+  line.className = WAITING_CLASS;
+  line.setAttribute("role", "status");
+  line.textContent = WAITING_TEXT;
+  return line;
+}
+
 type ObserverConstructor = Parameters<typeof createFrameSizer>[3];
 
 /**
+ * Before any result the mount holds one waiting line and the frame is sized to it (GRA-335): a
+ * page that reported nothing was drawn at Claude's 150 px default, blank, for the whole of a call
+ * that waits on an approval. A line rather than 0, because Claude's troubleshooting page treats a
+ * zero-height frame as an invisible app, and a frame the card would have to grow out of nothing is
+ * the one failure here that hides an ask the model was told not to relay as a link.
+ *
  * One render per tool result into `mount` (GRA-84): the card off `structuredContent.card`, or
  * nothing when the result carries none, since a host mounts the same page for every result of a
  * tool that names it. Either way the height is reported once the DOM holds what the person will
@@ -49,14 +82,40 @@ export function createCardView(
   Observer?: ObserverConstructor,
 ): CardView {
   const send: SizeSink = (size) => {
-    // A host that has gone away answers nothing; the next render reports again.
-    host.sendSizeChanged(size).catch(() => {});
+    // A host that has gone away, or a bridge not yet connected (the first `waiting()`), answers
+    // nothing; `<html>`'s height is already written, and the next report sends again.
+    try {
+      host.sendSizeChanged(size).catch(() => {});
+    } catch {}
   };
   const sizer = createFrameSizer(doc, mount, send, Observer);
   let current: AbortController | null = null;
+  let shown = false;
+
+  const holdWaitingLine = (): void => {
+    mount.hidden = false;
+    if (
+      mount.childElementCount === 1 &&
+      mount.firstElementChild?.classList.contains(WAITING_CLASS)
+    ) {
+      return;
+    }
+    mount.replaceChildren(waitingLine(doc));
+  };
 
   return {
+    waiting() {
+      if (shown) return;
+      holdWaitingLine();
+      sizer.report(true);
+    },
+    input() {
+      if (shown) return;
+      holdWaitingLine();
+      sizer.report();
+    },
     show(result) {
+      shown = true;
       current?.abort();
       current = new AbortController();
       const card = readCardData(result.structuredContent);
