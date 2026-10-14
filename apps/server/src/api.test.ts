@@ -2361,6 +2361,32 @@ describe("the person's model key", () => {
     expect(await again.json()).toEqual({ deleted: false });
   });
 
+  it("answers the deployment's model with whether the person has a key, and no key or model id", async () => {
+    // A harness that bound no model describes a laptop that configured none.
+    const bare = harness(session).app;
+    expect(await (await bare.request("/api/me/model")).json()).toEqual({
+      model: { fixed: false, provider: null, personKeyAccepted: false, personKey: false },
+    });
+
+    const { app } = harness(session, {
+      model: { fixed: true, provider: "anthropic", personKeyAccepted: true },
+    });
+    expect(await (await app.request("/api/me/model")).json()).toEqual({
+      model: { fixed: true, provider: "anthropic", personKeyAccepted: true, personKey: false },
+    });
+    await app.request(
+      "/api/me/model-key",
+      json({ provider: "openai", apiKey: "sk-the-secret" }, "PUT"),
+    );
+    const read = await (await app.request("/api/me/model")).text();
+    expect(JSON.parse(read)).toEqual({
+      model: { fixed: true, provider: "anthropic", personKeyAccepted: true, personKey: true },
+    });
+    expect(read).not.toContain("sk-the-secret");
+
+    expect((await harness(null).app.request("/api/me/model")).status).toBe(401);
+  });
+
   it("refuses a provider it does not know and a body that is not the shape, as 400", async () => {
     const { app } = harness(session);
     const provider = await app.request(

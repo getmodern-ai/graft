@@ -357,3 +357,66 @@ describe("createModel", () => {
     expect(built[0]?.deps.telemetry).toBe(NO_TELEMETRY);
   });
 });
+
+/**
+ * What `GET /api/me/model` tells a person about the deployment (GRA-297), one case per shape the
+ * boot can choose: the fixed model's existence and provider, and whether a key of the person's own
+ * would be routed at all. Never the operator's key or model ids.
+ */
+describe("the deployment a person reads", () => {
+  const script = JSON.stringify({
+    steps: [{ on: "goal", answer: { kind: "give_up", reason: "s" } }],
+  });
+  const deploymentOf = async (env: ModelEnv) => {
+    const { factory } = recordingFactory();
+    const setup = await createModel({
+      env,
+      db,
+      decrypt: async () => ({}),
+      modelKey: { findPersonModelKey: async () => null },
+      providerFactory: factory,
+      readScript: async () => script,
+    });
+    return setup.deployment;
+  };
+
+  it("says the open form with no model has nothing, and takes no key: acquire refuses at the door", async () => {
+    expect(await deploymentOf(base)).toEqual({
+      fixed: false,
+      provider: null,
+      personKeyAccepted: false,
+    });
+  });
+
+  it("says a self-host's provider-backed model is fixed, names its provider, and takes a key in front", async () => {
+    const deployment = await deploymentOf(FIXED);
+    expect(deployment).toEqual({ fixed: true, provider: "openai", personKeyAccepted: true });
+    expect(JSON.stringify(deployment)).not.toMatch(/sk-deployment|gpt-fixed/);
+  });
+
+  it("says a scripted model is fixed and names no provider", async () => {
+    expect(
+      await deploymentOf({
+        ...base,
+        GRAFT_MODEL_BACKEND: "scripted",
+        GRAFT_MODEL_SCRIPT: "./script.json",
+      }),
+    ).toEqual({ fixed: true, provider: null, personKeyAccepted: true });
+  });
+
+  it("says the hosted form with no fixed model takes a key and has nothing else", async () => {
+    expect(await deploymentOf({ ...base, GRAFT_BACKINGS: "cloud" })).toEqual({
+      fixed: false,
+      provider: null,
+      personKeyAccepted: true,
+    });
+  });
+
+  it("says the hosted form with a fixed model has both", async () => {
+    expect(await deploymentOf({ ...FIXED, GRAFT_BACKINGS: "cloud" })).toEqual({
+      fixed: true,
+      provider: "openai",
+      personKeyAccepted: true,
+    });
+  });
+});

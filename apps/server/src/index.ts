@@ -484,6 +484,8 @@ const app = createServer({
       pendingAction: defaultPendingActionDeps,
       modelKey: modelKeyDeps,
     },
+    // What the Settings screen says answers a person's jobs (GRA-297; `GET /api/me/model`).
+    model: modelSetup.deployment,
     corsOrigins: env.GRAFT_CORS_ORIGIN,
     signInMethods,
     // The console's actions counted at the API's mutation routes (GRA-100; `analytics-routes.ts`).
