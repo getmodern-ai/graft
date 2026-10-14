@@ -1,8 +1,10 @@
 import type { PendingActionClosedReason } from "@graft/db/schema/pending-action";
 
+import { integrationNameFor } from "../approval/vendor-approval.rules";
+
 /**
  * How a finished ask reads on the console's Done list (GRA-292), browser-safe so the console and
- * the server read a row alike. Imports nothing but a type.
+ * the server read a row alike. Imports nothing but a type and the browser-safe vendor words.
  */
 
 /**
@@ -67,4 +69,21 @@ export function pendingActionSubject(row: {
 
 function stringOf(value: unknown): string | null {
   return typeof value === "string" && value.length > 0 ? value : null;
+}
+
+/**
+ * The integration an ask is about, as the person reads it (`integrationNameFor`): what a tool ask
+ * names (`integrationName`, else its connection's name), a connection proposal's or a scope ask's
+ * `displayName`, a build or credential ask's `connectionName`; null where the payload names no
+ * vendor. The handoff page's expired and closed sentences read it off the refusal (GRA-314).
+ */
+export function pendingActionIntegrationName(payload: Record<string, unknown>): string | null {
+  const vendor = stringOf(payload.vendor);
+  if (!vendor) return null;
+  const named = stringOf(payload.integrationName);
+  if (named) return named;
+  return integrationNameFor(
+    vendor,
+    stringOf(payload.displayName) ?? stringOf(payload.connectionName) ?? vendor,
+  );
 }

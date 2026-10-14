@@ -6,10 +6,12 @@ import {
 import { toolProvenance } from "@graft/core/stock/tool-provenance.rules";
 import { useState } from "react";
 
-import { AskCard, Hosts, useAnswerAsk } from "@/components/pending/ask-card";
+import { AskCard, type AskLayout, Hosts, useAnswerAsk } from "@/components/pending/ask-card";
+import { ChoiceCards } from "@/components/pending/choice-cards";
 import { ToolAnnotations } from "@/components/tool-annotations";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Field, FieldLabel } from "@/components/ui/field";
 import {
   Item,
   ItemActions,
@@ -21,6 +23,13 @@ import {
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { type Ask, isOpen } from "@/lib/pending-action-queries";
+import {
+  defaultToolAllowChoice,
+  type ToolAllowChoice,
+  toolAllowAnswer,
+  toolAllowOptions,
+  toolLabel,
+} from "@/lib/tool-allow-choice";
 import { toolAskIntegrationName, toolAskSettledSentence, toolAskToast } from "@/lib/tool-ask-copy";
 
 /**
@@ -38,23 +47,92 @@ import { toolAskIntegrationName, toolAskSettledSentence, toolAskToast } from "@/
  * GRA-237) records this tool's yes and the agent's standing approval for the integration, with
  * destructive tools a separate tick, off by default. The words are `@graft/core`'s, shared with the
  * ask card; the settled line and the toast are `lib/tool-ask-copy.ts`'s.
+ *
+ * On the handoff page (`layout: "focused"`, GRA-314) the two buttons and the destructive tick give
+ * way to one radio over how much the yes allows (`lib/tool-allow-choice.ts`: every integration
+ * tool, pre-selected on a tool that cannot delete; the tool alone; or every tool including
+ * destructive ones), with the ask-every-call tick under it and the description behind *Details*.
  */
 export function ToolAskCard({
   ask,
   onAnswered,
+  layout = "card",
 }: {
   ask: Extract<Ask, { kind: "tool" }>;
   onAnswered?: () => void;
+  layout?: AskLayout;
 }) {
   const { action, payload } = ask;
   const [askEveryCall, setAskEveryCall] = useState(payload.askEveryCall === true);
   const [includesDestructive, setIncludesDestructive] = useState(false);
   const destructive = payload.annotations.destructiveHint;
+  const [choice, setChoice] = useState<ToolAllowChoice>(defaultToolAllowChoice(destructive));
   const integration = toolAskIntegrationName(payload);
   const answer = useAnswerAsk(action, onAnswered, "agent", (said) =>
     toolAskToast(said, integration),
   );
   const provenance = toolProvenance(payload.provenance);
+
+  if (layout === "focused") {
+    const agentName = action.agent?.name ?? "Your agent";
+    const tool = toolLabel(payload.toolName, payload.vendor);
+    return (
+      <AskCard
+        action={action}
+        title={null}
+        settled={(recorded) => toolAskSettledSentence(recorded, integration)}
+        pending={answer.isPending}
+        approveLabel="Allow"
+        onAnswer={(allow) =>
+          answer.mutate(allow ? toolAllowAnswer(choice, askEveryCall) : { allow: false })
+        }
+        focused={{
+          vendor: payload.vendor,
+          integrationName: integration,
+          question: `Allow ${agentName} to run ${tool} in ${integration}?`,
+          lead: `Through your ${payload.connectionName} connection, at ${payload.hosts.join(", ")}.`,
+          summary: `${provenance.badge} · sends data to ${payload.hosts.join(", ")}`,
+          declineLabel: "Deny",
+          details: {
+            label: "Details",
+            content: (
+              <figure className="flex flex-col gap-1.5">
+                <figcaption className="flex flex-wrap items-center gap-2 text-muted-foreground text-xs">
+                  <code className="font-mono">{payload.toolName}</code>
+                  <ToolAnnotations
+                    readOnly={payload.annotations.readOnlyHint}
+                    destructive={payload.annotations.destructiveHint}
+                  />
+                </figcaption>
+                <blockquote className="border-l-2 pl-3 italic">{payload.description}</blockquote>
+                <p className="text-muted-foreground text-xs">{provenance.note}</p>
+              </figure>
+            ),
+          },
+        }}
+      >
+        <ChoiceCards
+          id={`ask-${action.id}-allow`}
+          legend={`How much should ${agentName} get?`}
+          options={toolAllowOptions({ agentName, integrationName: integration, tool, destructive })}
+          value={choice}
+          onValueChange={setChoice}
+          disabled={answer.isPending}
+        />
+        <Field orientation="horizontal" className="gap-2">
+          <Checkbox
+            id={`ask-every-call-${action.id}`}
+            checked={askEveryCall}
+            disabled={answer.isPending}
+            onCheckedChange={(next) => setAskEveryCall(next === true)}
+          />
+          <FieldLabel htmlFor={`ask-every-call-${action.id}`} className="font-normal text-xs">
+            Ask me every time {tool} runs
+          </FieldLabel>
+        </Field>
+      </AskCard>
+    );
+  }
 
   return (
     <AskCard
