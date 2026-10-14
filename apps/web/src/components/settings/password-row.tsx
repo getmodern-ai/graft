@@ -1,4 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import type * as React from "react";
 import { useState } from "react";
 import { toast } from "sonner";
 
@@ -34,23 +35,32 @@ import {
 /**
  * Settings › Account › Password (GRA-298; Figma 2100:10414): *Set a password* for a person who
  * signed up with Google or GitHub, *Change password* for one who holds a password. The row owns its
- * read of the accounts, so a pending read is a skeleton row and a failed one a `RetryNotice` in the
- * row's place. The dialog is mounted per opening, so a cancelled draft never comes back.
+ * read of the accounts, so a first read pending is a skeleton row and one failed with nothing to
+ * show a `RetryNotice` in the row's place; a background refetch that fails keeps the row as last
+ * read. The dialog is mounted per opening, beside the row rather than inside its branches, so no
+ * read's outcome unmounts an open draft (Greptile on #230), and its mode is the one the person
+ * opened it in, so the invalidation after a save does not retitle it while it closes.
  */
 export function PasswordRow() {
   const read = useQuery(accountsQuery);
-  const [open, setOpen] = useState(false);
+  const [openMode, setOpenMode] = useState<PasswordMode | null>(null);
 
-  if (read.isPending) {
-    return (
-      <SettingsEmptyRow>
-        <Skeleton className="h-5 w-40" />
-        <Skeleton className="h-8 w-28" />
-      </SettingsEmptyRow>
+  let row: React.ReactNode;
+  if (read.data !== undefined) {
+    const mode = passwordModeOf(read.data);
+    row = (
+      <SettingsButtonRow
+        title={PASSWORD_ROW.title}
+        description={PASSWORD_ROW.description}
+        action={
+          <Button variant="outline" onClick={() => setOpenMode(mode)}>
+            {PASSWORD_ROW.action[mode]}
+          </Button>
+        }
+      />
     );
-  }
-  if (read.isError) {
-    return (
+  } else if (read.isError) {
+    row = (
       <SettingsEmptyRow>
         <p className="text-muted-foreground text-sm">
           <RetryNotice
@@ -62,21 +72,19 @@ export function PasswordRow() {
         </p>
       </SettingsEmptyRow>
     );
+  } else {
+    row = (
+      <SettingsEmptyRow>
+        <Skeleton className="h-5 w-40" />
+        <Skeleton className="h-8 w-28" />
+      </SettingsEmptyRow>
+    );
   }
 
-  const mode = passwordModeOf(read.data);
   return (
     <>
-      <SettingsButtonRow
-        title={PASSWORD_ROW.title}
-        description={PASSWORD_ROW.description}
-        action={
-          <Button variant="outline" onClick={() => setOpen(true)}>
-            {PASSWORD_ROW.action[mode]}
-          </Button>
-        }
-      />
-      {open ? <PasswordDialog mode={mode} onClose={() => setOpen(false)} /> : null}
+      {row}
+      {openMode ? <PasswordDialog mode={openMode} onClose={() => setOpenMode(null)} /> : null}
     </>
   );
 }
