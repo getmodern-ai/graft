@@ -1,0 +1,67 @@
+{
+  "name": "update-issue",
+  "description": "Updates a Linear issue: moves it to another workflow state (In Progress, Done), assigns or unassigns it, changes its priority, replaces its labels or renames it. The issue comes from linear__list-my-issues, linear__find-issues or linear__get-issue, the state from linear__list-workflow-states (one of the issue's own team), the assignee from linear__list-users and the labels from linear__list-labels.",
+  "inputSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "id": {
+        "type": "string",
+        "minLength": 1,
+        "description": "The issue's identifier, like ENG-123, or its id, from linear__list-my-issues, linear__find-issues or linear__get-issue."
+      },
+      "stateId": {
+        "type": "string",
+        "minLength": 1,
+        "description": "The workflow state to move the issue to: a state's id from linear__list-workflow-states, of the issue's own team."
+      },
+      "assigneeId": {
+        "type": ["string", "null"],
+        "description": "Who to assign the issue to: a user's id from linear__list-users, or null to unassign it."
+      },
+      "priority": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 4,
+        "description": "Priority: 0 none, 1 urgent, 2 high, 3 medium, or 4 low."
+      },
+      "labelIds": {
+        "type": "array",
+        "items": {
+          "type": "string",
+          "minLength": 1
+        },
+        "uniqueItems": true,
+        "description": "The issue's labels, replacing the ones it has: label ids from linear__list-labels."
+      },
+      "title": {
+        "type": "string",
+        "minLength": 1,
+        "description": "The issue's new title."
+      }
+    },
+    "required": ["id"],
+    "anyOf": [
+      {
+        "required": ["stateId"]
+      },
+      {
+        "required": ["assigneeId"]
+      },
+      {
+        "required": ["priority"]
+      },
+      {
+        "required": ["labelIds"]
+      },
+      {
+        "required": ["title"]
+      }
+    ]
+  },
+  "hosts": ["api.linear.app"],
+  "annotations": {
+    "readOnly": false,
+    "destructive": false
+  }
+}

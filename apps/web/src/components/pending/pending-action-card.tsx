@@ -1,3 +1,5 @@
+import type * as React from "react";
+
 import type { AskOrigin } from "@/components/pending/ask-card";
 import { BuildAskCard } from "@/components/pending/build-ask-card";
 import { ConnectionAskCard } from "@/components/pending/connection-ask-card";
@@ -20,10 +22,13 @@ export function PendingActionCard({
   action,
   onAnswered,
   origin,
+  setupFooter,
 }: {
   action: PendingAction;
   onAnswered?: () => void;
   origin?: AskOrigin;
+  /** Under Setup's compact card (the task waiting on the connection), for the two connect kinds. */
+  setupFooter?: React.ReactNode;
 }) {
   const ask = readAsk(action);
   switch (ask.kind) {
@@ -32,9 +37,23 @@ export function PendingActionCard({
     case "build":
       return <BuildAskCard ask={ask} onAnswered={onAnswered} />;
     case "connection":
-      return <ConnectionAskCard ask={ask} onAnswered={onAnswered} origin={origin} />;
+      return (
+        <ConnectionAskCard
+          ask={ask}
+          onAnswered={onAnswered}
+          origin={origin}
+          setupFooter={setupFooter}
+        />
+      );
     case "connection-link":
-      return <ProviderLinkAskCard ask={ask} onAnswered={onAnswered} origin={origin} />;
+      return (
+        <ProviderLinkAskCard
+          ask={ask}
+          onAnswered={onAnswered}
+          origin={origin}
+          setupFooter={setupFooter}
+        />
+      );
     case "credential":
       return <CredentialAskCard ask={ask} onAnswered={onAnswered} />;
     case "scope":

@@ -1,0 +1,282 @@
+type GmailHeader = {
+  name?: string;
+  value?: string;
+};
+
+type GmailBody = {
+  attachmentId?: string;
+  size?: number;
+  data?: string;
+};
+
+type GmailPart = {
+  mimeType?: string;
+  filename?: string;
+  headers?: GmailHeader[];
+  body?: GmailBody;
+  parts?: GmailPart[];
+};
+
+type GmailMessage = {
+  id?: string;
+  threadId?: string;
+  labelIds?: string[];
+  snippet?: string;
+  payload?: GmailPart;
+};
+
+type GmailThread = {
+  id?: string;
+  messages?: GmailMessage[];
+};
+
+type GmailThreadList = {
+  threads?: Array<{ id?: string }>;
+};
+
+type Attachment = {
+  filename: string;
+  mimeType: string;
+  size: number;
+  attachmentId: string;
+};
+
+function header(part: GmailPart | undefined, name: string): string {
+  const wanted = name.toLowerCase();
+  return part?.headers?.find((item) => item.name?.toLowerCase() === wanted)?.value ?? "";
+}
+
+/** The charset a Content-Type header declares, lower-cased, or null. */
+function charsetOf(contentType: string): string | null {
+  const match = contentType.match(/;\s*charset\s*=\s*"?([^";\s]+)"?/i);
+  return match ? match[1].toLowerCase() : null;
+}
+
+/** A text part's bytes in the charset it declares; UTF-8 when it declares none or one Node lacks. */
+function decodeText(data: string, charset: string | null): string {
+  const bytes = Buffer.from(data, "base64url");
+  if (charset && charset !== "utf-8" && charset !== "utf8") {
+    try {
+      return new TextDecoder(charset).decode(bytes);
+    } catch {
+      // A label TextDecoder does not know: read it as UTF-8 rather than fail the message.
+    }
+  }
+  return bytes.toString("utf8");
+}
+
+/** Characters of message text across a whole conversation, under the runner's 64,000 result. */
+const THREAD_TEXT_BUDGET = 40_000;
+/** Characters of the whole JSON result, kept under the runner's 64,000. */
+const THREAD_RESULT_BUDGET = 60_000;
+
+const ENTITIES: Record<string, string> = {
+  nbsp: " ",
+  amp: "&",
+  lt: "<",
+  gt: ">",
+  quot: '"',
+  "#39": "'",
+  apos: "'",
+};
+
+function stripHtml(html: string): string {
+  return (
+    html
+      .replace(/<script\b[^>]*>[\s\S]*?<\/script\b[^>]*>/gi, " ")
+      .replace(/<style\b[^>]*>[\s\S]*?<\/style\b[^>]*>/gi, " ")
+      .replace(/<br\s*\/?>/gi, "\n")
+      .replace(/<\/(p|div|li|tr|h[1-6])\s*>/gi, "\n")
+      .replace(/<[^>]+>/g, " ")
+      // One pass, so an entity's output is never read as another entity (&amp;lt; is "&lt;").
+      .replace(
+        /&(nbsp|amp|lt|gt|quot|#39|apos);/gi,
+        (_, name: string) => ENTITIES[name.toLowerCase()] ?? "",
+      )
+      .replace(/[ \t]+\n/g, "\n")
+      .replace(/\n{3,}/g, "\n\n")
+      .trim()
+  );
+}
+
+/**
+ * The body's partial-response mask, nested PART_DEPTH levels: Gmail answers `parts` only as deep
+ * as the mask names them, and a forwarded or signed message nests multiparts several levels down.
+ */
+const PART_DEPTH = 10;
+
+function bodyFieldsMask(): string {
+  let part = "mimeType,filename,headers,body";
+  for (let level = 1; level < PART_DEPTH; level += 1) {
+    part = `mimeType,filename,headers,body,parts(${part})`;
+  }
+  // The top level's headers are the whole message's; its charset comes from the metadata read.
+  return `id,payload(mimeType,filename,body,parts(${part}))`;
+}
+
+/**
+ * A text part Gmail answers by reference (a large body comes as an attachmentId, with no
+ * filename): its bytes are the message's text, so they are read rather than listed.
+ */
+async function referencedData(
+  ctx: Context,
+  messageId: string,
+  attachmentId: string,
+): Promise<string> {
+  const path = `/users/me/messages/${encodeURIComponent(messageId)}/attachments/${encodeURIComponent(attachmentId)}?fields=data`;
+  const res = await ctx.fetch(path);
+  if (!res.ok) throw new Error(`GET message body part ${res.status}: ${await res.text()}`);
+  const part = (await res.json()) as { data?: string };
+  return part.data ?? "";
+}
+
+async function collectParts(
+  root: GmailPart | undefined,
+  rootCharset: string | null,
+  ctx: Context,
+  messageId: string,
+): Promise<{
+  plain: string[];
+  html: string[];
+  attachments: Attachment[];
+}> {
+  const plain: string[] = [];
+  const html: string[] = [];
+  const attachments: Attachment[] = [];
+
+  async function walk(part: GmailPart, charset: string | null): Promise<void> {
+    const mimeType = part.mimeType ?? "application/octet-stream";
+    const filename = part.filename ?? "";
+    const body = part.body;
+    const type = mimeType.toLowerCase();
+    const isText = type.startsWith("text/plain") || type.startsWith("text/html");
+
+    let data = body?.data;
+    if (body?.attachmentId && isText && !filename) {
+      data = await referencedData(ctx, messageId, body.attachmentId);
+    } else if (body?.attachmentId) {
+      attachments.push({
+        filename,
+        mimeType,
+        size: body.size ?? 0,
+        attachmentId: body.attachmentId,
+      });
+      data = undefined;
+    }
+    if (data) {
+      const decoded = decodeText(data, charset);
+      if (type.startsWith("text/plain")) plain.push(decoded);
+      else if (type.startsWith("text/html")) html.push(decoded);
+    }
+
+    for (const child of part.parts ?? []) {
+      await walk(child, charsetOf(header(child, "Content-Type")));
+    }
+  }
+
+  if (root) await walk(root, rootCharset);
+  return { plain, html, attachments };
+}
+
+export default async (input: Input, ctx: Context) => {
+  let threadId = input.threadId?.trim() ?? "";
+
+  if (!threadId) {
+    const listRes = await ctx.fetch(
+      "/users/me/threads?maxResults=1&labelIds=INBOX&fields=threads(id)",
+    );
+    if (!listRes.ok) {
+      throw new Error(`GET /users/me/threads ${listRes.status}: ${await listRes.text()}`);
+    }
+    const list = (await listRes.json()) as GmailThreadList;
+    threadId = list.threads?.[0]?.id ?? "";
+    if (!threadId) return { found: false };
+  }
+
+  const metadataQuery = new URLSearchParams();
+  metadataQuery.set("format", "metadata");
+  for (const name of ["From", "To", "Cc", "Subject", "Date", "Content-Type"]) {
+    metadataQuery.append("metadataHeaders", name);
+  }
+  metadataQuery.set("fields", "id,messages(id,threadId,labelIds,snippet,payload(headers))");
+  const threadPath = `/users/me/threads/${encodeURIComponent(threadId)}?${metadataQuery.toString()}`;
+  const threadRes = await ctx.fetch(threadPath);
+  if (!threadRes.ok) {
+    throw new Error(`GET /users/me/threads/{id} ${threadRes.status}: ${await threadRes.text()}`);
+  }
+
+  const thread = (await threadRes.json()) as GmailThread;
+  const bodyFields = bodyFieldsMask();
+  const listed = (thread.messages ?? []).filter((metadata) => Boolean(metadata.id));
+
+  // The newest messages are read first, and reading stops once the conversation's text budget or
+  // its result budget is spent (Greptile on #197): a long thread answers its newest messages
+  // without a read per message it would leave out, which would run past the call's timeout.
+  const newestFirst = [];
+  let remaining = THREAD_TEXT_BUDGET;
+  let resultSize = 0;
+  let omittedMessages = 0;
+  for (let index = listed.length - 1; index >= 0; index -= 1) {
+    if (newestFirst.length > 0 && (remaining <= 0 || resultSize > THREAD_RESULT_BUDGET)) {
+      omittedMessages = index + 1;
+      break;
+    }
+    const metadata = listed[index];
+    const messageId = metadata.id ?? "";
+
+    const messageQuery = new URLSearchParams({ format: "full", fields: bodyFields });
+    const messagePath = `/users/me/messages/${encodeURIComponent(messageId)}?${messageQuery.toString()}`;
+    const messageRes = await ctx.fetch(messagePath);
+    if (!messageRes.ok) {
+      throw new Error(
+        `GET /users/me/messages/{id} ${messageRes.status}: ${await messageRes.text()}`,
+      );
+    }
+
+    const bodyMessage = (await messageRes.json()) as GmailMessage;
+    const content = await collectParts(
+      bodyMessage.payload,
+      charsetOf(header(metadata.payload, "Content-Type")),
+      ctx,
+      messageId,
+    );
+    const text = (
+      content.plain.length > 0 ? content.plain.join("\n\n") : stripHtml(content.html.join("\n\n"))
+    ).slice(0, Math.max(0, Math.min(20000, remaining)));
+    remaining -= text.length;
+    const labelIds = metadata.labelIds ?? [];
+
+    const message = {
+      id: metadata.id ?? bodyMessage.id ?? "",
+      threadId: metadata.threadId ?? thread.id ?? threadId,
+      from: header(metadata.payload, "From"),
+      to: header(metadata.payload, "To"),
+      cc: header(metadata.payload, "Cc"),
+      subject: header(metadata.payload, "Subject"),
+      date: header(metadata.payload, "Date"),
+      labelIds,
+      unread: labelIds.includes("UNREAD"),
+      snippet: metadata.snippet ?? "",
+      text,
+      attachments: content.attachments,
+    };
+    resultSize += JSON.stringify(message).length;
+    newestFirst.push(message);
+  }
+  const messages = newestFirst.reverse();
+
+  // Headers, snippets and attachment lists count too: past the result budget the oldest messages
+  // are left out, and how many is said, so a very long conversation still answers its newest.
+  const result = {
+    found: true,
+    threadId: thread.id ?? threadId,
+    subject: header(listed[0]?.payload, "Subject") || (messages[0]?.subject ?? ""),
+    omittedMessages,
+    messages,
+  };
+  while (messages.length > 1 && JSON.stringify(result).length > THREAD_RESULT_BUDGET) {
+    messages.shift();
+    result.omittedMessages += 1;
+  }
+  return result;
+};

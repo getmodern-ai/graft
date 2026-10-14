@@ -1,0 +1,31 @@
+{
+  "name": "list-payments",
+  "description": "Lists recent Stripe payments (charges), newest first, with amount, currency, status and refund state, optionally for one customer id from stripe__find-customer. Amounts are in the smallest currency unit. Each charge id, or its payment_intent, feeds stripe__refund-payment. When hasMore is true, nextCursor passed back as cursor reads the next page.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "limit": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 100,
+        "default": 10,
+        "description": "Maximum number of charges to return, from 1 to 100. Defaults to 10."
+      },
+      "customer": {
+        "type": "string",
+        "pattern": "^cus_",
+        "description": "Optional Stripe customer ID, such as one returned by stripe__find-customer."
+      },
+      "cursor": {
+        "type": "string",
+        "description": "The nextCursor of an earlier answer with the same filters, to read the payments after it."
+      }
+    },
+    "additionalProperties": false
+  },
+  "hosts": ["api.stripe.com"],
+  "annotations": {
+    "readOnly": true,
+    "destructive": false
+  }
+}

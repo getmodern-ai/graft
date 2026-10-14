@@ -1,0 +1,35 @@
+{
+  "name": "read-thread",
+  "description": "Reads a Slack message thread, the parent message first and the replies oldest first, each with its ts, user id, text and reactions, a page at a time: hasMore says whether the thread goes on, and nextCursor, passed back as cursor, reads the next page. Takes the channel by name or id (list-channels lists them) and the parent message's ts, which read-channel-history answers.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "channel": {
+        "type": "string",
+        "description": "A channel name, with or without the leading #, or a channel id from list-channels."
+      },
+      "threadTs": {
+        "type": "string",
+        "description": "The ts of the thread's parent message, from read-channel-history."
+      },
+      "limit": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 200,
+        "default": 50,
+        "description": "Maximum number of thread messages to return."
+      },
+      "cursor": {
+        "type": "string",
+        "description": "The nextCursor a previous call answered, to read the thread's next page. Omitted, the first page."
+      }
+    },
+    "required": ["channel", "threadTs"],
+    "additionalProperties": false
+  },
+  "hosts": ["slack.com"],
+  "annotations": {
+    "readOnly": true,
+    "destructive": false
+  }
+}

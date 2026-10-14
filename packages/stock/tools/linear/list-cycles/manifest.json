@@ -1,0 +1,20 @@
+{
+  "name": "list-cycles",
+  "description": "Lists Linear cycles (sprints: past, current and upcoming), up to 50, across every team or for one team: each cycle's id, number, name, start and end and progress, and its team's id and key. A cycle's id is the cycleId linear__create-issue takes.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "teamId": {
+        "type": "string",
+        "minLength": 1,
+        "description": "Narrows the list to one team's cycles: a team's id from linear__list-teams."
+      }
+    },
+    "additionalProperties": false
+  },
+  "hosts": ["api.linear.app"],
+  "annotations": {
+    "readOnly": true,
+    "destructive": false
+  }
+}

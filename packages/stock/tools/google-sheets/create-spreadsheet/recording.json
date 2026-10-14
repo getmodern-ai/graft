@@ -1,0 +1,58 @@
+{
+  "format": 1,
+  "tool": "google-sheets__create-spreadsheet",
+  "recordedAt": "2026-10-09T19:21:13.233Z",
+  "input": {
+    "title": "Rbhxle mlregp",
+    "tabs": ["Sxwtpyc"],
+    "header": ["Yyog", "Zhwbg"]
+  },
+  "exchanges": [
+    {
+      "kind": "write",
+      "method": "POST",
+      "url": "https://sheets.googleapis.com/v4/spreadsheets",
+      "body": {
+        "json": {
+          "properties": {
+            "title": "Rbhxle mlregp"
+          },
+          "sheets": [
+            {
+              "properties": {
+                "title": "Sxwtpyc"
+              },
+              "data": [
+                {
+                  "startRow": 0,
+                  "startColumn": 0,
+                  "rowData": [
+                    {
+                      "values": [
+                        {
+                          "userEnteredValue": {
+                            "stringValue": "Yyog"
+                          }
+                        },
+                        {
+                          "userEnteredValue": {
+                            "stringValue": "Zhwbg"
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "result": {
+    "spreadsheet": null,
+    "url": null,
+    "tabs": null
+  }
+}

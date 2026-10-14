@@ -11,8 +11,10 @@ import {
   defaultLedgerDeps,
   defaultMcpOAuthDeps,
   defaultPendingActionDeps,
+  defaultStockDeps,
   defaultToolDeps,
   defaultWorkingSetDeps,
+  loadStockCatalogue,
   oauthRedirectUri,
   protectedResourceMetadataUrl,
 } from "@graft/core";
@@ -29,6 +31,7 @@ import {
   DEFAULT_PACKAGE_POLICY,
 } from "@graft/publish";
 import type { SandboxProcessResult } from "@graft/sandbox";
+import { checkStockTool, readStockWorkspace } from "@graft/stock";
 import { importCapabilityTokenKeys } from "@graft/token";
 import { createCredentialVault } from "@graft/vault";
 import { serve } from "@hono/node-server";
@@ -43,7 +46,12 @@ import {
   proxyBodyCapClause,
 } from "./app";
 import { selectBackings } from "./backings";
-import { bootstrapAdmin, MigrationChainBrokenError, migrateOnStart } from "./boot";
+import {
+  bootstrapAdmin,
+  loadStockOnStart,
+  MigrationChainBrokenError,
+  migrateOnStart,
+} from "./boot";
 import {
   connectionSeeds,
   createDatabaseConnections,
@@ -54,6 +62,7 @@ import {
 } from "./connections";
 import { createModel } from "./model";
 import { describeObservability, flushObservability } from "./observability";
+import { toolCalledProperties } from "./tool-called";
 
 /**
  * The server's boot: validated environment in, one listening process out. Everything it decides
@@ -140,6 +149,24 @@ if (env.GRAFT_MIGRATE_ON_START) {
     console.error(`graft refused to start: ${reason}`);
     process.exit(1);
   }
+}
+
+/**
+ * The stock catalogue (ADR 0025; GRA-238; `boot.ts`): the workspace this image ships, loaded the way
+ * the migrations run, on every start and idempotently. A tool the check refuses is named and
+ * skipped; a database that cannot take the load refuses the start, as a migration would.
+ */
+try {
+  await loadStockOnStart({
+    read: () => readStockWorkspace(),
+    load: (sources) => loadStockCatalogue({ db }, sources, checkStockTool, defaultStockDeps),
+    log: console.log,
+  });
+} catch (error) {
+  console.error(
+    `graft refused to start: the stock catalogue could not be loaded: ${error instanceof Error ? error.message : String(error)}`,
+  );
+  process.exit(1);
 }
 
 // The providers a person may sign in with beside email and password (GRA-81, ADR 0020): a key per
@@ -301,7 +328,8 @@ const mcp = createMcpDeps({
   /**
    * Every tool call, once (GRA-100): onto this request's wide event under `mcp`, so the line for a
    * `POST /mcp` says which tool, for which agent, with what outcome — and onto the person's
-   * analytics profile as `tool_called`. Both carry the same fields and neither carries the input.
+   * analytics profile as `tool_called`. Both carry the same fields and neither carries the input;
+   * a stock copy's run adds its origin and a failure's shape under `mcp.stock` (GRA-244).
    */
   /** A refused `/mcp` request, with the transport's or the door's reason (GRA-131): the same line, under `mcpRefusal`. */
   onTransportRefusal: (event) => {
@@ -312,14 +340,7 @@ const mcp = createMcpDeps({
     backings.analytics.capture({
       distinctId: event.personId,
       event: "tool_called",
-      properties: {
-        tool: event.tool,
-        kind: event.kind,
-        agent_id: event.agentId,
-        outcome: event.outcome,
-        reason: event.reason ?? null,
-        latency_ms: event.latencyMs,
-      },
+      properties: toolCalledProperties(event),
     });
   },
   /**
@@ -480,6 +501,8 @@ const app = createServer({
     connectionRouting: mcp,
     // Setup's Build shares `acquire`'s model, job record and runner (GRA-207).
     acquire: mcp,
+    // Setup v2's integration directory: the private package's, or the starters when it has none.
+    ...(backings.directory ? { directory: backings.directory } : {}),
     // Setup's result step runs the tool through the same authored-run function (GRA-208).
     run: mcp,
   },

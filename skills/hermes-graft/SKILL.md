@@ -23,8 +23,11 @@ the code; the person enters secrets and answers approvals in Graft's **console**
 The person asks for something against a vendor — an order in their inventory system, a page in
 their wiki, a report from their accounting app — and no tool in your list does it. In this order:
 
-1. **Call `find_tool` first**, with a few words about the task as `query`. A tool may exist and be
-   demoted; `promote { vendor, name }` brings it back into your list at once, no authoring needed.
+1. **Call `find_tool` first**, with a few words about the task as `query`. A ready-made or demoted
+   match may exist; run or promote it: `run_tool { vendor, name, input }` runs it, and
+   `promote { vendor, name }` brings it into your list at once, no authoring needed. A ready-made
+   (stock) hit for a vendor you have no connection to carries `connect`: pass those arguments to
+   `request_connection` first.
 2. **Is the vendor connected?** `find_tool`'s answer and your `execute__<connection id>` tools name
    the connections in your scope. If the vendor has none, call
    `request_connection { vendor, primaryHost, scheme, displayName?, docsUrl? }` — it answers a

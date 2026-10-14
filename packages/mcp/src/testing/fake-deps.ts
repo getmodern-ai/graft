@@ -15,7 +15,7 @@ import {
 import type { DbOrTx } from "@graft/db";
 import type { AcquireAttemptRow, AcquireJobRow, AcquireTraceRow } from "@graft/db/repo/acquire-job";
 import type { AgentRow } from "@graft/db/repo/agent";
-import type { ApprovalRow, BuildApprovalRow } from "@graft/db/repo/approval";
+import type { ApprovalRow, BuildApprovalRow, VendorApprovalRow } from "@graft/db/repo/approval";
 import type { BlobRow } from "@graft/db/repo/blob";
 import type { ConnectionRow } from "@graft/db/repo/connection";
 import type { findMcpClient, McpClientRow } from "@graft/db/repo/mcp-oauth";
@@ -46,6 +46,11 @@ export type FakeStore = {
   connections: Map<string, ConnectionRow>;
   tools: Map<string, AuthoredToolRow>;
   versions: Map<string, ToolVersionRow>;
+  /**
+   * stock version id -> its number: the catalogue's half of `listToolVersionOrigins`'s join, which
+   * a stock suite fills from its catalogue (GRA-242). Empty, a stock origin reads with no number.
+   */
+  stockVersionNumbers: Map<string, number>;
   /** `<agentId> <toolId>` -> row */
   workingSet: Map<string, WorkingSetRow>;
   changes: WorkingSetChangeRow[];
@@ -56,6 +61,8 @@ export type FakeStore = {
   approvals: Map<string, ApprovalRow>;
   /** `<agentId> <connectionId>` -> row */
   buildApprovals: Map<string, BuildApprovalRow>;
+  /** `<agentId> <vendor>` -> row: an integration allowed at once (ADR 0008 as amended 2026-10-09). */
+  vendorApprovals: Map<string, VendorApprovalRow>;
   pendingActions: Map<string, PendingActionRow>;
   /** The OAuth clients a consent may have minted an agent from (ADR 0018) — what the ask card's gate reads (GRA-84). */
   mcpClients: Map<string, McpClientRow>;
@@ -126,12 +133,14 @@ export function createFakeStore(options: { now?: () => Date } = {}): FakeStore {
     connections: new Map(),
     tools: new Map(),
     versions: new Map(),
+    stockVersionNumbers: new Map(),
     workingSet: new Map(),
     changes: [],
     usage: [],
     blobs: [],
     approvals: new Map(),
     buildApprovals: new Map(),
+    vendorApprovals: new Map(),
     pendingActions: new Map(),
     mcpClients: new Map(),
     acquireJobs: new Map(),
@@ -207,6 +216,8 @@ export function createFakeStore(options: { now?: () => Date } = {}): FakeStore {
         dryRunAt: null,
         writesInvolved: false,
         publisherJobId: null,
+        stockToolId: null,
+        stockVersionId: null,
         owner: "person",
         createdAt: at,
       };
@@ -321,10 +332,53 @@ export type FakeDeps = {
   setup: SetupDeps;
 };
 
-/** The deps over a store. `db` is never dereferenced; the transaction fake hands itself to its body. */
+/**
+ * A fake database handle. Outside a transaction `held` is null; a transaction hands its body a
+ * handle of its own whose `held` collects the row locks taken in it, released when the body
+ * settles, and a nested transaction (a savepoint) shares its parent's. Only the tool row's lock
+ * (`findAuthoredToolForUpdate`) is modelled, which is what the stock advance serialises on (GRA-242).
+ */
+type FakeDbHandle = {
+  held: { ids: Set<string>; releases: (() => void)[] } | null;
+  transaction<T>(fn: (tx: unknown) => Promise<T>): Promise<T>;
+};
+
+function fakeDbHandle(held: FakeDbHandle["held"]): FakeDbHandle {
+  const handle: FakeDbHandle = {
+    held,
+    transaction: async (fn) => {
+      if (handle.held) return fn(handle);
+      const tx = fakeDbHandle({ ids: new Set(), releases: [] });
+      try {
+        return await fn(tx);
+      } finally {
+        for (const release of tx.held?.releases.splice(0) ?? []) release();
+      }
+    },
+  };
+  return handle;
+}
+
+/** The deps over a store. `db` is never dereferenced but for the transaction and its locks. */
 export function createFakeDeps(store: FakeStore): FakeDeps {
-  const fakeDb = { transaction: async <T>(fn: (tx: unknown) => Promise<T>) => fn(fakeDb) };
-  const db = fakeDb as unknown as DbOrTx;
+  const db = fakeDbHandle(null) as unknown as DbOrTx;
+  /** tool id -> the tail of the queue of transactions waiting on its lock. */
+  const toolLocks = new Map<string, Promise<void>>();
+  const lockTool = async (handle: FakeDbHandle, toolId: string): Promise<void> => {
+    if (!handle.held || handle.held.ids.has(toolId)) return;
+    const previous = toolLocks.get(toolId) ?? Promise.resolve();
+    let release: () => void = () => {};
+    const mine = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    toolLocks.set(
+      toolId,
+      previous.then(() => mine),
+    );
+    handle.held.ids.add(toolId);
+    handle.held.releases.push(release);
+    await previous;
+  };
   const ownsAgent = (scope: { personId: string; agentId: string }) =>
     store.agents.get(scope.agentId)?.personId === scope.personId;
   /** One writer for the change log: the working-set service's promotes and demotes, and a revoke's sweep (GRA-69). */
@@ -605,6 +659,16 @@ export function createFakeDeps(store: FakeStore): FakeDeps {
       }
       return swept;
     },
+    deleteVendorApprovalsForVendor: async (_db, personId, vendor) => {
+      const swept: VendorApprovalRow[] = [];
+      for (const [k, row] of store.vendorApprovals) {
+        if (row.vendor === vendor && store.agents.get(row.agentId)?.personId === personId) {
+          swept.push(row);
+          store.vendorApprovals.delete(k);
+        }
+      }
+      return swept;
+    },
     deleteBuildApprovalsForConnection: async (_db, personId, connectionId) => {
       const swept: BuildApprovalRow[] = [];
       for (const [k, row] of store.buildApprovals) {
@@ -695,6 +759,11 @@ export function createFakeDeps(store: FakeStore): FakeDeps {
       const row = store.tools.get(id);
       return row && row.personId === personId ? row : null;
     },
+    findAuthoredToolForUpdate: async (handle, personId, id) => {
+      await lockTool(handle as unknown as FakeDbHandle, id);
+      const row = store.tools.get(id);
+      return row && row.personId === personId ? row : null;
+    },
     listAuthoredTools: async (_db, personId) =>
       [...store.tools.values()]
         .filter((row) => row.personId === personId)
@@ -707,6 +776,19 @@ export function createFakeDeps(store: FakeStore): FakeDeps {
       return updated;
     },
     insertToolVersion: async (_db, input) => {
+      // The unique constraint on (tool, number), as Postgres refuses it.
+      if (
+        [...store.versions.values()].some(
+          (row) => row.toolId === input.toolId && row.versionNumber === input.versionNumber,
+        )
+      ) {
+        throw Object.assign(
+          new Error(
+            `duplicate key value violates unique constraint "tool_version_tool_id_version_number_unique"`,
+          ),
+          { code: "23505" },
+        );
+      }
       const row: ToolVersionRow = {
         id: input.id,
         toolId: input.toolId,
@@ -719,6 +801,8 @@ export function createFakeDeps(store: FakeStore): FakeDeps {
         dryRunAt: input.dryRunAt ?? null,
         writesInvolved: input.writesInvolved ?? false,
         publisherJobId: input.publisherJobId ?? null,
+        stockToolId: input.stockToolId ?? null,
+        stockVersionId: input.stockVersionId ?? null,
         owner: "person",
         createdAt: store.now(),
       };
@@ -731,6 +815,36 @@ export function createFakeDeps(store: FakeStore): FakeDeps {
       return [...store.versions.values()]
         .filter((row) => row.toolId === toolId)
         .sort((a, b) => b.versionNumber - a.versionNumber);
+    },
+    listToolVersionOrigins: async (_db, personId, toolId) =>
+      [...store.versions.values()]
+        .filter((row) => {
+          const owner = store.tools.get(row.toolId);
+          return owner?.personId === personId && (toolId === undefined || row.toolId === toolId);
+        })
+        .sort((a, b) => a.toolId.localeCompare(b.toolId) || b.versionNumber - a.versionNumber)
+        .map((row) => ({
+          toolId: row.toolId,
+          versionId: row.id,
+          versionNumber: row.versionNumber,
+          createdAt: row.createdAt,
+          stockToolId: row.stockToolId,
+          stockVersionId: row.stockVersionId,
+          stockVersionNumber: row.stockVersionId
+            ? (store.stockVersionNumbers.get(row.stockVersionId) ?? null)
+            : null,
+        })),
+    carryApprovalsToVersion: async (_db, personId, args) => {
+      if (store.tools.get(args.toolId)?.personId !== personId) return [];
+      const moved: ApprovalRow[] = [];
+      for (const [k, row] of store.approvals) {
+        if (row.toolId === args.toolId && row.toolVersionId === args.fromVersionId) {
+          const updated = { ...row, toolVersionId: args.toVersionId, updatedAt: store.now() };
+          store.approvals.set(k, updated);
+          moved.push(updated);
+        }
+      }
+      return moved;
     },
     findToolVersion: async (_db, personId, versionId) => {
       const row = store.versions.get(versionId);
@@ -759,6 +873,8 @@ export function createFakeDeps(store: FakeStore): FakeDeps {
     },
     findConnection: connection.findConnection,
     findConnectionForUpdate: connection.findConnectionForUpdate,
+    // The store has no concurrent transactions; `copy-stock.test.ts` races with a lock that holds.
+    lockToolName: async () => {},
     newId: store.newId,
     now: store.now,
   };
@@ -1019,6 +1135,7 @@ export function createFakeDeps(store: FakeStore): FakeDeps {
         decision: input.decision,
         decidedAt: input.decidedAt,
         askEveryCall: input.askEveryCall ?? existing?.askEveryCall ?? false,
+        toolVersionId: input.toolVersionId ?? null,
         owner: "person",
         createdAt: existing?.createdAt ?? at,
         updatedAt: at,
@@ -1074,7 +1191,41 @@ export function createFakeDeps(store: FakeStore): FakeDeps {
       store.buildApprovals.set(key(row.agentId, row.connectionId), row);
       return row;
     },
+    findVendorApproval: async (_db, scope, vendor) =>
+      ownsAgent(scope) ? (store.vendorApprovals.get(key(scope.agentId, vendor)) ?? null) : null,
+    listVendorApprovals: async (_db, scope) =>
+      ownsAgent(scope)
+        ? [...store.vendorApprovals.values()]
+            .filter((row) => row.agentId === scope.agentId)
+            .sort((a, b) => a.vendor.localeCompare(b.vendor))
+        : [],
+    upsertVendorApproval: async (_db, scope, input, options = {}) => {
+      if (!ownsAgent(scope)) return null;
+      const at = store.now();
+      const existing = store.vendorApprovals.get(key(scope.agentId, input.vendor));
+      // `keep`: the repo's `on conflict do nothing`, a standing row left as it is.
+      if (options.keep && existing) return null;
+      const row: VendorApprovalRow = {
+        agentId: scope.agentId,
+        vendor: input.vendor,
+        includesDestructive: input.includesDestructive,
+        grantedAt: input.grantedAt,
+        owner: "person",
+        createdAt: existing?.createdAt ?? at,
+        updatedAt: at,
+      };
+      store.vendorApprovals.set(key(row.agentId, row.vendor), row);
+      return row;
+    },
+    deleteVendorApproval: async (_db, scope, vendor) => {
+      if (!ownsAgent(scope)) return null;
+      const row = store.vendorApprovals.get(key(scope.agentId, vendor)) ?? null;
+      store.vendorApprovals.delete(key(scope.agentId, vendor));
+      return row;
+    },
     findAuthoredToolById: tool.findAuthoredToolById,
+    findAuthoredToolForUpdate: tool.findAuthoredToolForUpdate,
+    listToolVersionOrigins: tool.listToolVersionOrigins,
     findConnection: connection.findConnection,
     now: store.now,
   };
@@ -1192,6 +1343,7 @@ export function createFakeDeps(store: FakeStore): FakeDeps {
         heartbeatAt: input.heartbeatAt ?? null,
         finishedAt: input.finishedAt ?? null,
         toolId: input.toolId ?? null,
+        fromToolId: input.fromToolId ?? null,
         owner: "person",
         createdAt: at,
         updatedAt: at,

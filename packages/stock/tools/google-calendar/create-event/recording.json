@@ -1,0 +1,42 @@
+{
+  "format": 1,
+  "tool": "google-calendar__create-event",
+  "recordedAt": "2026-10-09T18:52:03.838Z",
+  "input": {
+    "summary": "Nileekfm",
+    "start": "2001-12-26T20:31:50Z",
+    "end": "2005-04-12T23:07:51Z",
+    "attendees": ["uyzm@example.com"]
+  },
+  "exchanges": [
+    {
+      "kind": "write",
+      "method": "POST",
+      "url": "https://www.googleapis.com/calendar/v3/calendars/primary/events",
+      "body": {
+        "json": {
+          "summary": "Nileekfm",
+          "start": {
+            "dateTime": "2001-12-26T20:31:50Z"
+          },
+          "end": {
+            "dateTime": "2005-04-12T23:07:51Z"
+          },
+          "attendees": [
+            {
+              "email": "uyzm@example.com"
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "result": {
+    "id": null,
+    "htmlLink": null,
+    "status": null,
+    "start": null,
+    "end": null,
+    "hangoutLink": null
+  }
+}

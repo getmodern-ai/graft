@@ -1,0 +1,60 @@
+{
+  "name": "search-people",
+  "description": "Searches Apollo's database of people for sales leads (prospects) by job title, company domain, location, seniority or keywords: the people at a company, or the heads of sales in a city. Spends no Apollo credits. Answers each person's Apollo id, first name, obfuscated last name, title and company, and whether Apollo holds an email; never a full last name, an email address or a phone number, which Apollo reveals only through its paid enrichment, which this tool does not call. A lead found here is not saved to the team, and its obfuscated last name is not one apollo__save-contact can save.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "titles": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "description": "Job titles to match."
+      },
+      "locations": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "description": "Person locations to match."
+      },
+      "organizationDomains": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "description": "Company domains to match, such as apollo.io."
+      },
+      "seniorities": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "description": "Seniority levels to match."
+      },
+      "keywords": {
+        "type": "string",
+        "description": "Keywords to search for."
+      },
+      "page": {
+        "type": "integer",
+        "minimum": 1,
+        "default": 1,
+        "description": "Results page number."
+      },
+      "perPage": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 25,
+        "default": 5,
+        "description": "Number of people per page, up to 25."
+      }
+    },
+    "additionalProperties": false
+  },
+  "hosts": ["api.apollo.io"],
+  "annotations": {
+    "readOnly": true,
+    "destructive": false
+  }
+}

@@ -1,0 +1,239 @@
+{
+  "format": 1,
+  "tool": "stripe__list-products",
+  "recordedAt": "2026-10-09T23:55:07.093Z",
+  "input": {},
+  "exchanges": [
+    {
+      "kind": "read",
+      "method": "GET",
+      "url": "https://api.stripe.com/v1/prices?expand%5B%5D=data.product&limit=20&active=true",
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "json": {
+            "object": "tgim",
+            "data": [
+              {
+                "id": "plwdl_4JCdRwX3848fnfj1Mjl4XZd6",
+                "object": "acmvn",
+                "active": true,
+                "billing_scheme": "xbh_tvcy",
+                "created": 7438773299,
+                "currency": "nwv",
+                "custom_unit_amount": null,
+                "livemode": false,
+                "lookup_key": null,
+                "metadata": {},
+                "nickname": null,
+                "product": {
+                  "id": "mwwv_ZPOlgfNetG0mdm",
+                  "object": "vhrswgd",
+                  "active": true,
+                  "attributes": [],
+                  "created": 7438773299,
+                  "default_price": null,
+                  "description": "(sgvlwpq vd Bnteaz LJE)",
+                  "images": [],
+                  "livemode": false,
+                  "marketing_features": [],
+                  "metadata": {},
+                  "name": "erouchtbx",
+                  "package_dimensions": null,
+                  "shippable": null,
+                  "statement_descriptor": null,
+                  "tax_code": null,
+                  "tax_details": null,
+                  "type": "hlojgxv",
+                  "unit_label": null,
+                  "updated": 7438773299,
+                  "url": null
+                },
+                "recurring": {
+                  "interval": "ycmpp",
+                  "interval_count": 1,
+                  "meter": null,
+                  "trial_period_days": null,
+                  "usage_type": "nnloqxao"
+                },
+                "tax_behavior": "wxwshqwpnyr",
+                "tiers_mode": null,
+                "transform_quantity": null,
+                "type": "recurring",
+                "unit_amount": 9418,
+                "unit_amount_decimal": "3481"
+              },
+              {
+                "id": "cmewy_6LPzAhN1989aznb0ehJytymj",
+                "object": "acmvn",
+                "active": true,
+                "billing_scheme": "xbh_tvcy",
+                "created": 5704312664,
+                "currency": "nwv",
+                "custom_unit_amount": null,
+                "livemode": false,
+                "lookup_key": null,
+                "metadata": {},
+                "nickname": null,
+                "product": {
+                  "id": "dmba_YPPtBnvn6hDKTo",
+                  "object": "vhrswgd",
+                  "active": true,
+                  "attributes": [],
+                  "created": 5704312664,
+                  "default_price": null,
+                  "description": "(sgvlwpq vd Bnteaz LJE)",
+                  "images": [],
+                  "livemode": false,
+                  "marketing_features": [],
+                  "metadata": {},
+                  "name": "erouchtbx",
+                  "package_dimensions": null,
+                  "shippable": null,
+                  "statement_descriptor": null,
+                  "tax_code": null,
+                  "tax_details": null,
+                  "type": "hlojgxv",
+                  "unit_label": null,
+                  "updated": 5704312664,
+                  "url": null
+                },
+                "recurring": {
+                  "interval": "ycmpp",
+                  "interval_count": 1,
+                  "meter": null,
+                  "trial_period_days": null,
+                  "usage_type": "nnloqxao"
+                },
+                "tax_behavior": "wxwshqwpnyr",
+                "tiers_mode": null,
+                "transform_quantity": null,
+                "type": "recurring",
+                "unit_amount": 9418,
+                "unit_amount_decimal": "3481"
+              },
+              {
+                "id": "clxid_2WYtsBR2911buhr593FCZsQW",
+                "object": "acmvn",
+                "active": true,
+                "billing_scheme": "xbh_tvcy",
+                "created": 8561339329,
+                "currency": "nwv",
+                "custom_unit_amount": null,
+                "livemode": false,
+                "lookup_key": "dncfsnde_mjxfkci_feo",
+                "metadata": {
+                  "cando_plan_id": "tmlnwwag"
+                },
+                "nickname": null,
+                "product": {
+                  "id": "cflo_DJM8Dft4yKNILj",
+                  "object": "vhrswgd",
+                  "active": true,
+                  "attributes": [],
+                  "created": 8561339329,
+                  "default_price": null,
+                  "description": null,
+                  "images": [],
+                  "livemode": false,
+                  "marketing_features": [],
+                  "metadata": {
+                    "cando_plan_id": "tmlnwwag"
+                  },
+                  "name": "Xlsplkdy",
+                  "package_dimensions": null,
+                  "shippable": null,
+                  "statement_descriptor": null,
+                  "tax_code": null,
+                  "tax_details": null,
+                  "type": "hlojgxv",
+                  "unit_label": null,
+                  "updated": 8561339329,
+                  "url": null
+                },
+                "recurring": {
+                  "interval": "ycmpp",
+                  "interval_count": 1,
+                  "meter": null,
+                  "trial_period_days": null,
+                  "usage_type": "nnloqxao"
+                },
+                "tax_behavior": "wxwshqwpnyr",
+                "tiers_mode": null,
+                "transform_quantity": null,
+                "type": "recurring",
+                "unit_amount": 8818,
+                "unit_amount_decimal": "6258"
+              }
+            ],
+            "has_more": false,
+            "url": "/n4/yvuiid"
+          }
+        }
+      }
+    }
+  ],
+  "result": {
+    "products": [
+      {
+        "id": "mwwv_ZPOlgfNetG0mdm",
+        "name": "erouchtbx",
+        "description": "(sgvlwpq vd Bnteaz LJE)",
+        "active": true,
+        "prices": [
+          {
+            "id": "plwdl_4JCdRwX3848fnfj1Mjl4XZd6",
+            "unit_amount": 9418,
+            "currency": "nwv",
+            "type": "recurring",
+            "interval": "ycmpp",
+            "interval_count": 1,
+            "nickname": null,
+            "active": true
+          }
+        ]
+      },
+      {
+        "id": "dmba_YPPtBnvn6hDKTo",
+        "name": "erouchtbx",
+        "description": "(sgvlwpq vd Bnteaz LJE)",
+        "active": true,
+        "prices": [
+          {
+            "id": "cmewy_6LPzAhN1989aznb0ehJytymj",
+            "unit_amount": 9418,
+            "currency": "nwv",
+            "type": "recurring",
+            "interval": "ycmpp",
+            "interval_count": 1,
+            "nickname": null,
+            "active": true
+          }
+        ]
+      },
+      {
+        "id": "cflo_DJM8Dft4yKNILj",
+        "name": "Xlsplkdy",
+        "description": null,
+        "active": true,
+        "prices": [
+          {
+            "id": "clxid_2WYtsBR2911buhr593FCZsQW",
+            "unit_amount": 8818,
+            "currency": "nwv",
+            "type": "recurring",
+            "interval": "ycmpp",
+            "interval_count": 1,
+            "nickname": null,
+            "active": true
+          }
+        ]
+      }
+    ],
+    "hasMore": false,
+    "nextCursor": null
+  }
+}

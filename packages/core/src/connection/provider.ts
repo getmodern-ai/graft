@@ -170,6 +170,18 @@ export type ProviderConnectionRow = Pick<
   | "revokedAt"
 >;
 
+/**
+ * A provider's `name` as a person reads it (GRA-273): the name is a kebab-case identifier a row
+ * carries, and copy draws it with its hyphens as spaces and its first letter capitalised, so a
+ * provider named `some-broker` reads "Some broker". Browser-safe: the console and the ask card's
+ * builder (`packages/mcp/src/ask-card.ts`) both draw through it. Every person-facing sentence that
+ * names a provider goes through this and never the bare name.
+ */
+export function providerDisplayName(name: string): string {
+  const words = name.trim().replace(/-+/g, " ");
+  return words.charAt(0).toUpperCase() + words.slice(1);
+}
+
 export type ConnectionProvider = {
   /** The name a row's `provider` column carries; kebab-case, and never another provider's. */
   readonly name: string;

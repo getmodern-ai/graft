@@ -4,7 +4,16 @@ import { CheckIcon, ContentCopyIcon } from "@/components/icons";
 import { Button } from "@/components/ui/button";
 
 /** Copies `text` to the clipboard and says so for a moment. */
-export function CopyButton({ text, label = "Copy" }: { text: string; label?: string }) {
+export function CopyButton({
+  text,
+  label = "Copy",
+  variant = "outline",
+}: {
+  text: string;
+  label?: string;
+  /** `default` where copying is the card's primary action (Setup's prompt card). */
+  variant?: "outline" | "default";
+}) {
   const [copied, setCopied] = useState(false);
 
   useEffect(() => {
@@ -16,7 +25,7 @@ export function CopyButton({ text, label = "Copy" }: { text: string; label?: str
   return (
     <Button
       type="button"
-      variant="outline"
+      variant={variant}
       size="sm"
       onClick={async () => {
         await navigator.clipboard.writeText(text);

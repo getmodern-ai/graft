@@ -8,7 +8,6 @@ import { ConnectStep } from "@/components/setup/connect-step";
 import { FinishStep, type FinishStepProps } from "@/components/setup/finish-step";
 import { GoalStep } from "@/components/setup/goal-step";
 import { HarnessStep } from "@/components/setup/harness-step";
-import { ResultStep } from "@/components/setup/result-step";
 import { VendorStep } from "@/components/setup/vendor-step";
 import { Button } from "@/components/ui/button";
 import {
@@ -42,7 +41,7 @@ const STEPS: Record<
   connect: ConnectStep,
   goal: GoalStep,
   building: BuildingStep,
-  result: ResultStep,
+  result: () => null,
   completed: SetupCompleted,
 };
 
@@ -65,7 +64,8 @@ export function SetupStepView({
   /** The agent the page's URL names, which the harness step starts as when it is the person's. */
   agentId?: string;
 }) {
-  if (state.step === "finish" || finished || leaving) {
+  // Setup v2's done screen: the result and the finish are one page (`FinishStep`, with the tool's card).
+  if (state.step === "result" || state.step === "finish" || finished || leaving) {
     return (
       <FinishStep
         state={state}

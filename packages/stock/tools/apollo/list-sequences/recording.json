@@ -1,0 +1,44 @@
+{
+  "format": 1,
+  "tool": "apollo__list-sequences",
+  "recordedAt": "2026-10-10T17:39:50.047Z",
+  "input": {
+    "perPage": 3
+  },
+  "exchanges": [
+    {
+      "kind": "read",
+      "method": "POST",
+      "url": "https://api.apollo.io/api/v1/emailer_campaigns/search",
+      "body": {
+        "json": {
+          "page": 1,
+          "per_page": 3
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json; charset=utf-8"
+        },
+        "body": {
+          "json": {
+            "pagination": {
+              "page": 1,
+              "per_page": 3,
+              "total_entries": 0,
+              "total_pages": 0
+            },
+            "breadcrumbs": [],
+            "emailer_campaigns": [],
+            "num_fetch_result": null
+          }
+        }
+      }
+    }
+  ],
+  "result": {
+    "total_entries": 0,
+    "emailer_campaigns": []
+  }
+}

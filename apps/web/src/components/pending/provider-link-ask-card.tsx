@@ -1,5 +1,7 @@
+import { integrationNameFor } from "@graft/core/approval/vendor-approval.rules";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
+import type * as React from "react";
 import { useCallback, useRef, useState } from "react";
 import { toast } from "sonner";
 
@@ -12,13 +14,16 @@ import {
   useAnswerAsk,
 } from "@/components/pending/ask-card";
 import { BuildApprovalItem } from "@/components/pending/build-approval-item";
+import { VendorToolsItem } from "@/components/pending/vendor-tools-item";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
 import { agentKeys } from "@/lib/agent-queries";
 import { ApiError, api } from "@/lib/api";
+import { approvalKeys } from "@/lib/approval-queries";
 import { connectedSettledSentence, connectedToastDescription } from "@/lib/ask-answered-copy";
+import { connectionChoicesSent, connectionChoicesShown } from "@/lib/connection-choices";
 import { type Connection, connectionKeys } from "@/lib/connection-queries";
 import { openConsentPopup } from "@/lib/oauth-consent";
 import {
@@ -34,6 +39,7 @@ import {
   type LinkSettled,
   startProviderLink,
 } from "@/lib/provider-link";
+import { providerLabel } from "@/lib/provider-name";
 
 /**
  * An agent's proposal for a connection a **link** provider covers (ADR 0019; GRA-59): the vendor,
@@ -52,27 +58,37 @@ import {
  * The card's one control is the build approval, on by default (GRA-75; ADR 0008, amendment of
  * 2026-09-18), as on the form's card. It is posted with the button — the connection does not exist
  * until the return — and the server signs it into the link's state, so the return records it with
- * the connection it makes.
+ * the connection it makes. The line for the integration's tools under it (GRA-239; the amendment
+ * of 2026-10-09), on by default, rides the same state and is recorded on the same return.
+ * Setup's compact card draws the tools line too and not the build choice, and sends only what it
+ * draws (`lib/connection-choices.ts`, GRA-274).
  */
 export function ProviderLinkAskCard({
   ask,
   onAnswered,
   origin = "agent",
+  setupFooter,
 }: {
   ask: Extract<Ask, { kind: "connection-link" }>;
   onAnswered?: () => void;
   /** Setup's connect step passes `setup`: no model provenance (`ask-card.tsx`, `AskOrigin`). */
   origin?: AskOrigin;
+  setupFooter?: React.ReactNode;
 }) {
   const { action, payload } = ask;
   const queryClient = useQueryClient();
   const decline = useAnswerAsk(action, onAnswered, origin);
   const [state, setState] = useState<LinkState>({ phase: "idle" });
   const [approveBuild, setApproveBuild] = useState(true);
+  const [allowVendor, setAllowVendor] = useState(true);
   const stop = useRef<AbortController | null>(null);
-  const provider = payload.provider;
+  const provider = providerLabel(payload.provider);
   const target = payload.providerTarget ?? null;
   const agentName = action.agent?.name ?? "the agent";
+  const integrationName = integrationNameFor(payload.vendor, payload.displayName);
+  // What the link carries: a line the card does not draw is never sent as a yes (GRA-274).
+  const shown = connectionChoicesShown({ origin });
+  const sent = connectionChoicesSent(shown, { approveBuild, allowVendor });
 
   const settleAndRefresh = useCallback(
     (outcome: LinkOutcome, message: string, connectionId: string | null) => {
@@ -80,24 +96,42 @@ export function ProviderLinkAskCard({
       queryClient.invalidateQueries({ queryKey: pendingKeys.all });
       queryClient.invalidateQueries({ queryKey: connectionKeys.all });
       queryClient.invalidateQueries({ queryKey: agentKeys.all });
+      queryClient.invalidateQueries({ queryKey: approvalKeys.vendorsOfAgent(action.agentId) });
       if (outcome === "connected") {
         toast.success(`${payload.displayName} is connected through ${provider}`, {
-          description: connectedToastDescription({ origin, agentName, approveBuild, provider }),
+          description: connectedToastDescription({
+            origin,
+            agentName,
+            approveBuild: sent.approveBuild,
+            provider,
+            ...(sent.allowVendor ? { vendorTools: integrationName } : {}),
+          }),
         });
         onAnswered?.();
       }
       return connectionId;
     },
-    [queryClient, payload.displayName, provider, agentName, approveBuild, onAnswered, origin],
+    [
+      queryClient,
+      action.agentId,
+      payload.displayName,
+      provider,
+      agentName,
+      sent.approveBuild,
+      sent.allowVendor,
+      integrationName,
+      onAnswered,
+      origin,
+    ],
   );
 
   const start = useMutation({
-    mutationFn: () => startProviderLink(action.id, { approveBuild }),
+    mutationFn: () => startProviderLink(action.id, sent),
     onSuccess: async (started) => {
       if ("fallback" in started) {
         // The provider could not start its sign-in and the ask is the keyring's form now
         // (GRA-147): re-read it, and this card gives way to the form in place.
-        toast.message(`${started.provider} could not start the sign-in`, {
+        toast.message(`${providerLabel(started.provider)} could not start the sign-in`, {
           description: `${payload.displayName} is connected on Graft's own page instead. The form is below.`,
         });
         await queryClient.invalidateQueries({ queryKey: pendingKeys.all });
@@ -128,6 +162,43 @@ export function ProviderLinkAskCard({
   const open = isOpen(action);
   const running = state.phase === "running";
   const busy = start.isPending || decline.isPending || running;
+
+  if (origin === "setup") {
+    const providerName = providerLabel(provider);
+    return (
+      <AskCard
+        action={action}
+        title={payload.displayName}
+        settled={(recorded) =>
+          typeof recorded?.connectionId === "string"
+            ? `Connected through ${providerName}.`
+            : "Declined. Go back to choose again."
+        }
+        approveLabel={running ? "Waiting for the sign-in…" : `Connect ${payload.displayName}`}
+        pending={busy}
+        onAnswer={(allow) => (allow ? start.mutate() : decline.mutate({ allow: false }))}
+        compact={{
+          vendor: payload.vendor,
+          name: payload.displayName,
+          subline: `One click through ${providerName} · nothing to type, and the token stays with ${providerName}`,
+          footer: setupFooter,
+        }}
+      >
+        {shown.allowVendor ? (
+          <VendorToolsItem
+            id={`ask-${action.id}-allow-vendor`}
+            integrationName={integrationName}
+            checked={allowVendor}
+            onCheckedChange={setAllowVendor}
+            disabled={busy}
+          />
+        ) : null}
+        {state.phase === "idle" ? null : (
+          <LinkStatus state={state} provider={providerName} onCancel={cancel} />
+        )}
+      </AskCard>
+    );
+  }
 
   return (
     <AskCard
@@ -163,7 +234,12 @@ export function ProviderLinkAskCard({
       pending={busy}
       onAnswer={(allow) => (allow ? start.mutate() : decline.mutate({ allow: false }))}
     >
-      <ProposalSource origin={origin} note={payload.note} docsUrl={payload.docsUrl} />
+      <ProposalSource
+        origin={origin}
+        agentName={action.agent?.name ?? null}
+        note={payload.note}
+        docsUrl={payload.docsUrl}
+      />
 
       <dl className="grid gap-x-6 gap-y-1 text-sm sm:grid-cols-[auto_1fr]">
         <dt className="text-muted-foreground">Primary host</dt>
@@ -196,6 +272,13 @@ export function ProviderLinkAskCard({
             agentName={agentName}
             checked={approveBuild}
             onCheckedChange={setApproveBuild}
+            disabled={busy}
+          />
+          <VendorToolsItem
+            id={`ask-${action.id}-allow-vendor`}
+            integrationName={integrationName}
+            checked={allowVendor}
+            onCheckedChange={setAllowVendor}
             disabled={busy}
           />
         </>

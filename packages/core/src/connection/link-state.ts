@@ -15,9 +15,10 @@ import { LINK_STATE_TTL_MS } from "./link.rules";
  * ask is what the state points at and what the return route answers. The nonce makes two links for
  * one ask two states; a return with a stale one is refused as expired rather than replayed.
  *
- * It also carries the one choice the link's card offers (GRA-75; ADR 0008, amendment of
- * 2026-09-18): whether the asking agent may build against the connection once it exists. The
- * person ticks it before the popup opens, and the connection it is about is made on return, so
+ * It also carries the two choices the link's card offers (GRA-75 and GRA-239; ADR 0008,
+ * amendments of 2026-09-18 and 2026-10-09): whether the asking agent may build against the
+ * connection once it exists, and whether the integration's tools run for it without asking,
+ * destructive ones left out. The person ticks them before the popup opens, and the connection it is about is made on return, so
  * the choice rides the state to the return route, signed, rather than being posted again from a
  * page that no longer has the person's session in hand.
  */
@@ -34,6 +35,8 @@ export type LinkStatePayload = {
   nonce: string;
   /** Record the asking agent's build approval with the connection on return (GRA-75); absent reads as no. */
   approveBuild?: boolean;
+  /** Record the asking agent's standing approval for the vendor on return (GRA-239); absent reads as no. */
+  allowVendor?: boolean;
 };
 
 function mark(encodedPayload: string, secret: string): Buffer {
@@ -114,6 +117,7 @@ function isPayload(value: unknown): value is LinkStatePayload {
     typeof p.expiresAt === "number" &&
     Number.isFinite(p.expiresAt) &&
     typeof p.nonce === "string" &&
-    (p.approveBuild === undefined || typeof p.approveBuild === "boolean")
+    (p.approveBuild === undefined || typeof p.approveBuild === "boolean") &&
+    (p.allowVendor === undefined || typeof p.allowVendor === "boolean")
   );
 }

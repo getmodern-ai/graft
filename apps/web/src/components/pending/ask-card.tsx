@@ -3,6 +3,8 @@ import type * as React from "react";
 import { toast } from "sonner";
 
 import { OpenInNewIcon } from "@/components/icons";
+import { SetupAppCard } from "@/components/setup/setup-app-card";
+import { SetupLogo } from "@/components/setup/setup-logo";
 import { Time } from "@/components/time";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -24,6 +26,8 @@ import {
   type PendingAnswer,
   pendingKeys,
 } from "@/lib/pending-action-queries";
+import { proposalDocsLabel, proposalSourceBadge } from "@/lib/proposal-source";
+import { cachedDirectoryLogo } from "@/lib/setup-queries";
 
 /**
  * What every ask's card shares (ADR 0006): who asked and when, how long it stays answerable, the
@@ -36,6 +40,8 @@ export function useAnswerAsk(
   action: PendingAction,
   onAnswered?: () => void,
   origin: AskOrigin = "agent",
+  /** A kind's own success toast for a yes; the tool card's names an integration allowed (GRA-237). */
+  allowedToast?: (answer: PendingAnswer) => { title: string; description: string },
 ) {
   const queryClient = useQueryClient();
   return useMutation({
@@ -44,6 +50,13 @@ export function useAnswerAsk(
       queryClient.invalidateQueries({ queryKey: pendingKeys.all });
       queryClient.invalidateQueries({ queryKey: agentKeys.all });
       queryClient.invalidateQueries({ queryKey: approvalKeys.ofAgent(action.agentId) });
+      queryClient.invalidateQueries({ queryKey: approvalKeys.vendorsOfAgent(action.agentId) });
+      if (answer.allow && allowedToast) {
+        const { title, description } = allowedToast(answer);
+        toast.success(title, { description });
+        onAnswered?.();
+        return;
+      }
       toast.success(answer.allow ? "Approved" : "Declined", {
         description: !answer.allow
           ? declinedToastDescription(origin)
@@ -65,6 +78,8 @@ export function AskCard({
   onAnswer,
   pending,
   approveLabel = "Approve",
+  alsoApprove,
+  compact,
 }: {
   action: PendingAction;
   /** "<agent> asks to …" — the kind's own words after the agent's name. */
@@ -78,9 +93,52 @@ export function AskCard({
   pending: boolean;
   /** The approve button's verb; "Approve" unless the kind's act is something else. */
   approveLabel?: string;
+  /** A second yes beside Approve, outline: the tool card's integration-wide one (GRA-237). */
+  alsoApprove?: { label: string; onClick: () => void };
+  /**
+   * Setup's connect step (Setup v2, the frames' *Connect Gmail*): the ask drawn as an app card,
+   * the integration's mark, its name and one line, with the approve button at the end and no
+   * Decline (the footer's Back is the way out), then the card's own inputs and `footer` under it.
+   */
+  compact?: { vendor: string; name: string; subline: React.ReactNode; footer?: React.ReactNode };
 }) {
   const open = isOpen(action);
   const agentName = action.agent?.name ?? "A revoked agent";
+
+  const queryClient = useQueryClient();
+  if (compact) {
+    return (
+      <SetupAppCard
+        media={
+          <SetupLogo
+            starterId={compact.vendor}
+            url={cachedDirectoryLogo(queryClient, compact.vendor)}
+            tile={false}
+            className="size-8"
+          />
+        }
+        name={compact.name}
+        subline={
+          open
+            ? compact.subline
+            : action.answeredAt
+              ? settled(action.answer)
+              : "This ask expired; go back and choose again."
+        }
+        action={
+          open ? (
+            <Button disabled={pending} onClick={() => onAnswer(true)}>
+              <OpenInNewIcon />
+              {approveLabel}
+            </Button>
+          ) : null
+        }
+      >
+        {open && children ? <div className="flex flex-col gap-4 text-sm">{children}</div> : null}
+        {compact.footer}
+      </SetupAppCard>
+    );
+  }
 
   return (
     <Card>
@@ -112,10 +170,15 @@ export function AskCard({
         <CardContent className="flex flex-col gap-4 text-sm">{children}</CardContent>
       ) : null}
       {open ? (
-        <CardFooter className="justify-end gap-2">
+        <CardFooter className="flex-wrap justify-end gap-2">
           <Button variant="outline" disabled={pending} onClick={() => onAnswer(false)}>
             Decline
           </Button>
+          {alsoApprove ? (
+            <Button variant="outline" disabled={pending} onClick={alsoApprove.onClick}>
+              {alsoApprove.label}
+            </Button>
+          ) : null}
           <Button disabled={pending} onClick={() => onAnswer(true)}>
             {approveLabel}
           </Button>
@@ -157,15 +220,19 @@ export function Hosts({ hosts }: { hosts: readonly string[] }) {
 export type { AskOrigin } from "@/lib/ask-answered-copy";
 
 /**
- * Where a proposal came from: under `agent`, the provenance badge, the server's note and the page
- * the agent read; under `setup`, the vendor's documentation alone, since Graft wrote the entry.
+ * Where a proposal came from: under `agent`, the badge naming the agent that asked (its model or a
+ * ready-made tool may have written it, `lib/proposal-source.ts`), the server's note and the page
+ * the agent named; under `setup`, the vendor's documentation alone, since Graft wrote the entry.
  */
 export function ProposalSource({
   origin,
+  agentName,
   note,
   docsUrl,
 }: {
   origin: AskOrigin;
+  /** The agent that asked, by its name; null for a revoked agent's ask. */
+  agentName: string | null;
   note?: string | null;
   docsUrl?: string | null;
 }) {
@@ -173,7 +240,7 @@ export function ProposalSource({
   return (
     <figure className="flex flex-col gap-1.5">
       <figcaption className="flex flex-wrap items-center gap-2 text-muted-foreground text-xs">
-        <Badge variant="outline">proposed by the agent's model</Badge>
+        <Badge variant="outline">{proposalSourceBadge(agentName)}</Badge>
         {note}
       </figcaption>
       {docsUrl ? (
@@ -196,7 +263,7 @@ export function DocsLink({ href, origin }: { href: string; origin: AskOrigin }) 
       rel="noreferrer noopener"
       className="inline-flex items-center gap-1 text-xs underline underline-offset-4"
     >
-      {`${origin === "setup" ? "The integration's documentation" : "The documentation the agent read"}: ${href}`}
+      {`${proposalDocsLabel(origin)}: ${href}`}
       <OpenInNewIcon className="size-3" />
     </a>
   );

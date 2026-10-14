@@ -50,6 +50,7 @@ export {
   type ApprovalAskKind,
   type AskChannel,
   type AwaitingApproval,
+  askedVersionOfPayload,
   type BuildAskPayload,
   DEFAULT_POLL_MS,
   DESCRIPTION_PROVENANCE_NOTE,
@@ -198,6 +199,7 @@ export {
   type AuthoredRunArgs,
   EXIT_MODULE_MISSING,
   type RunFailure,
+  type RunFailureKind,
   type RunMode,
   runAuthoredTool,
   runWithCapability,
@@ -221,6 +223,14 @@ export {
   SERVER_INSTRUCTIONS,
 } from "./session";
 export {
+  type EnsuredTool,
+  ensureToolForAgent,
+  type PromotedTool,
+  promoteToolForAgent,
+  stockConnectionIds,
+} from "./stock-copy";
+export type { StockOrigin, StockSignal } from "./stock-signal";
+export {
   type BlobSweptEvent,
   type RunSweepOptions,
   runSweep,
@@ -241,6 +251,7 @@ export {
   parseExecuteToolName,
   TOOL_NAME_SEPARATOR,
 } from "./tool-names";
+export { createStockToolSource, type ToolSource } from "./tool-source";
 export { authoredToolDefinition, META_TOOL_NAMES } from "./tools";
 export { ANSWER_ASK, CARD_NOT_AVAILABLE, readAnswerAskInput } from "./tools/answer-ask";
 export { ASK_STATUS, askState, askStateSentence } from "./tools/ask-status";

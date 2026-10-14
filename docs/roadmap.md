@@ -67,7 +67,8 @@ step and run in parallel where their blockers allow.
 
 ## Out of scope, and why
 
-- **An integration catalog or a broker.** ADR 0001.
+- **A catalogue of someone else's tools, or a broker.** ADR 0001 as amended: Graft's own stock tools
+  are its code (ADR 0025); a third party's catalogue behind the tool source seam is a later effort.
 - **Acting as an MCP gateway in front of other servers.** ADR 0001.
 - **Credentials handed to the sandbox as data.** ADR 0010, never.
 - **Editing the outer agent's skills.** ADR 0012, L4, never.

@@ -1,0 +1,69 @@
+{
+  "name": "create-event",
+  "description": "Creates a meeting or event in Outlook’s default calendar or a specified calendar. Attendees are sent invitations. microsoft-outlook__find-free-time supplies a free slot, and microsoft-outlook__list-calendars supplies a calendar id.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "subject": {
+        "type": "string",
+        "minLength": 1,
+        "description": "Event subject."
+      },
+      "start": {
+        "type": "string",
+        "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}(?::\\d{2}(?:\\.\\d{1,7})?)?$",
+        "examples": ["2030-01-07T10:00:00"],
+        "description": "ISO 8601 local start date-time without an offset, interpreted in timeZone."
+      },
+      "end": {
+        "type": "string",
+        "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}(?::\\d{2}(?:\\.\\d{1,7})?)?$",
+        "examples": ["2030-01-07T10:30:00"],
+        "description": "ISO 8601 local end date-time without an offset, interpreted in timeZone."
+      },
+      "timeZone": {
+        "type": "string",
+        "minLength": 1,
+        "default": "UTC",
+        "description": "Microsoft Graph time-zone name. Defaults to UTC."
+      },
+      "body": {
+        "type": "string",
+        "description": "Plain-text event description."
+      },
+      "location": {
+        "type": "string",
+        "description": "Event location display name."
+      },
+      "attendees": {
+        "type": "array",
+        "items": {
+          "type": "string",
+          "format": "email"
+        },
+        "description": "Email addresses of required attendees. Outlook sends them invitations."
+      },
+      "isOnlineMeeting": {
+        "type": "boolean",
+        "default": false,
+        "description": "Whether to create an online meeting."
+      },
+      "isAllDay": {
+        "type": "boolean",
+        "description": "Whether this is an all-day event."
+      },
+      "calendarId": {
+        "type": "string",
+        "minLength": 1,
+        "description": "Optional calendar ID from microsoft-outlook__list-calendars. If omitted, uses the default calendar."
+      }
+    },
+    "required": ["subject", "start", "end"],
+    "additionalProperties": false
+  },
+  "hosts": ["graph.microsoft.com"],
+  "annotations": {
+    "readOnly": false,
+    "destructive": false
+  }
+}

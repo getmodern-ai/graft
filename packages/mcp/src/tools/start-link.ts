@@ -1,5 +1,5 @@
 import { START_LINK_TOOL, type StartLinkResult } from "@graft/ask-card/shape";
-import { ServiceError } from "@graft/core";
+import { providerDisplayName, ServiceError } from "@graft/core";
 
 import { APP_ONLY_TOOL_META } from "../ask-card";
 import { isProviderLinkFallback, mintProviderLink, proposalOfLinkAsk } from "../provider-link";
@@ -27,7 +27,7 @@ import type { MetaTool } from "./meta";
  *
  * Only a `connection` ask whose provider connects with a link is served: the keyring's asks are
  * the form's, and `card_not_available` says so. The build choice rides the signed state, as it
- * does from the console's button.
+ * does from the console's button, and so does the line for the integration's tools (GRA-239).
  */
 
 export const START_LINK = START_LINK_TOOL;
@@ -37,7 +37,7 @@ export const startLink: MetaTool = {
     name: START_LINK,
     description:
       "Called by Graft's ask card on a chat product that renders it: mints a connection provider's sign-in link for one of this agent's open connection asks and answers { url, expiresAt, provider }, which the card opens in a popup. " +
-      "Takes pendingActionId, the ask the awaiting result named, and approveBuild, whether the asking agent may build tools against the connection once it is made. " +
+      "Takes pendingActionId, the ask the awaiting result named, approveBuild, whether the asking agent may build tools against the connection once it is made, and allowVendor, whether the integration's tools then run for it without asking, destructive ones left out. " +
       "Serves only an ask routed to a provider that connects with a link; the link's return makes the connection and answers the ask. App-only (_meta.ui.visibility app), so a host hides it from the model. " +
       "Refuses card_not_available for a static-token agent or an ask another provider serves, ask_not_found for another agent's ask, answered or expired for a closed one.",
     inputSchema: {
@@ -51,6 +51,11 @@ export const startLink: MetaTool = {
           type: "boolean",
           description:
             "Record the asking agent's build approval with the connection the return makes (default false).",
+        },
+        allowVendor: {
+          type: "boolean",
+          description:
+            "Record the asking agent's standing approval for the integration's tools, destructive ones left out, with the connection the return makes (default false).",
         },
       },
       required: ["pendingActionId"],
@@ -66,6 +71,9 @@ export const startLink: MetaTool = {
     }
     if (args.approveBuild !== undefined && typeof args.approveBuild !== "boolean") {
       return toolRefusal("input_invalid", "approveBuild must be a boolean when given");
+    }
+    if (args.allowVendor !== undefined && typeof args.allowVendor !== "boolean") {
+      return toolRefusal("input_invalid", "allowVendor must be a boolean when given");
     }
     const admitted = await admitCardCall(session, pendingActionId);
     if ("refused" in admitted) return admitted.refused;
@@ -101,7 +109,11 @@ export const startLink: MetaTool = {
           handoff: deps.handoff,
           authUrl: deps.authUrl,
         },
-        { approveBuild: args.approveBuild === true, fromCard: true },
+        {
+          approveBuild: args.approveBuild === true,
+          allowVendor: args.allowVendor === true,
+          fromCard: true,
+        },
       );
     } catch (error) {
       if (error instanceof ServiceError) {
@@ -114,7 +126,7 @@ export const startLink: MetaTool = {
       // console button lands on that form, so the refusal is the one the card answers with it.
       return toolRefusal(
         CARD_NOT_AVAILABLE,
-        `${started.provider} could not start its sign-in (${started.message}), so this connection is made on Graft's own page instead. ${CONSOLE_IS_THE_PLACE}`,
+        `${providerDisplayName(started.provider)} could not start its sign-in (${started.message}), so this connection is made on Graft's own page instead. ${CONSOLE_IS_THE_PLACE}`,
       );
     }
     const result: StartLinkResult = {

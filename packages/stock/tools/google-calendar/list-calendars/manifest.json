@@ -1,0 +1,14 @@
+{
+  "name": "list-calendars",
+  "description": "Lists the calendars the person's Google Calendar account can see, with each one's id, name, time zone, access role and whether it is the person's own primary calendar. The id is the calendarId every other google-calendar tool takes; \"primary\" always names the person's own calendar, so this is needed only for another calendar.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {},
+    "additionalProperties": false
+  },
+  "hosts": ["www.googleapis.com"],
+  "annotations": {
+    "readOnly": true,
+    "destructive": false
+  }
+}

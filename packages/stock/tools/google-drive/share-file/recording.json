@@ -1,0 +1,30 @@
+{
+  "format": 1,
+  "tool": "google-drive__share-file",
+  "recordedAt": "2026-10-09T18:50:12.447Z",
+  "input": {
+    "fileId": "9pzTFNTHCeO9lYvbqHhTyJpJ8FzjfEFkZ",
+    "email": "someone@example.com",
+    "role": "reader"
+  },
+  "exchanges": [
+    {
+      "kind": "write",
+      "method": "POST",
+      "url": "https://www.googleapis.com/drive/v3/files/9pzTFNTHCeO9lYvbqHhTyJpJ8FzjfEFkZ/permissions",
+      "body": {
+        "json": {
+          "type": "user",
+          "role": "reader",
+          "emailAddress": "someone@example.com"
+        }
+      }
+    }
+  ],
+  "result": {
+    "id": null,
+    "type": null,
+    "role": null,
+    "emailAddress": null
+  }
+}

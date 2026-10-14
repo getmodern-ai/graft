@@ -2,11 +2,12 @@ import type { AgentScopeMode } from "@graft/core";
 import { SETUP_HARNESSES, type SetupHarness, setupHarnessOf } from "@graft/core/setup/harness";
 import { isAwaitingHarness } from "@graft/core/setup/setup.rules";
 import { useEffect, useRef, useState } from "react";
-
+import { InfoIcon } from "@/components/icons";
 import { Loader } from "@/components/loader";
 import { SetupChoice } from "@/components/setup/setup-choice";
 import { SetupDisclosure } from "@/components/setup/setup-disclosure";
 import { SetupFooter } from "@/components/setup/setup-footer";
+import { SetupLogo } from "@/components/setup/setup-logo";
 import { SetupStepHeader } from "@/components/setup/setup-step-header";
 import { useSetupMutation } from "@/components/setup/use-setup-mutation";
 import { StatusChip } from "@/components/status-chip";
@@ -21,6 +22,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { useIsMobile } from "@/hooks/use-mobile";
 import { readScopeMode, SCOPE_MODE_ITEMS } from "@/lib/scope-mode";
 import { agentToAdopt } from "@/lib/setup-page";
 import { nextSetup, type SetupStateData, startSetup } from "@/lib/setup-queries";
@@ -86,6 +88,7 @@ function HarnessReview({ state }: { state: SetupStateData }) {
               value: entry.id,
               label: entry.label,
               description: entry.description,
+              media: <SetupLogo harness={entry.id} />,
             }))}
             value={harness}
             onChange={setHarness}
@@ -146,27 +149,29 @@ function ChooseHarness({ state }: { state: SetupStateData }) {
   const start = useSetupMutation(startSetup);
 
   const defaultName = harness ? setupHarnessOf(harness).agentName : "";
+  const isMobile = useIsMobile();
+  const begin = (chosen: SetupHarness) =>
+    start.mutate({
+      harness: chosen,
+      agent: {
+        ...(name.trim() ? { name: name.trim() } : {}),
+        workingSetCap: Number(cap),
+        idleWindowDays: Number(idleDays),
+        scopeMode,
+      },
+    });
 
   return (
     <form
       className="flex flex-col gap-6"
       onSubmit={(event) => {
         event.preventDefault();
-        if (!harness) return;
-        start.mutate({
-          harness,
-          agent: {
-            ...(name.trim() ? { name: name.trim() } : {}),
-            workingSetCap: Number(cap),
-            idleWindowDays: Number(idleDays),
-            scopeMode,
-          },
-        });
+        if (harness) begin(harness);
       }}
     >
       <SetupStepHeader
         title="Which harness do you use?"
-        description="Graft makes an agent for it now. You connect the harness to that agent at the end of Setup."
+        description="Pick the one you use. You connect it at the end, with one prompt."
       />
       <SetupChoice
         name="setup-harness"
@@ -175,9 +180,12 @@ function ChooseHarness({ state }: { state: SetupStateData }) {
           value: entry.id,
           label: entry.label,
           description: entry.description,
+          media: <SetupLogo harness={entry.id} />,
         }))}
         value={harness}
         onChange={setHarness}
+        // A tap is the choice on a phone, with the defaults (GRA-267).
+        onPick={isMobile ? begin : undefined}
         disabled={start.isPending}
       />
 
@@ -253,7 +261,16 @@ function ChooseHarness({ state }: { state: SetupStateData }) {
         </FieldGroup>
       </SetupDisclosure>
 
-      <SetupFooter state={state} disabled={start.isPending}>
+      <SetupFooter
+        state={state}
+        disabled={start.isPending}
+        summary={
+          <>
+            <InfoIcon className="size-4 shrink-0" />
+            You can change this later on the agent's page.
+          </>
+        }
+      >
         <Button type="submit" disabled={!harness || start.isPending}>
           {start.isPending ? "Creating agent…" : "Continue"}
         </Button>
@@ -268,6 +285,7 @@ function ChooseHarness({ state }: { state: SetupStateData }) {
  */
 function ChooseAgent({ state }: { state: SetupStateData }) {
   const agents = state.activeAgents;
+  const isMobile = useIsMobile();
   const [agentId, setAgentId] = useState<string | null>(null);
   const start = useSetupMutation(startSetup);
 
@@ -298,6 +316,7 @@ function ChooseAgent({ state }: { state: SetupStateData }) {
         }))}
         value={agentId}
         onChange={setAgentId}
+        onPick={isMobile ? (chosen) => start.mutate({ agentId: chosen }) : undefined}
         disabled={start.isPending}
       />
       <SetupFooter state={state} disabled={start.isPending}>

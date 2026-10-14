@@ -1,0 +1,44 @@
+{
+  "name": "create-company",
+  "description": "Creates a HubSpot company from a name, with optional domain, industry, city, country, phone and owner (an id from hubspot__list-owners).",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "name": {
+        "type": "string",
+        "description": "Company name."
+      },
+      "domain": {
+        "type": "string",
+        "description": "Company domain."
+      },
+      "industry": {
+        "type": "string",
+        "description": "Company industry."
+      },
+      "city": {
+        "type": "string",
+        "description": "Company city."
+      },
+      "country": {
+        "type": "string",
+        "description": "Company country."
+      },
+      "phone": {
+        "type": "string",
+        "description": "Company phone number."
+      },
+      "ownerId": {
+        "type": "string",
+        "description": "An owner ID from hubspot__list-owners."
+      }
+    },
+    "required": ["name"],
+    "additionalProperties": false
+  },
+  "hosts": ["api.hubapi.com"],
+  "annotations": {
+    "readOnly": false,
+    "destructive": false
+  }
+}

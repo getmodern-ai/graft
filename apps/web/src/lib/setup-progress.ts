@@ -221,3 +221,47 @@ export function jobPollInterval(read: {
   if (read.status === "error") return false;
   return progressCard(read.data).kind === "working" ? JOB_POLL_MS : false;
 }
+
+/**
+ * Where a label sits in the five parts Setup v2's building row counts ("Reading the documentation ·
+ * 1 of 5"): the documentation, the writing, the check, the trial against the service, and the
+ * publish with its dry run. Before any of them the row is at none of five; a pass is all five.
+ */
+export const SETUP_BUILD_PARTS = 5;
+
+export function progressPart(card: Pick<ProgressCard, "kind" | "label">): number {
+  if (card.kind === "passed") return SETUP_BUILD_PARTS;
+  switch (card.label) {
+    case SETUP_STAGE_LABEL.docs:
+      return 1;
+    case SETUP_STAGE_LABEL.write:
+      return 2;
+    case SETUP_STAGE_LABEL.check:
+      return 3;
+    case SETUP_STAGE_LABEL.prove:
+      return 4;
+    case SETUP_STAGE_LABEL.publish:
+    case SETUP_STAGE_LABEL.dry_run:
+      return 5;
+    default:
+      return 0;
+  }
+}
+
+/**
+ * The building step's line under the integration's name (GRA-274): the integration-wide approval
+ * the agent holds, read from its integration approvals, never a claim the record does not hold.
+ * The tool Setup builds is read-only, but the connection is not, and the line for the
+ * integration's tools on the connect card may have allowed the integration. It names the approval
+ * and promises nothing per tool, since a tool's own answer (`askEveryCall`, a deny) still stands
+ * (Greptile on #214). No approval, or a read not yet answered (`undefined`), says only Connected.
+ */
+export function setupConnectedLine(
+  integrationName: string,
+  approval: { includesDestructive: boolean } | null | undefined,
+): string {
+  if (!approval) return "Connected";
+  return `Connected · ${integrationName} allowed for this agent, destructive tools ${
+    approval.includesDestructive ? "included" : "excluded"
+  }`;
+}

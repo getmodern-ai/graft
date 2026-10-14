@@ -1,0 +1,137 @@
+type RichText = {
+  type: "text";
+  text: { content: string };
+};
+
+type TextBlock = {
+  object: "block";
+  type:
+    | "heading_1"
+    | "heading_2"
+    | "heading_3"
+    | "bulleted_list_item"
+    | "numbered_list_item"
+    | "quote"
+    | "paragraph";
+  heading_1?: { rich_text: RichText[] };
+  heading_2?: { rich_text: RichText[] };
+  heading_3?: { rich_text: RichText[] };
+  bulleted_list_item?: { rich_text: RichText[] };
+  numbered_list_item?: { rich_text: RichText[] };
+  quote?: { rich_text: RichText[] };
+  paragraph?: { rich_text: RichText[] };
+};
+
+type TodoBlock = {
+  object: "block";
+  type: "to_do";
+  to_do: { rich_text: RichText[]; checked: boolean };
+};
+
+type Block = TextBlock | TodoBlock;
+
+type AppendResponse = {
+  results?: Array<{ id?: unknown }>;
+};
+
+function pageIdFrom(value: string): string {
+  const trimmed = value.trim();
+  if (!/^https?:\/\//i.test(trimmed)) return trimmed;
+
+  // The page's id ends the URL's path; a query (a view) or a fragment (a block) names another.
+  const path = trimmed.split(/[?#]/, 1)[0].replace(/\/+$/, "");
+  const match = path.match(
+    /([0-9a-fA-F]{32}|[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})$/,
+  );
+  if (!match) throw new Error("The Notion page URL does not end in a page ID");
+  return match[1];
+}
+
+/** Notion's limits: 2,000 characters per text object, 100 text objects per block. */
+const TEXT_LIMIT = 2000;
+const TEXTS_PER_BLOCK = 100;
+
+function richText(content: string): RichText[] {
+  if (content.length > TEXT_LIMIT * TEXTS_PER_BLOCK) {
+    throw new Error(`A line may hold at most ${TEXT_LIMIT * TEXTS_PER_BLOCK} characters`);
+  }
+  const parts: RichText[] = [];
+  let start = 0;
+  while (start < content.length) {
+    let end = Math.min(start + TEXT_LIMIT, content.length);
+    // Never between the two halves of a surrogate pair (an emoji): cut before it instead.
+    const last = content.charCodeAt(end - 1);
+    if (end < content.length && last >= 0xd800 && last <= 0xdbff) end -= 1;
+    parts.push({ type: "text", text: { content: content.slice(start, end) } });
+    start = end;
+  }
+  if (parts.length > TEXTS_PER_BLOCK) {
+    throw new Error(`A line may hold at most ${TEXT_LIMIT * TEXTS_PER_BLOCK} characters`);
+  }
+  return parts;
+}
+
+function textBlock(type: TextBlock["type"], content: string): TextBlock {
+  return {
+    object: "block",
+    type,
+    [type]: { rich_text: richText(content) },
+  } as TextBlock;
+}
+
+function lineToBlock(line: string): Block {
+  if (line.startsWith("### ")) return textBlock("heading_3", line.slice(4));
+  if (line.startsWith("## ")) return textBlock("heading_2", line.slice(3));
+  if (line.startsWith("# ")) return textBlock("heading_1", line.slice(2));
+  if (line.startsWith("- ")) return textBlock("bulleted_list_item", line.slice(2));
+  if (line.startsWith("1. ")) return textBlock("numbered_list_item", line.slice(3));
+  if (line.startsWith("[ ] ")) {
+    return {
+      object: "block",
+      type: "to_do",
+      to_do: { rich_text: richText(line.slice(4)), checked: false },
+    };
+  }
+  if (line.startsWith("[x] ")) {
+    return {
+      object: "block",
+      type: "to_do",
+      to_do: { rich_text: richText(line.slice(4)), checked: true },
+    };
+  }
+  if (line.startsWith("> ")) return textBlock("quote", line.slice(2));
+  return textBlock("paragraph", line);
+}
+
+export default async (input: Input, ctx: Context) => {
+  const lines = input.content.split(/\r?\n/).filter((line) => line.trim().length > 0);
+
+  if (lines.length === 0) throw new Error("Content must contain at least one non-empty line");
+  if (lines.length > 100) throw new Error("Content must not contain more than 100 non-empty lines");
+
+  const children = lines.map(lineToBlock);
+  const body = { children };
+  const pageId = pageIdFrom(input.pageId);
+  const res = await ctx.fetch(`/blocks/${encodeURIComponent(pageId)}/children`, {
+    method: "PATCH",
+    headers: {
+      "content-type": "application/json",
+      "Notion-Version": "2025-09-03",
+    },
+    body: JSON.stringify(body),
+  });
+
+  if (res.status === 202 && res.headers.get("x-graft-dry-run") === "intercepted") {
+    return { appended: false, sent: body };
+  }
+
+  if (!res.ok)
+    throw new Error(`PATCH /blocks/{page_id}/children ${res.status}: ${await res.text()}`);
+
+  const response = (await res.json()) as AppendResponse;
+  const blockIds = (response.results ?? [])
+    .map((block) => block.id)
+    .filter((id): id is string => typeof id === "string");
+
+  return { appended: true, blockIds };
+};

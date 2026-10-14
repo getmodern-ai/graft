@@ -1,0 +1,19 @@
+{
+  "name": "get-customer",
+  "description": "Gets one Stripe customer with their subscriptions: contact details, balance, and each subscription's status, billing period, prices, products and quantities. Takes a customer id from stripe__find-customer; left out, it reads the newest customer.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "customer": {
+        "type": "string",
+        "description": "A Stripe customer ID from stripe__find-customer. Leave it out to read the newest customer."
+      }
+    },
+    "additionalProperties": false
+  },
+  "hosts": ["api.stripe.com"],
+  "annotations": {
+    "readOnly": true,
+    "destructive": false
+  }
+}

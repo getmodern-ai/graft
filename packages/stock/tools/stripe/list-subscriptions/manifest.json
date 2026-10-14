@@ -1,0 +1,46 @@
+{
+  "name": "list-subscriptions",
+  "description": "Lists Stripe subscriptions by status (active, past_due, canceled, trialing and the rest, or all), optionally for one customer id from stripe__find-customer, with each one's billing period, prices and quantities. A subscription's customer id feeds stripe__get-customer. When hasMore is true, nextCursor passed back as cursor reads the next page.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "limit": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 100,
+        "default": 10,
+        "description": "Maximum number of subscriptions to return."
+      },
+      "customer": {
+        "type": "string",
+        "description": "Optional Stripe customer ID, such as one returned by stripe__find-customer."
+      },
+      "status": {
+        "type": "string",
+        "enum": [
+          "active",
+          "past_due",
+          "unpaid",
+          "canceled",
+          "incomplete",
+          "incomplete_expired",
+          "trialing",
+          "paused",
+          "all"
+        ],
+        "default": "all",
+        "description": "Subscription status to return. Use all to include canceled subscriptions."
+      },
+      "cursor": {
+        "type": "string",
+        "description": "The nextCursor of an earlier answer with the same filters, to read the subscriptions after it."
+      }
+    },
+    "additionalProperties": false
+  },
+  "hosts": ["api.stripe.com"],
+  "annotations": {
+    "readOnly": true,
+    "destructive": false
+  }
+}

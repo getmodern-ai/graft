@@ -1,7 +1,13 @@
 import type { MigrationChain } from "@graft/db/migration-chain";
 import { describe, expect, it, vi } from "vitest";
 
-import { ADMIN_NAME, bootstrapAdmin, MigrationChainBrokenError, migrateOnStart } from "./boot";
+import {
+  ADMIN_NAME,
+  bootstrapAdmin,
+  loadStockOnStart,
+  MigrationChainBrokenError,
+  migrateOnStart,
+} from "./boot";
 
 /**
  * The boot's two steps with fakes: the chain check gates the migrator, and the admin is opened
@@ -89,5 +95,38 @@ describe("bootstrapAdmin", () => {
     expect(countPersons).not.toHaveBeenCalled();
     expect(signUp).not.toHaveBeenCalled();
     expect(log).not.toHaveBeenCalled();
+  });
+});
+
+describe("loadStockOnStart", () => {
+  it("reads the workspace, loads it, and says what was appended", async () => {
+    const log = vi.fn();
+    const load = vi.fn(async () => ({
+      tools: 1,
+      appended: [{ vendor: "open-meteo", name: "current-weather", versionNumber: 1 }],
+      refused: [],
+    }));
+    const report = await loadStockOnStart({ read: async () => [], load, log });
+    expect(load).toHaveBeenCalledWith([]);
+    expect(report.tools).toBe(1);
+    expect(log).toHaveBeenCalledWith(
+      "stock: 1 tool(s) in the workspace; appended open-meteo__current-weather v1",
+    );
+  });
+
+  it("says when nothing changed, and names a refused tool with its problems without failing the boot", async () => {
+    const log = vi.fn();
+    await loadStockOnStart({
+      read: async () => [],
+      load: async () => ({
+        tools: 2,
+        appended: [],
+        refused: [{ vendor: "open-meteo", name: "broken", problems: ["global-fetch"] }],
+      }),
+      log,
+    });
+    expect(log).toHaveBeenCalledWith(
+      "stock: 2 tool(s) in the workspace; the catalogue is current; refused open-meteo__broken (global-fetch)",
+    );
   });
 });

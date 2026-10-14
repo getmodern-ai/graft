@@ -1,0 +1,37 @@
+{
+  "format": 1,
+  "tool": "github__create-pull-request",
+  "recordedAt": "2026-10-09T19:05:21.755Z",
+  "input": {
+    "owner": "lihdgureh-hm",
+    "repo": "kkisb",
+    "title": "Bhnu iwte tlajdpb sesi Nycpw",
+    "head": "unddmzl-npzwps",
+    "base": "hsja",
+    "draft": true
+  },
+  "exchanges": [
+    {
+      "kind": "write",
+      "method": "POST",
+      "url": "https://api.github.com/repos/lihdgureh-hm/kkisb/pulls",
+      "body": {
+        "json": {
+          "title": "Bhnu iwte tlajdpb sesi Nycpw",
+          "head": "unddmzl-npzwps",
+          "base": "hsja",
+          "draft": true
+        }
+      }
+    }
+  ],
+  "result": {
+    "created": false,
+    "sent": {
+      "title": "Bhnu iwte tlajdpb sesi Nycpw",
+      "head": "unddmzl-npzwps",
+      "base": "hsja",
+      "draft": true
+    }
+  }
+}

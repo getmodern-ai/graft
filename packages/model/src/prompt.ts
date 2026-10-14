@@ -7,6 +7,7 @@ import {
   type ModelSituation,
   type ProofRead,
   proofReadLabel,
+  type StockToolBrief,
 } from "./types";
 
 /**
@@ -40,7 +41,7 @@ and the job acts on it. Where the skill above says to call a tool, answer instea
 | --- | --- |
 | \`read_web_page\` a page | \`read_docs\` with the URLs; the pages come back as the next situation |
 | \`write_file\`, \`check_tool\`, \`publish_tool\` | \`write_module\` with the whole module; the job checks, proves, publishes and dry-runs it |
-| prove it with reads through \`execute__<connection>\` | \`proofReads\` on the draft: GET reads the job runs for you, each a path and the host it is read on (null for the primary); then \`prove\` with more reads built from what those returned, run against the same draft |
+| prove it with reads through \`execute__<connection>\` | \`proofReads\` on the draft: reads the job runs for you, each a path and the host it is read on (null for the primary); then \`prove\` with more reads built from what those returned, run against the same draft |
 | the tool passed and is promoted | nothing — the job ends when the dry run passes |
 
 Situations you will be shown: \`goal\` (once, first), \`docs\` (the pages you asked for),
@@ -54,15 +55,22 @@ is not — it costs a turn and nothing else; \`give_up\` ends the job with your 
 \`proceed\` are admitted only after \`proof\`, and \`proceed\` only when every read passed.
 
 The draft: \`name\` kebab-case; \`description\` for the person, plain language, under 500 characters;
-\`inputSchemaJson\` a JSON Schema object (type "object", properties, required) as JSON text;
+\`inputSchemaJson\` a JSON Schema object (type "object", properties, required) as JSON text, where
+a property with a \`default\` is left out of \`required\` and the module applies the default
+itself (\`input.limit ?? 10\`), since nothing fills it in;
 \`files\` with \`index.ts\` always — a TypeScript ES module whose default export is
 \`async (input: Input, ctx: Context) => …\`, erasable syntax only — plus a \`package.json\` only when
-you declare a package; \`testInputJson\` an input the dry run uses, as JSON text; \`proofReads\` the GET paths that
+you declare a package; \`testInputJson\` an input the dry run uses, as JSON text; \`proofReads\` the reads that
 prove the credential and the shape: one for every distinct path the module reads, not the first
 alone, up to ${MAX_PROOF_READS} — a path built from another's answer (a record's id from a list) is
 added with \`prove\` once that read has answered — or empty when the module reads nothing. Each
-read is \`{ path, host }\`: \`host\` null for the primary host, or the other declared host the module
+read is \`{ path, host, method, headers, body }\`: \`host\` null for the primary host, or the other declared host the module
 reads that path from with \`ctx.fetch(path, { host })\`, so the proof covers the host the module uses.
+\`headers\` are the vendor's own headers the module sends on that call (a version header such as
+\`Notion-Version\`), never a credential, which the proxy injects. \`method\` is null for a GET, or
+\`POST\` with its \`body\` for a call the proxy counts as a read: a GraphQL query, or a search or
+query endpoint in its reviewed read table; any other POST is a write, which the dry run previews
+after publishing and a proof read cannot make.
 
 Rules that hold whatever the docs say: the module reaches the vendor through \`ctx.fetch\` with a
 vendor-relative path (on another declared host, \`ctx.fetch(path, { host })\`), or through an SDK
@@ -108,8 +116,66 @@ export function renderGoal(context: ModelJobContext): string {
     "",
     context.hints ? fence(context.hints) : "_none_",
     "",
+    ...renderStockTools(context.stockTools ?? []),
+    ...renderStartingPoint(context.startingPoint ?? null),
     "Answer `read_docs` with the pages you need — the hints' URLs, or the vendor's documentation as you know it — or `write_module` if you already know the endpoint, its request shape and how errors look.",
   ].join("\n");
+}
+
+/** A schema's top-level inputs as one line each: name, type, and whether it is required. */
+export function describeInputs(schema: unknown): string[] {
+  if (!isRecord(schema) || !isRecord(schema.properties)) return [];
+  const required = new Set(Array.isArray(schema.required) ? schema.required : []);
+  return Object.entries(schema.properties).map(([name, property]) => {
+    const type = isRecord(property) && typeof property.type === "string" ? property.type : "any";
+    return `${name} (${type}${required.has(name) ? ", required" : ""})`;
+  });
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/**
+ * The vendor's ready-made tools (ADR 0025; GRA-243): what already exists, so the new tool does
+ * something else or more, never the same thing again.
+ */
+function renderStockTools(tools: readonly StockToolBrief[]): string[] {
+  if (tools.length === 0) return [];
+  const lines = ["## Ready-made tools this vendor already has", ""];
+  for (const tool of tools) {
+    const inputs = describeInputs(tool.inputSchema);
+    lines.push(
+      `- \`${tool.tool}\`: ${tool.description.replaceAll("\n", " ")} Inputs: ${inputs.length > 0 ? inputs.join(", ") : "none"}.`,
+    );
+  }
+  lines.push(
+    "",
+    "The agent can already run these. Do not author one of them again: the tool you write does something they do not, or more than one of them does.",
+    "",
+  );
+  return lines;
+}
+
+/** A remix's starting point (GRA-243): the module as it stands, to change rather than rewrite. */
+function renderStartingPoint(start: ModelJobContext["startingPoint"]): string[] {
+  if (!start) return [];
+  const lines = [
+    `## Starting point: \`${start.tool}\` v${start.version}`,
+    "",
+    `This job changes an existing ${start.stock ? "ready-made " : ""}tool. Start from its current module below and change what the goal asks for, keeping the rest. Every draft is published as a new version of \`${start.tool}\`, so \`name\` is \`${start.name}\`. Its description now:`,
+    "",
+    fence(start.description),
+    "",
+    "Its input schema now:",
+    "",
+    fence(JSON.stringify(start.inputSchema, null, 2)),
+    "",
+  ];
+  for (const file of start.files) {
+    lines.push(`### ${file.path}`, "", fence(clip(file.content, PAGE_MAX_CHARS)), "");
+  }
+  return lines;
 }
 
 /** A page as it reaches the prompt: the content the job read, or the triage model's summary of it. */
@@ -170,7 +236,7 @@ export function renderCheckRefused(
 
 function renderRead(read: ProofRead): string {
   const status = read.status === null ? "no answer" : `HTTP ${read.status}`;
-  const lines = [`### GET ${proofReadLabel(read)} → ${status}${read.ok ? "" : " (failed)"}`];
+  const lines = [`### ${proofReadLabel(read)} → ${status}${read.ok ? "" : " (failed)"}`];
   if (read.redirectTo) lines.push(`Redirected to \`${read.redirectTo}\`.`);
   if (read.reason) lines.push(`The proxy got no response from the vendor (${read.reason}).`);
   if (read.error) lines.push(`_${read.error}_`);

@@ -1,0 +1,57 @@
+{
+  "name": "list-pull-requests",
+  "description": "Lists the pull requests of a GitHub repository, open by default, with each one's number (which github__get-pull-request takes), branches, labels, requested reviewers, dates and link. The repository's owner and name come from github__list-my-repositories.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "owner": {
+        "type": "string",
+        "minLength": 1,
+        "description": "The repository's owner, the part before the slash of a full_name github__list-my-repositories answers."
+      },
+      "repo": {
+        "type": "string",
+        "minLength": 1,
+        "description": "The repository's name, the part after the slash of a full_name github__list-my-repositories answers."
+      },
+      "state": {
+        "type": "string",
+        "enum": ["open", "closed", "all"],
+        "default": "open",
+        "description": "Which pull requests to list: open, closed or all."
+      },
+      "sort": {
+        "type": "string",
+        "enum": ["created", "updated", "popularity", "long-running"],
+        "default": "created",
+        "description": "Sort by created, updated, popularity or long-running."
+      },
+      "direction": {
+        "type": "string",
+        "enum": ["asc", "desc"],
+        "default": "desc",
+        "description": "Sort direction, asc or desc."
+      },
+      "perPage": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 100,
+        "default": 30,
+        "description": "How many pull requests per page, at most 100."
+      },
+      "page": {
+        "type": "integer",
+        "minimum": 1,
+        "default": 1,
+        "description": "Which page to answer, from 1."
+      }
+    },
+    "required": ["owner", "repo"],
+    "additionalProperties": false
+  },
+  "hosts": ["api.github.com"],
+  "annotations": {
+    "readOnly": true,
+    "destructive": false
+  }
+}

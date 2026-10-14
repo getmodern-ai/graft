@@ -1,0 +1,36 @@
+{
+  "name": "@graft/stock-build",
+  "version": "0.0.0",
+  "private": true,
+  "license": "Apache-2.0",
+  "type": "module",
+  "scripts": {
+    "build-tool": "tsx src/cli.ts",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "check-types": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@graft/check": "workspace:*",
+    "@graft/core": "workspace:*",
+    "@graft/mcp": "workspace:*",
+    "@graft/model": "workspace:*",
+    "@graft/proxy": "workspace:*",
+    "@graft/publish": "workspace:*",
+    "@graft/runner": "workspace:*",
+    "@graft/sandbox": "workspace:*",
+    "@graft/stock": "workspace:*",
+    "@graft/token": "workspace:*",
+    "@graft/toolbox": "workspace:*",
+    "@hono/node-server": "^2.1.1",
+    "@modelcontextprotocol/sdk": "^1.30.1",
+    "dotenv": "catalog:"
+  },
+  "devDependencies": {
+    "@graft/config": "workspace:*",
+    "@types/node": "catalog:",
+    "tsx": "^4.23.15",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  }
+}

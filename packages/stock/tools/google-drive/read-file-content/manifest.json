@@ -1,0 +1,28 @@
+{
+  "name": "read-file-content",
+  "description": "Reads a text-like file from Google Drive. Exports Google Docs and Slides as plain text and Google Sheets as CSV from the first sheet only. Returns a reason without downloading unsupported file types.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "fileId": {
+        "type": "string",
+        "minLength": 1,
+        "description": "Google Drive file ID from search-files or list-recent-files."
+      },
+      "maxCharacters": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 200000,
+        "default": 20000,
+        "description": "Maximum number of characters to return; defaults to 20000."
+      }
+    },
+    "required": ["fileId"],
+    "additionalProperties": false
+  },
+  "hosts": ["www.googleapis.com"],
+  "annotations": {
+    "readOnly": true,
+    "destructive": false
+  }
+}

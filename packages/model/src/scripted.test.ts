@@ -165,12 +165,71 @@ describe("parseScript", () => {
           answer: { kind: "write_module", note: "n", draft: { ...draft, files, proofReads: [7] } },
         },
       ]),
-    ).toThrow(/step 1: the draft's "proofReads" must be an array of paths, or of \{ path, host \}/);
+    ).toThrow(
+      /step 1: the draft's "proofReads" must be an array of paths, or of \{ path, host\?, method\?, headers\?, body\? \}/,
+    );
     expect(() =>
       parseScript([
         { on: "proof", answer: { kind: "prove", note: "n", proofReads: [{ host: "a.example" }] } },
       ]),
     ).toThrow(/step 1: a prove answer carries "proofReads"/);
+  });
+
+  /** GRA-271: a proof read may carry the vendor's headers, and be a read POST with its body. */
+  it("reads a proof read's method, headers and body, and refuses them of the wrong kind", () => {
+    const [proven] = parseScript([
+      {
+        on: "proof",
+        answer: {
+          kind: "prove",
+          note: "n",
+          proofReads: [
+            { path: "/v1/users/me", headers: { "Notion-Version": "2022-06-28" }, method: "GET" },
+            {
+              path: "/v1/search",
+              method: "POST",
+              headers: { "Notion-Version": "2022-06-28" },
+              body: '{"page_size":1}',
+            },
+            { path: "/v1/plain", headers: {}, method: null, body: null },
+          ],
+        },
+      },
+    ]);
+    expect(proven?.answer).toEqual({
+      kind: "prove",
+      note: "n",
+      proofReads: [
+        { path: "/v1/users/me", headers: { "Notion-Version": "2022-06-28" } },
+        {
+          path: "/v1/search",
+          method: "POST",
+          headers: { "Notion-Version": "2022-06-28" },
+          body: '{"page_size":1}',
+        },
+        { path: "/v1/plain" },
+      ],
+    });
+    for (const bad of [
+      { path: "/a", method: "DELETE" },
+      { path: "/a", headers: { "Notion-Version": 2022 } },
+      { path: "/a", headers: ["Notion-Version"] },
+      { path: "/a", method: "POST", body: { page_size: 1 } },
+    ]) {
+      expect(() =>
+        parseScript([{ on: "proof", answer: { kind: "prove", note: "n", proofReads: [bad] } }]),
+      ).toThrow(/step 1: a prove answer carries "proofReads"/);
+    }
+    // Greptile on #210: the request's own mistakes are the step's sentence, not a failed run.
+    for (const [bad, sentence] of [
+      [{ path: "/graphql", body: "{}" }, "carries a body without method POST"],
+      [{ path: "/a", headers: { Authorization: "Bearer x" } }, "is not a proof read's to send"],
+      [{ path: "/a", headers: { "Notion-Version": "1", "notion-version": "2" } }, "twice"],
+    ] as const) {
+      expect(() =>
+        parseScript([{ on: "proof", answer: { kind: "prove", note: "n", proofReads: [bad] } }]),
+      ).toThrow(new RegExp(`^step 1: .*${sentence}`));
+    }
   });
 
   it("fills a draft's optional fields and refuses a malformed step naming it", () => {

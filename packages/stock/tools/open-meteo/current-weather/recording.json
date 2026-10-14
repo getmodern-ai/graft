@@ -1,0 +1,88 @@
+{
+  "format": 1,
+  "tool": "open-meteo__current-weather",
+  "recordedAt": "2026-10-09T08:42:31Z",
+  "input": { "city": "Melbourne" },
+  "exchanges": [
+    {
+      "kind": "read",
+      "method": "GET",
+      "url": "https://geocoding-api.open-meteo.com/v1/search?name=Melbourne&count=1&format=json",
+      "response": {
+        "status": 200,
+        "headers": { "content-type": "application/json; charset=utf-8" },
+        "body": {
+          "json": {
+            "results": [
+              {
+                "id": 2158177,
+                "name": "Melbourne",
+                "latitude": -37.814,
+                "longitude": 144.96332,
+                "elevation": 25.0,
+                "feature_code": "PPLA",
+                "country_code": "AU",
+                "admin1_id": 2145234,
+                "admin2_id": 7839805,
+                "timezone": "Australia/Melbourne",
+                "population": 5350705,
+                "country_id": 2077456,
+                "country": "Australia",
+                "admin1": "Victoria",
+                "admin2": "Melbourne"
+              }
+            ],
+            "generationtime_ms": 0.66661835
+          }
+        }
+      }
+    },
+    {
+      "kind": "read",
+      "method": "GET",
+      "url": "https://api.open-meteo.com/v1/forecast?latitude=-37.814&longitude=144.96332&current=temperature_2m%2Cwind_speed_10m%2Cweather_code&timezone=auto",
+      "response": {
+        "status": 200,
+        "headers": { "content-type": "application/json; charset=utf-8" },
+        "body": {
+          "json": {
+            "latitude": -37.785587,
+            "longitude": 144.93976,
+            "generationtime_ms": 0.16736984252929688,
+            "utc_offset_seconds": 39600,
+            "timezone": "Australia/Melbourne",
+            "timezone_abbreviation": "GMT+11",
+            "elevation": 19.0,
+            "current_units": {
+              "time": "iso8601",
+              "interval": "seconds",
+              "temperature_2m": "°C",
+              "wind_speed_10m": "km/h",
+              "weather_code": "wmo code"
+            },
+            "current": {
+              "time": "2026-10-09T19:30",
+              "interval": 900,
+              "temperature_2m": 22.1,
+              "wind_speed_10m": 14.9,
+              "weather_code": 3
+            }
+          }
+        }
+      }
+    }
+  ],
+  "result": {
+    "found": true,
+    "city": "Melbourne",
+    "country": "Australia",
+    "latitude": -37.814,
+    "longitude": 144.96332,
+    "time": "2026-10-09T19:30",
+    "temperature": 22.1,
+    "temperatureUnit": "°C",
+    "windSpeed": 14.9,
+    "windSpeedUnit": "km/h",
+    "weatherCode": 3
+  }
+}

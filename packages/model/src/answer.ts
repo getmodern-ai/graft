@@ -24,18 +24,37 @@ import {
 
 /**
  * One proof read on the wire: a path, and the host it is read on, null for the primary host
- * (GRA-213). Every property present, as a strict schema wants, so "no host" is `null` rather than
- * an absent key; the reader turns it into the `ProofReadTarget` the job takes.
+ * (GRA-213); the method, null for `GET`, the vendor's own headers, empty for none, and a `POST`'s
+ * body, null for none (GRA-271). Every property present, as a strict schema wants, so "no host" is
+ * `null` rather than an absent key, and the headers are a list of name and value rather than a
+ * free-form object; the reader turns it into the `ProofReadTarget` the job takes.
  */
 export const WIRE_PROOF_READ_SCHEMA = z.strictObject({
   path: z
     .string()
-    .describe("A GET path from the host's root, starting with /: /v1/search?name=Berlin."),
+    .describe("A path from the host's root, starting with /: /v1/search?name=Berlin."),
   host: z
     .string()
     .nullable()
     .describe(
       "Null for the connection's primary host; otherwise another host the connection declares, the same host the module passes as ctx.fetch(path, { host }).",
+    ),
+  method: z
+    .enum(["GET", "POST"])
+    .nullable()
+    .describe(
+      "Null or GET for a GET. POST only for a call the proxy counts as a read: a GraphQL query, or a search or query endpoint in its reviewed read table.",
+    ),
+  headers: z
+    .array(z.strictObject({ name: z.string(), value: z.string() }))
+    .describe(
+      "The vendor's own request headers the module sends, such as Notion-Version; never a credential, which the proxy injects. Empty for none.",
+    ),
+  body: z
+    .string()
+    .nullable()
+    .describe(
+      "For POST, the request body the module sends, as text (JSON usually). Null otherwise.",
     ),
 });
 
@@ -58,7 +77,7 @@ export const WIRE_DRAFT_SCHEMA = z.strictObject({
   proofReads: z
     .array(WIRE_PROOF_READ_SCHEMA)
     .describe(
-      "GET reads that prove the credential and the request shape before publishing, one per distinct path the module reads, on the host the module reads it from, at most five: { path: /items?limit=1, host: null }. Empty to skip.",
+      "Reads that prove the credential and the request shape before publishing, one per distinct path the module reads, on the host the module reads it from, with the headers it sends, at most five: { path: /items?limit=1, host: null, method: null, headers: [], body: null }. Empty to skip.",
     ),
 });
 
@@ -81,7 +100,7 @@ export const WIRE_ANSWER_SCHEMA = z.strictObject({
   proofReads: z
     .array(WIRE_PROOF_READ_SCHEMA)
     .describe(
-      "For prove, more GET reads to run against the current draft before deciding — built from what earlier reads returned, each on the host the module reads it from. Empty otherwise.",
+      "For prove, more reads to run against the current draft before deciding — built from what earlier reads returned, each on the host the module reads it from. Empty otherwise.",
     ),
   draft: WIRE_DRAFT_SCHEMA.nullable().describe("For write_module, the module. Null otherwise."),
 });
@@ -98,24 +117,98 @@ export type WireProofRead = z.infer<typeof WIRE_PROOF_READ_SCHEMA>;
  */
 const PROOF_READ_HOST = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$/i;
 
-/** The wire's proof reads as the job takes them: trimmed, the host lower-cased, a null or empty host dropped, an empty path dropped. */
-function readProofReads(reads: readonly WireProofRead[]): ProofReadTarget[] {
-  return reads
+/**
+ * How many headers one proof read may carry, how long a header's value may be, and how long a
+ * `POST`'s body (GRA-271): a read proves one call's shape, and a version header or two is what a
+ * vendor asks of it. Bounds on what the job sends and records, not on what a module may send.
+ */
+export const MAX_PROOF_READ_HEADERS = 8;
+export const MAX_PROOF_READ_HEADER_VALUE_CHARS = 1_024;
+export const MAX_PROOF_READ_BODY_CHARS = 16_000;
+
+/** A header name as RFC 9110 §5.6.2 spells a token. */
+const HEADER_TOKEN = /^[!#$%&'*+\-.0-9A-Z^_`a-z|~]+$/;
+
+/**
+ * Header names a proof read never sends, by name and by prefix. `authorization`,
+ * `proxy-authorization` and `cookie` carry a credential, which the proxy injects and a module never
+ * holds; `host` is the target's; `proxy-*` is addressed to a proxy, and `x-graft-*` is the proxy's
+ * own namespace. Spelt here because this package imports nothing of Graft's; the job judges the
+ * rest of what the proxy would strip or set over the read against the proxy's own policy
+ * (`@graft/proxy`'s `unforwardedRequestHeaderNames`, called in `@graft/mcp`'s `acquire/job.ts`).
+ */
+const PROOF_READ_REFUSED_HEADERS: ReadonlySet<string> = new Set([
+  "authorization",
+  "proxy-authorization",
+  "cookie",
+  "host",
+]);
+const PROOF_READ_REFUSED_PREFIXES = ["proxy-", "x-graft-"] as const;
+
+/** A header value a request can carry: no control character but a tab. */
+function isHeaderValue(value: string): boolean {
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index);
+    if ((code < 0x20 && code !== 0x09) || code === 0x7f) return false;
+  }
+  return true;
+}
+
+/**
+ * The wire's proof reads as the job takes them: trimmed, the host lower-cased, a null or empty host
+ * dropped, an empty path dropped, `GET` and a null method left absent, header names lower-cased
+ * (a name is case-insensitive, and the label names it so), a null body absent. A header named
+ * twice is a problem rather than one value silently winning.
+ */
+function readProofReads(reads: readonly WireProofRead[]): {
+  reads: ProofReadTarget[];
+  problems: string[];
+} {
+  const problems: string[] = [];
+  const targets = reads
     .map((read) => {
-      const path = read.path.trim();
+      const target: ProofReadTarget = { path: read.path.trim() };
       const host = read.host?.trim().toLowerCase() ?? "";
-      return host.length > 0 ? { path, host } : { path };
+      if (host.length > 0) target.host = host;
+      if (read.method === "POST") target.method = "POST";
+      if (read.headers.length > 0) {
+        // No prototype, so a header named `__proto__` is an own key like any other (Greptile on #210).
+        const headers: Record<string, string> = Object.create(null);
+        for (const header of read.headers) {
+          const name = header.name.trim().toLowerCase();
+          if (Object.hasOwn(headers, name)) {
+            problems.push(
+              `proof read "${target.path}" names header "${header.name.trim()}" twice; send each header once`,
+            );
+          }
+          headers[name] = header.value.trim();
+        }
+        target.headers = headers;
+      }
+      if (read.body !== null) target.body = read.body;
+      return target;
     })
     .filter((read) => read.path.length > 0);
+  return { reads: targets, problems };
 }
 
-/** A proof read back in wire form: `host` present, null for the primary. */
+/** A proof read back in wire form: every key present, null or empty where the read names none. */
 function wireProofReads(reads: readonly ProofReadTarget[]): WireProofRead[] {
-  return reads.map((read) => ({ path: read.path, host: read.host ?? null }));
+  return reads.map((read) => ({
+    path: read.path,
+    host: read.host ?? null,
+    method: read.method ?? null,
+    headers: Object.entries(read.headers ?? {}).map(([name, value]) => ({ name, value })),
+    body: read.body ?? null,
+  }));
 }
 
-/** What is wrong with one proof read's shape, as sentences; the connection's hosts are the job's to judge. */
-function proofReadProblems(read: ProofReadTarget): string[] {
+/**
+ * What is wrong with one proof read's shape, as sentences. The connection's hosts, the headers the
+ * proxy would strip or set, and whether the proxy would let a `POST` through as a read are the
+ * job's to judge, which has the connection and imports the proxy.
+ */
+export function proofReadProblems(read: ProofReadTarget): string[] {
   const problems: string[] = [];
   if (!read.path.startsWith("/")) {
     problems.push(
@@ -126,6 +219,67 @@ function proofReadProblems(read: ProofReadTarget): string[] {
     problems.push(
       `proof read host "${read.host}" is not a host name; name one of the connection's hosts, such as api.example.com, or null for the primary`,
     );
+  }
+  problems.push(...proofReadRequestProblems(read));
+  return problems;
+}
+
+/**
+ * What is wrong with the request a proof read sends beyond its path and host (GRA-271): a body on
+ * a `GET`, a header that is not a header or is the proxy's, a header named twice in any case, and
+ * the caps. The scripted reader applies it too, so a hand-written script's mistake is a sentence
+ * naming the step rather than a run that fails inside `fetch` (Greptile on #210).
+ */
+export function proofReadRequestProblems(read: ProofReadTarget): string[] {
+  const problems: string[] = [];
+  if (read.body !== undefined && read.method !== "POST") {
+    problems.push(
+      `proof read "${read.path}" carries a body without method POST; a GET sends no body, so set method to POST for a read POST or drop the body`,
+    );
+  }
+  if (read.body !== undefined && read.body.length > MAX_PROOF_READ_BODY_CHARS) {
+    problems.push(
+      `proof read "${read.path}" carries a body of ${read.body.length} characters and a proof read sends at most ${MAX_PROOF_READ_BODY_CHARS}; send the smallest body that proves the shape`,
+    );
+  }
+  const headers = Object.entries(read.headers ?? {});
+  if (headers.length > MAX_PROOF_READ_HEADERS) {
+    problems.push(
+      `proof read "${read.path}" carries ${headers.length} headers and a proof read sends at most ${MAX_PROOF_READ_HEADERS}; keep the ones the vendor requires, such as a version header`,
+    );
+  }
+  const seen = new Set<string>();
+  for (const [name, value] of headers) {
+    const shown = name.slice(0, 64);
+    const lower = name.toLowerCase();
+    if (seen.has(lower)) {
+      problems.push(
+        `proof read "${read.path}" names header "${shown}" twice; send each header once`,
+      );
+    }
+    seen.add(lower);
+    if (!HEADER_TOKEN.test(name)) {
+      problems.push(
+        `proof read header "${shown}" is not a header name; a name is letters, digits and !#$%&'*+-.^_\`|~ with no space, such as Notion-Version`,
+      );
+    } else if (
+      PROOF_READ_REFUSED_HEADERS.has(lower) ||
+      PROOF_READ_REFUSED_PREFIXES.some((prefix) => lower.startsWith(prefix))
+    ) {
+      problems.push(
+        `proof read header "${shown}" is not a proof read's to send: the proxy injects the connection's credential and owns the request's host and its own headers, and a module never holds a credential; drop it`,
+      );
+    }
+    if (!isHeaderValue(value)) {
+      problems.push(
+        `proof read header "${shown}" has a value with a line break or a control character; a header value is one line of text`,
+      );
+    }
+    if (value.length > MAX_PROOF_READ_HEADER_VALUE_CHARS) {
+      problems.push(
+        `proof read header "${shown}" has a value of ${value.length} characters and a proof read's header carries at most ${MAX_PROOF_READ_HEADER_VALUE_CHARS}`,
+      );
+    }
   }
   return problems;
 }
@@ -237,8 +391,11 @@ export function readWireAnswer(wire: WireAnswer, situation: ModelSituationKind):
         inputSchema: parseJsonObject(wire.draft.inputSchemaJson, "inputSchemaJson", problems),
         files: wire.draft.files.map((file) => ({ path: file.path.trim(), content: file.content })),
         testInput: parseJsonObject(wire.draft.testInputJson, "testInputJson", problems),
-        proofReads: readProofReads(wire.draft.proofReads),
+        proofReads: [],
       };
+      const proofReads = readProofReads(wire.draft.proofReads);
+      draft.proofReads = proofReads.reads;
+      problems.push(...proofReads.problems);
       if (draft.files.length === 0) problems.push("the draft has no files");
       problems.push(...draftProblems(draft));
       return problems.length > 0
@@ -246,7 +403,9 @@ export function readWireAnswer(wire: WireAnswer, situation: ModelSituationKind):
         : { ok: true, answer: { kind: "write_module", draft, note: wire.note.trim() } };
     }
     case "prove": {
-      const reads = readProofReads(wire.proofReads);
+      const read = readProofReads(wire.proofReads);
+      const reads = read.reads;
+      problems.push(...read.problems);
       if (reads.length === 0) problems.push("prove names no path to read");
       for (const read of reads) problems.push(...proofReadProblems(read));
       if (reads.length > MAX_PROOF_READS) {

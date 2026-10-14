@@ -30,6 +30,8 @@ import {
 } from "@graft/mcp";
 import { GOAL_PROPOSAL_MAX, type GoalProposalOutcome } from "@graft/model";
 
+import { type SetupStockRouteDeps, takePlannedStock } from "./setup-stock";
+
 /**
  * Setup's goal, build and building steps on the server (GRA-207; ADR 0024, *The console is a
  * second caller of `acquire`* and *Build is the build approval*). The routes in `api.ts` are thin
@@ -66,6 +68,11 @@ export type SetupBuildRouteDeps = {
   acquireJob: AcquireJobDeps;
   model?: SetupAcquireDeps["model"];
   acquireRunner?: SetupAcquireDeps["acquireRunner"];
+  /**
+   * The ready-made tool's seams (GRA-276; `setup-stock.ts`): a planned ready-made tool is taken
+   * rather than built. Absent, such a plan waits on the task step, where the choice is offered again.
+   */
+  stock?: SetupStockRouteDeps;
 };
 
 /**
@@ -300,6 +307,40 @@ export async function buildSetupTool(
   // After the commit, so the runner's claim sees the row (`acquire` wakes it the same way).
   deps.acquireRunner?.kick();
   return state;
+}
+
+/**
+ * **The planned build** (Setup v2): a task chosen before connecting starts building the moment the
+ * record names a connection, with no Build press, since the person already said what to build. A
+ * ready-made tool chosen instead (GRA-276, the record's `stockTool`) is taken there and then rather
+ * than built (`takePlannedStock`), so the record moves straight on to the result.
+ * Runs when the record stands on `goal` with a connection and a saved task, after the task route
+ * connected the starter or a read learned the connection from the ask. Where the build cannot
+ * start (no model configured, the connection gone, a job still running that the person did not
+ * agree to leave) the state is answered as it is, and the tool screen shows the task with its
+ * Build button and the reason, as it did before the plan.
+ */
+export async function buildPlannedSetup(
+  ctx: ServiceContext,
+  principal: Principal,
+  state: SetupState,
+  deps: SetupBuildRouteDeps,
+  discardJob = false,
+): Promise<SetupState> {
+  const record = state.setup;
+  if (state.step !== "goal" || !record?.goal || !record.connectionId) return state;
+  try {
+    if (record.stockTool) {
+      if (!deps.stock) return state;
+      return await takePlannedStock(ctx, principal, { discardJob }, deps.stock);
+    }
+    return await buildSetupTool(ctx, principal, { goal: record.goal, discardJob }, deps);
+  } catch (error) {
+    if (error instanceof ServiceError && error.code === "CONFLICT") {
+      return getSetupState(ctx, principal, deps.setup, deps.agent);
+    }
+    throw error;
+  }
 }
 
 /** The job the record waits on, read as its agent; null when there is none or it is gone. */

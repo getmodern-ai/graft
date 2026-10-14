@@ -95,6 +95,8 @@ One module per question the proxy answers, so a change to one is made once:
 | `snowflake-jwt.ts` | Snowflake's key-pair JWT recipe and the PEM tolerance, the pure half of `snowflake_keypair_jwt` |
 | `credential-fields.ts` | the import-free tables of fields each scheme reads, required and optional |
 | `dry-run.ts` | the dry-run marker, the preview status, `isSafeMethod` and the preview, whose header names come from each scheme's `headerNames` |
+| `read-request.ts` | `classifyRequest`, whether a request is a read (a `GET` or `HEAD`, a GraphQL query, a reviewed endpoint; ADR 0008 as amended 2026-10-10), shared with `@graft/check`'s annotations |
+| `read-endpoints.ts` | the reviewed table of endpoints that are reads despite their method; adding an entry is a reviewed change |
 | `headers.ts` | the outgoing and passthrough header policies |
 | `token.ts` | where a capability token rides, which inbound headers are stripped, and the by-value sweep |
 | `body.ts` | capped, deadline-bound body reads |
@@ -142,7 +144,7 @@ and then:
 
 | Method | What happens | Answer |
 | --- | --- | --- |
-| `GET`, `HEAD` | forwarded to the vendor exactly as an ordinary call | the vendor's status, headers and body, plus `x-graft-dry-run: forwarded` |
+| a read: `GET`, `HEAD`, or a `POST` `classifyRequest` calls a read (a GraphQL query, a `read-endpoints.ts` entry) | forwarded to the vendor exactly as an ordinary call | the vendor's status, headers and body, plus `x-graft-dry-run: forwarded` |
 | anything else | stopped here, **before** a credential is decrypted or a token exchanged or signed | `202 Accepted`, `x-graft-dry-run: intercepted`, and the preview below |
 
 The preview is the request as it would have left, minus every value that is not the caller's to see:
@@ -174,11 +176,23 @@ the proxy's cap, as UTF-8 when it decodes as such and base64 otherwise. 202 beca
 on, and not 200, 201 or 204, so a status check for a completed write reads an honest no. The proxy
 never fabricates a vendor response.
 
+## Read-only runs
+
+A capability token may carry `readOnly: true` (ADR 0008 as amended 2026-10-10): the server writes
+it for an ordinary run of a tool annotated read-only, which its approval gate passed unasked on that
+annotation. Under it, after the body is read and before a credential is obtained, every request is
+classified as it would leave by the same `classifyRequest` the check annotated the tool with, and
+one that is not a read is refused `403 annotation_mismatch`, naming the tool. This holds the
+annotation where the check's static reading cannot: a module that changes its body at run time (a
+replaced `JSON.stringify`, a computed option) sends nothing under it. A dry run carries no such
+claim. The same rung (`annotationMismatch` in `app.ts`) is where a non-destructive tool's
+destructive request is to be refused once GRA-267's table exists.
+
 ## Refusals
 
 Every refusal is `{ error, reason, message }` with `reason` one of the `ProxyOutcome` words the
 wide event carries: `token_missing`, `token_expired`, `token_invalid`, `bad_connection_id`,
-`person_mismatch`, `connection_not_in_token`, `connection_unknown`, `connection_not_ready`,
+`person_mismatch`, `connection_not_in_token`, `annotation_mismatch`, `connection_unknown`, `connection_not_ready`,
 `connection_revoked`, `consent_required`, `credential_incomplete`, `credential_unreadable`,
 `relay_unavailable`, `token_exchange_failed`, `bad_target`, `host_not_in_set`, `host_not_public`,
 `request_too_large`, `request_timeout`, `response_too_large`, `upstream_timeout`,

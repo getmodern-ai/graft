@@ -1,0 +1,32 @@
+{
+  "format": 1,
+  "tool": "linear__comment-on-issue",
+  "recordedAt": "2026-10-10T17:39:57.135Z",
+  "input": {
+    "issueId": "UBD-127",
+    "body": "Pcod ngcnyoo owab Ymodt."
+  },
+  "exchanges": [
+    {
+      "kind": "write",
+      "method": "POST",
+      "url": "https://api.linear.app/graphql",
+      "body": {
+        "json": {
+          "query": "mutation CommentOnIssue($issueId: String!, $body: String!) { commentCreate(input: { issueId: $issueId, body: $body }) { success comment { id url body createdAt } } }",
+          "variables": {
+            "issueId": "UBD-127",
+            "body": "Pcod ngcnyoo owab Ymodt."
+          }
+        }
+      }
+    }
+  ],
+  "result": {
+    "commented": false,
+    "sent": {
+      "issueId": "UBD-127",
+      "body": "Pcod ngcnyoo owab Ymodt."
+    }
+  }
+}

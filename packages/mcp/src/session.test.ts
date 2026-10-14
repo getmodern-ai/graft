@@ -246,6 +246,8 @@ describe("SERVER_INSTRUCTIONS", () => {
     const head = SERVER_INSTRUCTIONS.slice(0, 512);
     for (const step of [
       "Call find_tool first",
+      // GRA-238 (ADR 0025): the first rule names the stock tool beside the demoted one.
+      "a ready-made or demoted match may exist; run or promote it",
       "promote it",
       "call request_connection",
       "Call acquire only when nothing fits",
@@ -605,6 +607,8 @@ describe("every fixed tool's annotations", () => {
 const SHARED = [
   // The order of operations.
   "call find_tool first",
+  // GRA-238 (ADR 0025): a stock tool is the other match find_tool may answer.
+  "a ready-made or demoted match may exist; run or promote it",
   "no authoring needed",
   "only when nothing fits",
   // GRA-125: acquire_status answers only news, so "only when it changed" left the instructions.

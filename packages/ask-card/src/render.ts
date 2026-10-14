@@ -16,9 +16,11 @@ import {
  * with a document and no host (`render.test.ts`), and `main.ts` is only the wiring to the host.
  *
  * Six shapes, in Cando's card anatomy (ADR 0017) and the console's voice. Four answer in place:
- * the **build approval** (Allow or Deny); the **tool's first-use approval** (GRA-116: the tool's
- * description in the model's words, its hints, Allow or Deny — the ask-every-call setting stays on
- * the console's page, and the card says when it is on); the **connection confirmation** for a
+ * the **build approval** (Allow or Decline); the **tool's first-use approval** (GRA-116: the tool's
+ * description in the model's words, its hints, Allow or Decline — the ask-every-call setting stays on
+ * the console's page, and the card says when it is on — and, where the server offers it, *Allow
+ * every <integration> tool for this agent* beside Allow with a destructive tick off by default,
+ * GRA-237); the **connection confirmation** for a
  * scheme that takes no credential (Connect or Decline, with GRA-75's build choice on by default);
  * and the **scope ask** — a connection the person already holds, asked for by an agent that was
  * not given it (GRA-104): Allow or Decline, with the same build choice. Two send the person
@@ -130,9 +132,22 @@ export function takesSecret(card: AskCard): boolean {
   );
 }
 
+/** The integration's name as the person reads it: the server's, else the slug (an older card). */
+export function integrationOf(card: AskCard): string {
+  return card.integrationName ?? card.vendor;
+}
+
+/** The connection named in a title, with its integration beside it when the two names differ. */
+function connectionWords(card: AskCard): string {
+  const integration = integrationOf(card);
+  return integration.toLowerCase() === card.displayName.toLowerCase()
+    ? card.displayName
+    : `${card.displayName} (${integration})`;
+}
+
 /** The title question, as the console's cards phrase it. */
 export function titleOf(card: AskCard): string {
-  const what = `${card.displayName} (${card.vendor})`;
+  const what = connectionWords(card);
   switch (card.kind) {
     case "build":
       return `Let ${card.agentName} build tools against ${what}?`;
@@ -195,7 +210,7 @@ export function toolHintsLabel(tool: NonNullable<AskCard["tool"]>): string {
 export function factsOf(card: AskCard): Array<{ label: string; value: string; mono?: boolean }> {
   const facts: Array<{ label: string; value: string; mono?: boolean }> = [
     { label: "Agent", value: card.agentName },
-    { label: "Integration", value: card.vendor },
+    { label: "Integration", value: integrationOf(card) },
     { label: "Connection", value: card.displayName },
   ];
   if (card.kind === "tool" && card.toolName) {
@@ -239,8 +254,13 @@ export function consoleButtonLabel(card: AskCard): string {
   return takesSecret(card) ? "Enter the secret in Graft" : "Open in the console";
 }
 
-/** The note beside a tool's description, as the console's card marks it. */
+/**
+ * The mark and sentence beside an authored tool's description, for a card whose data carries no
+ * `provenance` (a server older than GRA-245). The server's are `@graft/core`'s `toolProvenance`.
+ */
 export const MODEL_WORDS_NOTE = "written by the agent's model";
+const AUTHORED_PROVENANCE_NOTE =
+  "This tool's description was written by the agent's model, not by a person. Read it as the agent's account of what the tool does.";
 
 /** What the card says while the person is away, until `ask_status` says otherwise. */
 export const WAITING_SENTENCE = "Waiting for you to finish in the window that opened.";
@@ -316,19 +336,24 @@ export function renderAsk(card: AskCard, handlers: CardHandlers, doc: Document):
         doc,
         "p",
         "ask-note",
-        "This proposal was written by the agent's model from the documentation it read. Check the hosts before confirming.",
+        "The agent proposed this connection, from documentation it read or from a ready-made tool's details. Check the hosts before confirming.",
       ),
     );
   }
 
-  // The tool's description, marked as the model's words as the console's card marks it (GRA-116):
-  // a person deciding on a write should know the sentence was not written by anyone accountable.
+  // The tool's description, marked with where the tool came from as the console's card marks it
+  // (GRA-116, GRA-245): a person deciding on a write should know whether the sentence was reviewed
+  // by Graft or written by the agent's model.
   if (card.kind === "tool" && card.tool) {
+    const provenance = card.tool.provenance ?? {
+      badge: MODEL_WORDS_NOTE,
+      note: AUTHORED_PROVENANCE_NOTE,
+    };
     const quote = el(doc, "figure", "ask-quote");
     const caption = el(doc, "figcaption");
     caption.append(
-      el(doc, "span", "ask-badge", MODEL_WORDS_NOTE),
-      el(doc, "span", undefined, "Read it as the agent's account of what the tool does."),
+      el(doc, "span", "ask-badge", provenance.badge),
+      el(doc, "span", undefined, provenance.note),
     );
     quote.append(caption, el(doc, "blockquote", undefined, card.tool.description));
     root.append(quote);
@@ -446,6 +471,30 @@ export function renderAsk(card: AskCard, handlers: CardHandlers, doc: Document):
     settle(outcome.ok ? outcome : { ok: false, message: outcome.message });
   };
 
+  /**
+   * The line for the integration's tools under the build choice (GRA-239; ADR 0008 as amended
+   * 2026-10-09), ticked, in the server's words; null on a card the server wrote without it, which
+   * then sends exactly what it always sent.
+   */
+  const toolsLine = (): HTMLInputElement | null => {
+    const offer = card.vendorTools;
+    if (!offer) return null;
+    const choice = el(doc, "label", "ask-choice");
+    const box = el(doc, "input");
+    box.type = "checkbox";
+    box.checked = true;
+    box.name = "allowVendor";
+    const words = el(doc, "span");
+    words.append(
+      el(doc, "span", undefined, offer.label),
+      el(doc, "span", "ask-choice-hint", offer.description),
+    );
+    choice.append(box, words);
+    actions.before(choice);
+    return box;
+  };
+  const withLine = (line: HTMLInputElement | null) => (line ? { allowVendor: line.checked } : {});
+
   if (isLinkAsk(card)) {
     // A link provider's ask (GRA-117): the build choice, Decline through `answer_ask`, and the
     // provider's sign-in minted through `start_link` and opened in the person's browser.
@@ -456,6 +505,7 @@ export function renderAsk(card: AskCard, handlers: CardHandlers, doc: Document):
     box.name = "approveBuild";
     choice.append(box, el(doc, "span", undefined, buildChoiceLabel(card)));
     actions.before(choice);
+    const line = toolsLine();
 
     const decline = button(doc, "Decline", "secondary", () => void submit({ decline: true }));
     const connect = button(
@@ -465,6 +515,7 @@ export function renderAsk(card: AskCard, handlers: CardHandlers, doc: Document):
       () => {
         void (async () => {
           box.disabled = true;
+          if (line) line.disabled = true;
           decline.disabled = true;
           connect.disabled = true;
           let started: StartLinkOutcome;
@@ -472,6 +523,7 @@ export function renderAsk(card: AskCard, handlers: CardHandlers, doc: Document):
             started = await handlers.startLink({
               pendingActionId: card.pendingActionId,
               approveBuild: box.checked,
+              ...withLine(line),
             });
           } catch (error) {
             started = {
@@ -515,8 +567,40 @@ export function renderAsk(card: AskCard, handlers: CardHandlers, doc: Document):
     return root;
   }
 
+  if (card.kind === "tool" && card.vendorApproval) {
+    // The integration-wide yes beside Allow (GRA-237; ADR 0008 as amended 2026-10-09), in the
+    // server's words, with destructive tools a separate tick, off by default. Allow alone answers
+    // this tool as before and never carries the tick.
+    const offer = card.vendorApproval;
+    const choice = el(doc, "label", "ask-choice");
+    const box = el(doc, "input");
+    box.type = "checkbox";
+    box.checked = false;
+    box.name = "includesDestructive";
+    const words = el(doc, "span");
+    words.append(
+      el(doc, "span", undefined, offer.destructiveLabel),
+      el(doc, "span", "ask-choice-hint", offer.destructiveDescription),
+    );
+    choice.append(box, words);
+    actions.before(choice);
+
+    const deny = button(doc, "Decline", "secondary", () => void submit({ allow: false }));
+    const every = button(doc, offer.label, "secondary", () => {
+      box.disabled = true;
+      void submit({ allow: true, allowVendor: true, includesDestructive: box.checked });
+    });
+    const allow = button(doc, "Allow", "primary", () => {
+      box.disabled = true;
+      void submit({ allow: true });
+    });
+    buttons.push(deny, every, allow);
+    actions.append(deny, every, allow);
+    return root;
+  }
+
   if (card.kind === "build" || card.kind === "tool") {
-    const deny = button(doc, "Deny", "secondary", () => void submit({ allow: false }));
+    const deny = button(doc, "Decline", "secondary", () => void submit({ allow: false }));
     const allow = button(doc, "Allow", "primary", () => void submit({ allow: true }));
     buttons.push(deny, allow);
     actions.append(deny, allow);
@@ -544,10 +628,12 @@ export function renderAsk(card: AskCard, handlers: CardHandlers, doc: Document):
     return root;
   }
 
+  const line = toolsLine();
   const decline = button(doc, "Decline", "secondary", () => void submit({ decline: true }));
   const connect = button(doc, "Connect", "primary", () => {
     box.disabled = true;
-    void submit({ connect: true, approveBuild: box.checked });
+    if (line) line.disabled = true;
+    void submit({ connect: true, approveBuild: box.checked, ...withLine(line) });
   });
   buttons.push(decline, connect);
   actions.append(decline, connect);

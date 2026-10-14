@@ -1,0 +1,19 @@
+{
+  "name": "list-labels",
+  "description": "Lists the issue labels of the Linear workspace, up to 100, or of one team: each label's id, name and color, and its team's key (null for a workspace label). A label's id goes in the labelIds linear__create-issue and linear__update-issue take.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "teamId": {
+        "type": "string",
+        "description": "Narrows the list to one team's labels: a team's id from linear__list-teams."
+      }
+    },
+    "additionalProperties": false
+  },
+  "hosts": ["api.linear.app"],
+  "annotations": {
+    "readOnly": true,
+    "destructive": false
+  }
+}

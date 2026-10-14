@@ -1,0 +1,65 @@
+{
+  "name": "create-customer",
+  "description": "Creates a Stripe customer from an email address, with optional name, phone, description, address and metadata. The new customer id feeds stripe__get-customer, stripe__create-invoice and stripe__list-payments.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "email": {
+        "type": "string",
+        "description": "The customer's email address."
+      },
+      "name": {
+        "type": "string",
+        "description": "The customer's full name or business name."
+      },
+      "phone": {
+        "type": "string",
+        "description": "The customer's phone number."
+      },
+      "description": {
+        "type": "string",
+        "description": "A description of the customer."
+      },
+      "address": {
+        "type": "object",
+        "properties": {
+          "line1": {
+            "type": "string"
+          },
+          "line2": {
+            "type": "string"
+          },
+          "city": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string"
+          },
+          "postal_code": {
+            "type": "string"
+          },
+          "country": {
+            "type": "string",
+            "description": "Two-letter country code."
+          }
+        },
+        "additionalProperties": false,
+        "description": "Optional billing address: line1, line2, city, state, postal_code, and country as a two-letter code."
+      },
+      "metadata": {
+        "type": "object",
+        "description": "String metadata values keyed by name.",
+        "additionalProperties": {
+          "type": "string"
+        }
+      }
+    },
+    "required": ["email"],
+    "additionalProperties": false
+  },
+  "hosts": ["api.stripe.com"],
+  "annotations": {
+    "readOnly": false,
+    "destructive": false
+  }
+}

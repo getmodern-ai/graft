@@ -1,0 +1,27 @@
+{
+  "name": "find-contact",
+  "description": "Finds a HubSpot contact (a person in the CRM) by email address, or searches contacts by name or company. An email is an exact lookup; a name scans up to maxPages pages of 100 contacts and answers up to 10 matches, with complete: false when more remained. Its ids feed hubspot__get-record, hubspot__update-record, hubspot__add-note and hubspot__create-task.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "query": {
+        "type": "string",
+        "description": "An email address or a name to find."
+      },
+      "maxPages": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 20,
+        "default": 5,
+        "description": "How many pages of 100 contacts a name search scans. Defaults to 5."
+      }
+    },
+    "required": ["query"],
+    "additionalProperties": false
+  },
+  "hosts": ["api.hubapi.com"],
+  "annotations": {
+    "readOnly": true,
+    "destructive": false
+  }
+}

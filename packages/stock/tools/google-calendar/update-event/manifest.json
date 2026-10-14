@@ -1,0 +1,74 @@
+{
+  "name": "update-event",
+  "description": "Updates (edits, reschedules, moves) a Google Calendar event or meeting: its title, description, location, start and end, and adds or removes attendees by email while keeping the others. Only the fields given change. google-calendar__list-events supplies the eventId; calendarId defaults to \"primary\" and google-calendar__list-calendars supplies others.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "eventId": {
+        "type": "string",
+        "minLength": 1,
+        "description": "Google Calendar event ID supplied by list-events."
+      },
+      "calendarId": {
+        "type": "string",
+        "minLength": 1,
+        "default": "primary",
+        "description": "Calendar ID supplied by list-calendars, or omit to use the primary calendar."
+      },
+      "summary": {
+        "type": "string",
+        "description": "New event title."
+      },
+      "description": {
+        "type": "string",
+        "description": "New event description."
+      },
+      "location": {
+        "type": "string",
+        "description": "New event location."
+      },
+      "start": {
+        "type": "string",
+        "description": "New start as an RFC 3339 date-time, or YYYY-MM-DD for an all-day event."
+      },
+      "end": {
+        "type": "string",
+        "description": "New end as an RFC 3339 date-time, or YYYY-MM-DD for an all-day event."
+      },
+      "timeZone": {
+        "type": "string",
+        "minLength": 1,
+        "description": "IANA time zone applied to whichever of start and end are supplied."
+      },
+      "addAttendees": {
+        "type": "array",
+        "items": {
+          "type": "string",
+          "format": "email"
+        },
+        "description": "Email addresses to add while preserving existing attendees."
+      },
+      "removeAttendees": {
+        "type": "array",
+        "items": {
+          "type": "string",
+          "format": "email"
+        },
+        "description": "Email addresses to remove while preserving other attendees."
+      },
+      "sendUpdates": {
+        "type": "string",
+        "enum": ["all", "externalOnly", "none"],
+        "default": "all",
+        "description": "Which guests receive notifications about the update."
+      }
+    },
+    "required": ["eventId"],
+    "additionalProperties": false
+  },
+  "hosts": ["www.googleapis.com"],
+  "annotations": {
+    "readOnly": false,
+    "destructive": false
+  }
+}

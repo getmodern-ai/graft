@@ -163,8 +163,9 @@
  * ## `GRAFT_DRY_RUN=1` is a dry run, and the report replaces the result
  *
  * Set by a publish given a test input, or by a run asked for as a dry run. The token carries the
- * dry-run claim, so the proxy forwards `GET` and `HEAD` and stops every other method with a **preview**
- * of the request that would have left, marked `x-graft-dry-run: intercepted`. `ctx.fetch` records each
+ * dry-run claim, so the proxy forwards a read (`GET`, `HEAD`, and a `POST` its classifier calls a read,
+ * marked `x-graft-dry-run: forwarded`) and stops every other request with a **preview** of the
+ * request that would have left, marked `x-graft-dry-run: intercepted`. `ctx.fetch` records each
  * call — a read's path and status, an intercepted write's preview — and hands the module the proxy's
  * response unchanged, so the module runs its own code against the preview. A read the proxy refused
  * because **no response came from the vendor** arrives marked `x-graft-refusal: <reason>`, and its
@@ -209,6 +210,17 @@ const DEFAULT_TIMEOUT_MS = 60_000;
 const STDERR_TAIL_CHARS = 4_000;
 /** What stdout carries in place of the result when the result went to a file — see the header. */
 const RESULT_MARKER = "__GRAFT_RESULT__:";
+/**
+ * The last line of stderr on every failure the runner words (GRA-244): the marker, then the last
+ * error status (400 and up) a vendor answered `ctx.fetch` with during the run, or nothing when none
+ * did. A refusal the proxy marks with `REFUSAL_HEADER` is the proxy's answer, not the vendor's, and
+ * is not counted. The status alone, never the body: the server reads it onto a stock tool's failure
+ * signal (`run.ts`, `stock-signal.ts`) and strips the line from the tail it hands back. An SDK's
+ * calls do not pass through `ctx.fetch` and are not seen. `VENDOR_STATUS_MARKER` in `runner-source.ts`.
+ */
+const VENDOR_STATUS_MARKER = "__GRAFT_VENDOR_STATUS__:";
+/** The last error status a vendor answered `ctx.fetch` with, or null — see `VENDOR_STATUS_MARKER`. */
+let lastVendorErrorStatus = null;
 /** The entry a directory is run through, first match wins — `MODULE_ENTRIES` in `runner-source.ts`. */
 const ENTRIES = ["index.ts", "index.mjs"];
 
@@ -294,6 +306,7 @@ function readByteCount(value) {
 /** The proxy's marker on a dry-run answer and the value for a stopped write — `DRY_RUN_HEADER` in `runner-source.ts`. */
 const DRY_RUN_HEADER = "x-graft-dry-run";
 const DRY_RUN_INTERCEPTED = "intercepted";
+const DRY_RUN_FORWARDED = "forwarded";
 /**
  * The proxy's mark on a refusal it made because no response came from the vendor, carrying the
  * reason — `REFUSAL_HEADER` in `runner-source.ts`. A read that bears it is recorded with the reason,
@@ -301,7 +314,12 @@ const DRY_RUN_INTERCEPTED = "intercepted";
  * the way and not the vendor (GRA-79).
  */
 const REFUSAL_HEADER = "x-graft-refusal";
-/** Methods the proxy forwards in a dry run; everything else it stops with a preview. */
+/**
+ * The proxy's mark on every refusal it makes, the vendor answered or not — `PROXY_REFUSED_HEADER`
+ * in `runner-source.ts`. A response bearing it is never a vendor's error status (GRA-244).
+ */
+const PROXY_REFUSED_HEADER = "x-graft-refused";
+/** Methods the proxy always forwards in a dry run; a `POST` it forwards comes back marked `forwarded`. */
 const READ_METHODS = new Set(["GET", "HEAD"]);
 /** How much of a previewed body the report carries — the head, since a body's shape is at its start. */
 const MAX_RECORDED_BODY_CHARS = 4_000;
@@ -411,14 +429,30 @@ if (process.env.HTTPS_PROXY && process.env.NODE_USE_ENV_PROXY !== "1") {
 /**
  * Write to stderr and exit. Waits for the write to flush; `process.exit` alone can truncate a pipe.
  * The tail rather than the head, and marked as a tail, so a long stack still ends in the line that
- * matters.
+ * matters. The vendor status line goes last, so it survives the server's own tail.
  */
 function fail(code, message) {
   const text =
     message.length > STDERR_TAIL_CHARS
       ? `…${message.slice(message.length - STDERR_TAIL_CHARS)}`
       : message;
-  process.stderr.write(`${text}\n`, () => process.exit(code));
+  const status = `${VENDOR_STATUS_MARKER}${lastVendorErrorStatus ?? ""}`;
+  process.stderr.write(`${text}\n${status}\n`, () => process.exit(code));
+}
+
+/**
+ * Note a response's status when it is the vendor's error, and hand the response on unchanged. A
+ * refusal the proxy made is its own answer, whether or not the vendor was reached.
+ */
+function noteVendorStatus(response) {
+  if (
+    response.status >= 400 &&
+    !response.headers.get(REFUSAL_HEADER) &&
+    !response.headers.get(PROXY_REFUSED_HEADER)
+  ) {
+    lastVendorErrorStatus = response.status;
+  }
+  return response;
 }
 
 /**
@@ -697,8 +731,10 @@ function boundFetch(path, init = {}) {
   // Never follow: the proxy returned the vendor's 3xx unfollowed on purpose, and the only host this
   // sandbox can reach is the proxy — see the header.
   const request = { ...options, headers, redirect: "manual" };
-  if (!dryRun) return fetch(url, request);
-  return dryRunFetch(url, request, { method, path: recorded, headers, init: options });
+  if (!dryRun) return fetch(url, request).then(noteVendorStatus);
+  return dryRunFetch(url, request, { method, path: recorded, headers, init: options }).then(
+    noteVendorStatus,
+  );
 }
 
 /**
@@ -707,7 +743,14 @@ function boundFetch(path, init = {}) {
  */
 async function dryRunFetch(url, request, call) {
   const response = await fetch(url, request);
-  if (READ_METHODS.has(call.method)) {
+  // A read is what the proxy forwarded: a `GET` or `HEAD`, and a `POST` its classifier calls a read
+  // (a GraphQL query, a reviewed search endpoint; ADR 0008 as amended 2026-10-10), which comes back
+  // marked `forwarded`, or marked with the refusal of a forwarded call no vendor answered.
+  if (
+    READ_METHODS.has(call.method) ||
+    response.headers.get(DRY_RUN_HEADER) === DRY_RUN_FORWARDED ||
+    response.headers.has(REFUSAL_HEADER)
+  ) {
     const reason = response.headers.get(REFUSAL_HEADER);
     recordCall(dryRunRecord.reads, {
       method: call.method,

@@ -1,0 +1,17 @@
+{
+  "name": "current-weather",
+  "description": "Get the current weather in a city: looks the city up by name and answers its temperature, wind speed and weather code right now, with the units. Answers found: false when no place has that name.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "city": {
+        "type": "string",
+        "description": "The city's name, e.g. Melbourne."
+      }
+    },
+    "required": ["city"],
+    "additionalProperties": false
+  },
+  "hosts": ["geocoding-api.open-meteo.com", "api.open-meteo.com"],
+  "annotations": { "readOnly": true, "destructive": false }
+}

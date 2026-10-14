@@ -1,0 +1,66 @@
+{
+  "name": "create-invoice",
+  "description": "Creates a draft Stripe invoice for a customer with line items (invoice items), and optionally sends it, which finalizes it and emails it to the customer. The customer id comes from stripe__find-customer or stripe__create-customer; a price id comes from stripe__list-products, or an item gives its own amount, currency and description.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "customer": {
+        "type": "string",
+        "description": "Stripe customer ID from stripe__find-customer or stripe__create-customer."
+      },
+      "items": {
+        "type": "array",
+        "description": "Line items. Each item must provide either price (and optional quantity), or amount, currency, and description (and optional quantity).",
+        "minItems": 1,
+        "maxItems": 20,
+        "items": {
+          "type": "object",
+          "properties": {
+            "price": {
+              "type": "string",
+              "description": "Stripe price ID from stripe__list-products."
+            },
+            "amount": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "Unit amount in the currency's smallest unit."
+            },
+            "currency": {
+              "type": "string"
+            },
+            "description": {
+              "type": "string"
+            },
+            "quantity": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "description": {
+        "type": "string",
+        "description": "Optional invoice memo."
+      },
+      "daysUntilDue": {
+        "type": "integer",
+        "minimum": 1,
+        "default": 30,
+        "description": "Days the customer has to pay once the invoice is sent. Defaults to 30."
+      },
+      "send": {
+        "type": "boolean",
+        "default": false,
+        "description": "Whether to finalize the invoice and email it to the customer now. Defaults to false, which leaves a draft."
+      }
+    },
+    "required": ["customer", "items"],
+    "additionalProperties": false
+  },
+  "hosts": ["api.stripe.com"],
+  "annotations": {
+    "readOnly": false,
+    "destructive": false
+  }
+}

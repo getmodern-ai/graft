@@ -1,0 +1,21 @@
+{
+  "name": "list-pipelines",
+  "description": "Lists the HubSpot deal pipelines (or ticket pipelines) and their stages in order, with each stage's id, label, win probability and whether it is closed. The pipeline and stage ids are what hubspot__create-deal takes and what hubspot__update-record sets as pipeline and dealstage.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "objectType": {
+        "type": "string",
+        "enum": ["deals", "tickets"],
+        "default": "deals",
+        "description": "The HubSpot object type whose pipelines to list."
+      }
+    },
+    "additionalProperties": false
+  },
+  "hosts": ["api.hubapi.com"],
+  "annotations": {
+    "readOnly": true,
+    "destructive": false
+  }
+}

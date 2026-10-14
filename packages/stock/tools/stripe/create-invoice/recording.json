@@ -1,0 +1,55 @@
+{
+  "format": 1,
+  "tool": "stripe__create-invoice",
+  "recordedAt": "2026-10-09T23:57:24.338Z",
+  "input": {
+    "customer": "giw_EpuiFgxpgqxp93",
+    "items": [
+      {
+        "amount": 1270,
+        "currency": "geb",
+        "description": "Kfpiiqrenq xxswnrtd"
+      }
+    ],
+    "send": false
+  },
+  "exchanges": [
+    {
+      "kind": "write",
+      "method": "POST",
+      "url": "https://api.stripe.com/v1/invoices",
+      "body": {
+        "text": "customer=giw_EpuiFgxpgqxp93&collection_method=send_invoice&days_until_due=30&pending_invoice_items_behavior=exclude"
+      }
+    },
+    {
+      "kind": "write",
+      "method": "POST",
+      "url": "https://api.stripe.com/v1/invoiceitems",
+      "body": {
+        "text": "customer=giw_EpuiFgxpgqxp93&invoice=%28new+invoice+id%29&amount=1270&currency=geb&description=Kfpiiqrenq+xxswnrtd"
+      }
+    }
+  ],
+  "result": {
+    "created": false,
+    "sent": {
+      "invoice": {
+        "customer": "giw_EpuiFgxpgqxp93",
+        "collection_method": "send_invoice",
+        "days_until_due": "30",
+        "pending_invoice_items_behavior": "exclude"
+      },
+      "items": [
+        {
+          "customer": "giw_EpuiFgxpgqxp93",
+          "invoice": "(new invoice id)",
+          "amount": "1270",
+          "currency": "geb",
+          "description": "Kfpiiqrenq xxswnrtd"
+        }
+      ],
+      "send": null
+    }
+  }
+}

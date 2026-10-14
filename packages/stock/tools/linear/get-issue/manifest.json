@@ -1,0 +1,20 @@
+{
+  "name": "get-issue",
+  "description": "Gets one Linear issue with up to 50 of its comments: title, description, state, priority, assignee, team, project and labels. Takes the issue's identifier (like ENG-123) or id, from linear__list-my-issues or linear__find-issues.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "id": {
+        "type": "string",
+        "description": "The issue's identifier, like ENG-123, or its id, from linear__list-my-issues or linear__find-issues."
+      }
+    },
+    "required": ["id"],
+    "additionalProperties": false
+  },
+  "hosts": ["api.linear.app"],
+  "annotations": {
+    "readOnly": true,
+    "destructive": false
+  }
+}

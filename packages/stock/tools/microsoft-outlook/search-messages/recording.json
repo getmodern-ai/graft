@@ -1,0 +1,31 @@
+{
+  "format": 1,
+  "tool": "microsoft-outlook__search-messages",
+  "recordedAt": "2026-10-10T06:29:58.852Z",
+  "input": {
+    "query": "icovlzj"
+  },
+  "exchanges": [
+    {
+      "kind": "read",
+      "method": "GET",
+      "url": "https://graph.microsoft.com/v1.0/me/messages?%24select=id%2Csubject%2Cfrom%2CtoRecipients%2CreceivedDateTime%2CbodyPreview%2CisRead%2ChasAttachments%2CconversationId%2CwebLink&%24top=10&%24search=%22icovlzj%22",
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json; odata.metadata=minimal; odata.streaming=true; IEEE754Compatible=false; charset=utf-8"
+        },
+        "body": {
+          "json": {
+            "@odata.context": "https://graph.microsoft.com/",
+            "value": []
+          }
+        }
+      }
+    }
+  ],
+  "result": {
+    "messages": [],
+    "complete": true
+  }
+}

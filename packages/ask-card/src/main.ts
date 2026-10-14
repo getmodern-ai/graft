@@ -5,19 +5,7 @@ import {
   type McpUiHostContext,
 } from "@modelcontextprotocol/ext-apps/app-with-deps";
 
-import { renderCard } from "./render";
-import {
-  ANSWER_ASK_TOOL,
-  type AnswerAskInput,
-  ASK_STATUS_TOOL,
-  type AskStatusInput,
-  readAnswerOutcome,
-  readAskStatusOutcome,
-  readCardData,
-  readStartLinkOutcome,
-  START_LINK_TOOL,
-  type StartLinkInput,
-} from "./shape";
+import { createCardView } from "./card-view";
 
 /**
  * The card's wiring to its host (GRA-84; ADR 0006 as amended 2026-09-18). One `App` over the
@@ -37,8 +25,8 @@ import {
  * page the person finishes on — Claude shows its confirmation once, ChatGPT opens a tab (the
  * GRA-84 research).
  *
- * A render is one `AbortController`: the host may deliver another result into this same page,
- * and the poll the earlier card started must stop with it.
+ * The render and its size report are `card-view.ts`. `autoResize` is off: the card reports its
+ * own height once a result has rendered, and never before (`frame-size.ts`, GRA-275).
  */
 
 const mount = document.getElementById("ask");
@@ -54,50 +42,10 @@ function applyTheme(context: McpUiHostContext | undefined): void {
   if (context?.styles?.variables) applyHostStyleVariables(context.styles.variables);
 }
 
-const app = new App({ name: "graft-ask-card", version: "0.2.0" }, {}, { autoResize: true });
+const app = new App({ name: "graft-ask-card", version: "0.3.0" }, {}, { autoResize: false });
 
-let current: AbortController | null = null;
-
-app.ontoolresult = (result) => {
-  current?.abort();
-  current = new AbortController();
-  const card = readCardData(result.structuredContent);
-  mount.replaceChildren();
-  if (!card) {
-    mount.hidden = true;
-    return;
-  }
-  mount.hidden = false;
-  mount.append(
-    renderCard(
-      card,
-      {
-        answer: async (answer) => {
-          // The Setup offer (GRA-210) names no ask and draws no answer button; `renderCard` never
-          // calls this for it, and `answer_ask` would refuse it.
-          if (card.kind === "setup") throw new Error("the Setup card answers nothing");
-          const input: AnswerAskInput = { pendingActionId: card.pendingActionId, answer };
-          const answered = await app.callServerTool({ name: ANSWER_ASK_TOOL, arguments: input });
-          return readAnswerOutcome(answered.structuredContent);
-        },
-        startLink: async (input: StartLinkInput) => {
-          const started = await app.callServerTool({ name: START_LINK_TOOL, arguments: input });
-          return readStartLinkOutcome(started.structuredContent);
-        },
-        status: async (pendingActionId) => {
-          const input: AskStatusInput = { pendingActionId };
-          const read = await app.callServerTool({ name: ASK_STATUS_TOOL, arguments: input });
-          return readAskStatusOutcome(read.structuredContent);
-        },
-        openLink: async (url) => {
-          await app.openLink({ url });
-        },
-        signal: current.signal,
-      },
-      document,
-    ),
-  );
-};
+const view = createCardView(app, document, mount);
+app.ontoolresult = (result) => view.show(result);
 
 app.onhostcontextchanged = (context) => applyTheme(context);
 

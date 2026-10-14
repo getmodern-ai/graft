@@ -1,0 +1,152 @@
+{
+  "format": 1,
+  "tool": "github__list-my-repositories",
+  "recordedAt": "2026-10-09T18:45:00.158Z",
+  "input": {
+    "perPage": 1,
+    "page": 1
+  },
+  "exchanges": [
+    {
+      "kind": "read",
+      "method": "GET",
+      "url": "https://api.github.com/user/repos?sort=updated&direction=desc&per_page=1&page=1",
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json; charset=utf-8",
+          "link": "<https://api.github.com/>; rel=\"next\", <https://api.github.com/>; rel=\"last\""
+        },
+        "body": {
+          "json": [
+            {
+              "id": 2854581412,
+              "node_id": "O_yiEJXnHsPL",
+              "name": "malqn",
+              "full_name": "pakyerrof-yk/dgwsy",
+              "private": true,
+              "owner": {
+                "login": "wxwutlpcj-hv",
+                "id": 570412778,
+                "node_id": "N_igRVNypWCQ",
+                "avatar_url": "https://avatars.githubusercontent.com/",
+                "gravatar_id": "",
+                "url": "https://api.github.com/",
+                "html_url": "https://github.com/",
+                "followers_url": "https://api.github.com/",
+                "following_url": "https://api.github.com/",
+                "gists_url": "https://api.github.com/",
+                "starred_url": "https://api.github.com/",
+                "subscriptions_url": "https://api.github.com/",
+                "organizations_url": "https://api.github.com/",
+                "repos_url": "https://api.github.com/",
+                "events_url": "https://api.github.com/",
+                "received_events_url": "https://api.github.com/",
+                "type": "Fwykygffpryd",
+                "user_view_type": "trbbwb",
+                "site_admin": false
+              },
+              "html_url": "https://github.com/",
+              "description": "crbur — Mszfzx-A-Ddxnl jvn (ZxjBadpi Zctbgq, Mmyn, qBMX, Untoywb, Tzrsei Kyto)",
+              "fork": false,
+              "url": "https://api.github.com/",
+              "forks_url": "https://api.github.com/",
+              "keys_url": "https://api.github.com/",
+              "collaborators_url": "https://api.github.com/",
+              "teams_url": "https://api.github.com/",
+              "hooks_url": "https://api.github.com/",
+              "issue_events_url": "https://api.github.com/",
+              "events_url": "https://api.github.com/",
+              "assignees_url": "https://api.github.com/",
+              "branches_url": "https://api.github.com/",
+              "tags_url": "https://api.github.com/",
+              "blobs_url": "https://api.github.com/",
+              "git_tags_url": "https://api.github.com/",
+              "git_refs_url": "https://api.github.com/",
+              "trees_url": "https://api.github.com/",
+              "statuses_url": "https://api.github.com/",
+              "languages_url": "https://api.github.com/",
+              "stargazers_url": "https://api.github.com/",
+              "contributors_url": "https://api.github.com/",
+              "subscribers_url": "https://api.github.com/",
+              "subscription_url": "https://api.github.com/",
+              "commits_url": "https://api.github.com/",
+              "git_commits_url": "https://api.github.com/",
+              "comments_url": "https://api.github.com/",
+              "issue_comment_url": "https://api.github.com/",
+              "contents_url": "https://api.github.com/",
+              "compare_url": "https://api.github.com/",
+              "merges_url": "https://api.github.com/",
+              "archive_url": "https://api.github.com/",
+              "downloads_url": "https://api.github.com/",
+              "issues_url": "https://api.github.com/",
+              "pulls_url": "https://api.github.com/",
+              "milestones_url": "https://api.github.com/",
+              "notifications_url": "https://api.github.com/",
+              "labels_url": "https://api.github.com/",
+              "releases_url": "https://api.github.com/",
+              "deployments_url": "https://api.github.com/",
+              "created_at": "2019-11-28T14:55:29Z",
+              "updated_at": "2008-11-25T01:02:17Z",
+              "pushed_at": "2024-05-02T01:20:46Z",
+              "git_url": "kqy://sbpnsi.exn/jgjjqejhl-jc/elnus.lkr",
+              "ssh_url": "pxc@example.com",
+              "clone_url": "https://github.com/",
+              "svn_url": "https://github.com/",
+              "homepage": null,
+              "size": 71897,
+              "stargazers_count": 0,
+              "watchers_count": 0,
+              "language": "FzsuWfyovo",
+              "has_issues": true,
+              "has_projects": true,
+              "has_downloads": false,
+              "has_wiki": false,
+              "has_pages": false,
+              "has_discussions": false,
+              "forks_count": 0,
+              "mirror_url": null,
+              "archived": false,
+              "disabled": false,
+              "open_issues_count": 5,
+              "license": null,
+              "allow_forking": false,
+              "is_template": false,
+              "web_commit_signoff_required": false,
+              "has_pull_requests": true,
+              "pull_request_creation_policy": "nkc",
+              "topics": [],
+              "visibility": "fmpoata",
+              "forks": 0,
+              "open_issues": 5,
+              "watchers": 0,
+              "default_branch": "esin",
+              "permissions": {
+                "admin": true,
+                "maintain": true,
+                "push": true,
+                "triage": true,
+                "pull": true
+              }
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "result": {
+    "repositories": [
+      {
+        "full_name": "pakyerrof-yk/dgwsy",
+        "description": "crbur — Mszfzx-A-Ddxnl jvn (ZxjBadpi Zctbgq, Mmyn, qBMX, Untoywb, Tzrsei Kyto)",
+        "private": true,
+        "default_branch": "esin",
+        "language": "FzsuWfyovo",
+        "stargazers_count": 0,
+        "open_issues_count": 5,
+        "updated_at": "2008-11-25T01:02:17Z",
+        "html_url": "https://github.com/"
+      }
+    ]
+  }
+}

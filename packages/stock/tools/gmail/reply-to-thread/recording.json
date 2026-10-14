@@ -1,0 +1,179 @@
+{
+  "format": 1,
+  "tool": "gmail__reply-to-thread",
+  "recordedAt": "2026-10-10T05:57:28.615Z",
+  "input": {
+    "threadId": "1a309ddd5362e949",
+    "body": "Ysbuxw, zly xc."
+  },
+  "exchanges": [
+    {
+      "kind": "read",
+      "method": "GET",
+      "url": "https://gmail.googleapis.com/gmail/v1/users/me/threads/1a309ddd5362e949?format=metadata&metadataHeaders=Message-ID&metadataHeaders=References&metadataHeaders=Subject&metadataHeaders=From&metadataHeaders=Reply-To&metadataHeaders=To&metadataHeaders=Cc&fields=id%2Cmessages(id%2Cpayload(headers))",
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json; charset=UTF-8"
+        },
+        "body": {
+          "json": {
+            "id": "1a309ddd5362e949",
+            "messages": [
+              {
+                "id": "1a309ddd5362e949",
+                "payload": {
+                  "headers": [
+                    {
+                      "name": "From",
+                      "value": "Hfazoitgu rgajvgm huxw <tpvjchr-nczlnwbh-tcbsxqr@ebroezsmnxpbuwlah.hwpjiwbiy.yjf>"
+                    },
+                    {
+                      "name": "Subject",
+                      "value": "Quw vst(j) zuvsuehzi xx mgkr Fkzfvosev ihecpsc"
+                    },
+                    {
+                      "name": "To",
+                      "value": "syqfi@example.com"
+                    },
+                    {
+                      "name": "Message-ID",
+                      "value": "<XF4KIHYYHJP6.6PZ23EUGE43X7@um6cniv54318811>"
+                    }
+                  ]
+                }
+              },
+              {
+                "id": "5f0580f9bdfb031d",
+                "payload": {
+                  "headers": [
+                    {
+                      "name": "From",
+                      "value": "Hfazoitgu rgajvgm huxw <tpvjchr-nczlnwbh-tcbsxqr@ebroezsmnxpbuwlah.hwpjiwbiy.yjf>"
+                    },
+                    {
+                      "name": "Subject",
+                      "value": "Quw vst(j) zuvsuehzi xx mgkr Fkzfvosev ihecpsc"
+                    },
+                    {
+                      "name": "To",
+                      "value": "syqfi@example.com"
+                    },
+                    {
+                      "name": "Message-ID",
+                      "value": "<HQ0XFTPTAWD0.II96UF6G5RRG6@ej1bsbb78368697>"
+                    }
+                  ]
+                }
+              },
+              {
+                "id": "7e42347f809a6395",
+                "payload": {
+                  "headers": [
+                    {
+                      "name": "From",
+                      "value": "Hfazoitgu rgajvgm huxw <tpvjchr-nczlnwbh-tcbsxqr@ebroezsmnxpbuwlah.hwpjiwbiy.yjf>"
+                    },
+                    {
+                      "name": "Subject",
+                      "value": "Quw vst(j) zuvsuehzi xx mgkr Fkzfvosev ihecpsc"
+                    },
+                    {
+                      "name": "To",
+                      "value": "syqfi@example.com"
+                    },
+                    {
+                      "name": "Message-ID",
+                      "value": "<TIT89KO8MOA7.KZLN6CEC7NWO@tz1ytno5248i7h5>"
+                    }
+                  ]
+                }
+              },
+              {
+                "id": "9a0395039bb0c734",
+                "payload": {
+                  "headers": [
+                    {
+                      "name": "From",
+                      "value": "Hfazoitgu rgajvgm huxw <tpvjchr-nczlnwbh-tcbsxqr@ebroezsmnxpbuwlah.hwpjiwbiy.yjf>"
+                    },
+                    {
+                      "name": "Subject",
+                      "value": "Quw vst(j) zuvsuehzi xx mgkr Fkzfvosev ihecpsc"
+                    },
+                    {
+                      "name": "To",
+                      "value": "syqfi@example.com"
+                    },
+                    {
+                      "name": "Message-ID",
+                      "value": "<3O3XMHK2CTV4.ST26CX8R31HP0@zb63jbk83331o08>"
+                    }
+                  ]
+                }
+              },
+              {
+                "id": "2d2594962fdf17fc",
+                "payload": {
+                  "headers": [
+                    {
+                      "name": "From",
+                      "value": "Hfazoitgu rgajvgm huxw <tpvjchr-nczlnwbh-tcbsxqr@ebroezsmnxpbuwlah.hwpjiwbiy.yjf>"
+                    },
+                    {
+                      "name": "Subject",
+                      "value": "Quw vst(j) zuvsuehzi xx mgkr Fkzfvosev ihecpsc"
+                    },
+                    {
+                      "name": "To",
+                      "value": "syqfi@example.com"
+                    },
+                    {
+                      "name": "Message-ID",
+                      "value": "<V5XTQAW6OOK1.15RHTRXPKEFD@xz6lokk0146672c>"
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "kind": "read",
+      "method": "GET",
+      "url": "https://gmail.googleapis.com/gmail/v1/users/me/profile",
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json; charset=UTF-8"
+        },
+        "body": {
+          "json": {
+            "emailAddress": "syqfi@example.com",
+            "messagesTotal": 4032,
+            "threadsTotal": 6627,
+            "historyId": "1882531"
+          }
+        }
+      }
+    },
+    {
+      "kind": "write",
+      "method": "POST",
+      "url": "https://gmail.googleapis.com/gmail/v1/users/me/messages/send",
+      "body": {
+        "json": {
+          "raw": "VG86IEhmYXpvaXRndSByZ2FqdmdtIGh1eHcgPHRwdmpjaHItbmN6bG53YmgtdGNic3hxckBlYnJvZXpzbW54cGJ1d2xhaC5od3BqaXdiaXkueWpmPg0KU3ViamVjdDogUmU6IFF1dyB2c3QoaikgenV2c3VlaHppIHh4IG1na3IgRmt6ZnZvc2V2IGloZWNwc2MNCkluLVJlcGx5LVRvOiA8VjVYVFFBVzZPT0sxLjE1UkhUUlhQS0VGREB4ejZsb2trMDE0NjY3MmM-DQpSZWZlcmVuY2VzOiA8VjVYVFFBVzZPT0sxLjE1UkhUUlhQS0VGREB4ejZsb2trMDE0NjY3MmM-DQpNSU1FLVZlcnNpb246IDEuMA0KQ29udGVudC1UeXBlOiB0ZXh0L3BsYWluOyBjaGFyc2V0PVVURi04DQpDb250ZW50LVRyYW5zZmVyLUVuY29kaW5nOiBiYXNlNjQNCg0KV1hOaWRYaDNMQ0I2YkhrZ2VHTXU",
+          "threadId": "1a309ddd5362e949"
+        }
+      }
+    }
+  ],
+  "result": {
+    "id": null,
+    "threadId": "1a309ddd5362e949",
+    "to": ["Hfazoitgu rgajvgm huxw <tpvjchr-nczlnwbh-tcbsxqr@ebroezsmnxpbuwlah.hwpjiwbiy.yjf>"]
+  }
+}

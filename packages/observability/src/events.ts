@@ -54,7 +54,16 @@ export type AnalyticsEvent =
   | "provider_link_started"
   | "provider_link_fell_back"
   | "provider_link_returned"
-  // Over MCP
+  // Over MCP. `tool_called`, once per tool call (`apps/server/src/tool-called.ts`): `tool`, `kind`
+  // (meta | execute | authored), `agent_id`, `outcome` (ok | refused | error), `reason` (a
+  // refusal's word, else null), `latency_ms`. A run of a person's copy of a stock tool or a remix
+  // of one (ADR 0025; GRA-244) adds `stock_tool_id` and `stock_version_id` (the catalogue's ids it
+  // came from), `stock_remix` (whether the code that ran is the person's own over that version),
+  // `failure_kind` (how a failed run failed: threw | timeout | invocation_refused | module_missing |
+  // killed | still_running | no_envelope | sandbox_unavailable | blob_quota, else null) and
+  // `vendor_status` (the last error status a vendor answered the module's `ctx.fetch` with on a
+  // failed run, else null): the failure's shape, never the input, the output or the vendor's body.
+  // Every other call carries none of the five.
   | "tool_called"
   // A blob a tool wrote (ADR 0023; GRA-186), once per blob, beside the `tool_called` of the run
   // that wrote it: `bytes`, `content_type` (a kind), `agent_id`, `version_id`. Never the name the

@@ -1,0 +1,796 @@
+import { readdirSync, readFileSync } from "node:fs";
+
+import { STARTER_VENDORS } from "@graft/core";
+import { readStockWorkspace } from "@graft/stock";
+import { describe, expect, it } from "vitest";
+
+import {
+  FIND_TOOL_LIMIT,
+  type IndexedTool,
+  inputLabels,
+  queryTerms,
+  queryWords,
+  searchTools,
+  stem,
+} from "./tool-index";
+
+const tool = (
+  vendor: string,
+  name: string,
+  description: string,
+  extra: Partial<IndexedTool> = {},
+): IndexedTool => ({ vendor, name, description, ...extra });
+
+const names = (hits: { hits: IndexedTool[] }) => hits.hits.map((hit) => hit.name);
+
+/**
+ * GRA-221's queries, against tools named as the starter integrations' basics are named in that
+ * write-up (`docs/research/gra-221-pipedream-coverage.md` on `research/gra-221-pipedream-coverage`,
+ * its search section): each of these found the wrong tool, or none, under the all-words rule.
+ */
+const hubspot = {
+  searchCrm: tool("hubspot", "search-crm", "Search a CRM object type by a single property.", {
+    readOnly: true,
+    inputSchema: {
+      type: "object",
+      properties: {
+        objectType: { type: "string", enum: ["contacts", "companies", "deals", "tickets"] },
+        searchProperty: { type: "string" },
+        searchValue: { type: "string" },
+      },
+    },
+  }),
+  createObject: tool(
+    "hubspot",
+    "create-crm-object",
+    "Create a CRM object. Use find tools first to avoid duplicates.",
+    {
+      readOnly: false,
+      inputSchema: {
+        type: "object",
+        properties: {
+          objectType: { type: "string", enum: ["contacts", "companies", "deals", "tickets"] },
+        },
+      },
+    },
+  ),
+  listOwners: tool("hubspot", "list-owners", "Lists the owners in the HubSpot account.", {
+    readOnly: true,
+  }),
+};
+const slack = {
+  sendToUser: tool(
+    "slack",
+    "send-message-to-user-or-group",
+    "Send a message to a user or a group of users.",
+    { readOnly: false },
+  ),
+  listChannels: tool("slack", "list-channels", "Lists the channels in the workspace.", {
+    readOnly: true,
+  }),
+  findUser: tool("slack", "find-user-by-email", "Finds a Slack user by their email address.", {
+    readOnly: true,
+  }),
+};
+const github = {
+  searchIssues: tool(
+    "github",
+    "search-issues-and-pull-requests",
+    "Searches the issues and pull requests of a repository.",
+    { readOnly: true },
+  ),
+  listMilestones: tool(
+    "github",
+    "list-milestones",
+    "Lists the milestones of a repository, each with its open issues count.",
+    { readOnly: true },
+  ),
+  createIssue: tool("github", "create-issue", "Creates an issue in a repository.", {
+    readOnly: false,
+  }),
+};
+const unleashed = {
+  productOptions: tool(
+    "unleashed",
+    "list-product-id-options",
+    "Lists the products of the Unleashed account with their ids.",
+    { readOnly: true },
+  ),
+  stockAdjustment: tool(
+    "unleashed",
+    "create-stock-adjustment",
+    "Creates a stock adjustment for a product.",
+    { readOnly: false },
+  ),
+};
+const CATALOGUE = [
+  ...Object.values(hubspot),
+  ...Object.values(slack),
+  ...Object.values(github),
+  ...Object.values(unleashed),
+];
+
+describe("the real queries (GRA-221)", () => {
+  it('"find a contact" reaches the CRM search through its input labels, read-only above the write', () => {
+    const found = searchTools(CATALOGUE, "find a contact");
+    expect(names(found)).toEqual(["search-crm", "create-crm-object"]);
+  });
+
+  it('"send dm" finds the message tool', () => {
+    expect(names(searchTools(CATALOGUE, "send dm"))).toEqual(["send-message-to-user-or-group"]);
+  });
+
+  it('"list issues" ranks the search over a lister that only mentions issues', () => {
+    expect(names(searchTools(CATALOGUE, "list issues"))).toEqual([
+      "search-issues-and-pull-requests",
+      "list-milestones",
+    ]);
+  });
+
+  it('"list products" finds the singular name', () => {
+    expect(names(searchTools(CATALOGUE, "list products"))[0]).toBe("list-product-id-options");
+  });
+
+  it('"look up a user" reads "look up" as a search', () => {
+    expect(names(searchTools(CATALOGUE, "look up a user"))).toEqual(["find-user-by-email"]);
+  });
+
+  it("matches the integration's display name as a boost", () => {
+    const vendorNames = new Map([["hubspot", ["HubSpot CRM"]]]);
+    const found = searchTools(CATALOGUE, "crm owners", { vendorNames });
+    expect(names(found)).toEqual(["list-owners"]);
+  });
+});
+
+/**
+ * Gmail's stock tools as shipped (GRA-248): each manifest under `packages/stock/tools/gmail` is
+ * indexed as `find_tool` indexes a tool, so a description edited out of reach of the words a person
+ * uses fails here. The query is the one a person would type; the tool is the first hit.
+ */
+describe("Gmail's stock tools (GRA-248)", () => {
+  const dir = new URL("../../../stock/tools/gmail/", import.meta.url);
+  const gmail: IndexedTool[] = readdirSync(dir).map((name) => {
+    const manifest = JSON.parse(readFileSync(new URL(`${name}/manifest.json`, dir), "utf8"));
+    return {
+      vendor: "gmail",
+      name: manifest.name,
+      description: manifest.description,
+      inputSchema: manifest.inputSchema,
+      readOnly: manifest.annotations.readOnly,
+    };
+  });
+  const vendorNames = new Map([["gmail", ["Gmail"]]]);
+  const first = (query: string) => names(searchTools(gmail, query, { vendorNames }))[0];
+
+  it.each([
+    ["search my email", "search-messages"],
+    ["find emails", "search-messages"],
+    ["unread emails", "search-messages"],
+    ["read an email", "get-message"],
+    ["get email attachments", "get-message"],
+    ["latest email", "get-message"],
+    ["read an email thread", "get-thread"],
+    ["read a conversation", "get-thread"],
+    ["list labels", "list-labels"],
+    ["send an email", "send-email"],
+    ["draft an email", "create-draft"],
+    ["save a draft", "create-draft"],
+    ["reply to an email", "reply-to-thread"],
+    ["archive an email", "modify-labels"],
+    ["mark email as read", "modify-labels"],
+    ["star an email", "modify-labels"],
+    ["add a label", "modify-labels"],
+  ])('"%s" finds %s first', (query, tool) => {
+    expect(first(query)).toBe(tool);
+  });
+});
+
+describe("ranking", () => {
+  it("puts the agent's working set first, then the rest by score", () => {
+    const strong = tool("demo", "list-items", "List items.", { tier: 1 });
+    const weak = tool("demo", "ping", "Pings, and lists nothing but items.", { tier: 0 });
+    expect(names(searchTools([strong, weak], "items"))).toEqual(["ping", "list-items"]);
+  });
+
+  it("puts read-only tools first for a read verb, and not otherwise", () => {
+    const write = tool(
+      "demo",
+      "create-contact",
+      "Creates a contact, or finds the one that exists.",
+      {
+        readOnly: false,
+      },
+    );
+    const read = tool("demo", "contact-details", "Looks up a contact.", { readOnly: true });
+    expect(names(searchTools([write, read], "find contact"))).toEqual([
+      "contact-details",
+      "create-contact",
+    ]);
+    // No read verb: the name hit on "create" decides.
+    expect(names(searchTools([read, write], "create contact"))).toEqual(["create-contact"]);
+  });
+
+  it("answers the first five and counts the rest as more", () => {
+    const many = Array.from({ length: 8 }, (_, i) =>
+      tool("demo", `list-items-${String.fromCharCode(97 + i)}`, "List items."),
+    );
+    const found = searchTools(many, "items");
+    expect(FIND_TOOL_LIMIT).toBe(5);
+    expect(found.hits).toHaveLength(5);
+    expect(found.more).toBe(3);
+    expect(names(found)[0]).toBe("list-items-a");
+    expect(searchTools(many.slice(0, 2), "items").more).toBe(0);
+    expect(searchTools(many, "items", { limit: 2 }).more).toBe(6);
+  });
+});
+
+/** The all-words cases GRA-115 pinned, which the index keeps. */
+describe("every query concept must hit (GRA-115)", () => {
+  const gmailAttachment = tool(
+    "google-workspace",
+    "get-latest-attachment",
+    "Downloads the newest attachment from the most recent Gmail message matching a search.",
+  );
+  const rates = tool(
+    "frankfurter",
+    "latest-rates",
+    "Fetches the latest exchange rate for a base currency.",
+  );
+  const items = tool("demo", "list-items", "List items from Demo Orders.");
+  const ping = tool("other", "ping", "Ping the other vendor.");
+  const hits = (t: IndexedTool, query: string) => searchTools([t], query).hits.length === 1;
+
+  it("matches every word in any order across vendor, name and description", () => {
+    expect(hits(rates, "exchange rate")).toBe(true);
+    expect(hits(rates, "rate exchange")).toBe(true);
+    expect(hits(gmailAttachment, "gmail attachment")).toBe(true);
+    // An email is a message, and "latest" reaches "newest", since GRA-248's Gmail queries and
+    // GRA-268's Outlook ones.
+    expect(hits(gmailAttachment, "latest email attachment")).toBe(true);
+    expect(hits(gmailAttachment, "latest invoice attachment")).toBe(false);
+    expect(hits(gmailAttachment, "latest attachment message")).toBe(true);
+  });
+
+  it("reads a hyphenated name, and the wire name, as words", () => {
+    expect(hits(gmailAttachment, "get latest attachment")).toBe(true);
+    expect(hits(items, "list-items")).toBe(true);
+    expect(hits(items, "demo__list-items")).toBe(true);
+  });
+
+  it("hits on the vendor alone, and on words drawn from different fields", () => {
+    expect(hits(ping, "other")).toBe(true);
+    expect(hits(rates, "frankfurter currency")).toBe(true);
+  });
+
+  it("is a miss when any word is absent, and never a hit on an empty query", () => {
+    expect(hits(rates, "exchange rate gmail")).toBe(false);
+    expect(hits(items, "items nowhere")).toBe(false);
+    expect(hits(items, "")).toBe(false);
+    expect(hits(items, "x")).toBe(false);
+  });
+
+  it("is case-insensitive, and a word of four or more characters hits as a prefix", () => {
+    expect(hits(items, "ITEMS")).toBe(true);
+    expect(hits(gmailAttachment, "attach")).toBe(true);
+    expect(hits(gmailAttachment, "att")).toBe(false);
+  });
+
+  it("ranks a name hit above a vendor hit above a description hit, then by name", () => {
+    const byDescriptionOnly = tool("acme", "fetch-thing", "Reads the latest thing from Acme.");
+    const byVendorOnly = tool("latest", "read-record", "Reads a record.");
+    expect(names(searchTools([byDescriptionOnly, byVendorOnly, rates], "latest"))).toEqual([
+      "latest-rates",
+      "read-record",
+      "fetch-thing",
+    ]);
+    const zebra = tool("demo", "zebra-items", "List items.");
+    const apple = tool("demo", "apple-items", "List items.");
+    expect(names(searchTools([zebra, apple], "items"))).toEqual(["apple-items", "zebra-items"]);
+  });
+});
+
+describe("queryWords and queryTerms", () => {
+  it("splits on whitespace and punctuation, lowercases, drops one-character words and duplicates", () => {
+    expect(queryWords("  Gmail, attachment!  ")).toEqual(["gmail", "attachment"]);
+    expect(queryWords("demo__list-items")).toEqual(["demo", "list", "items"]);
+    expect(queryWords("rate rate RATE")).toEqual(["rate"]);
+    expect(queryWords("!!! - _")).toEqual([]);
+  });
+
+  it("counts a one-character word in code points (Greptile on #91)", () => {
+    expect(queryWords("𐐷")).toEqual([]);
+    expect(queryWords("𐐷𐐷 items")).toEqual(["𐐷𐐷", "items"]);
+  });
+
+  it("stems, drops function words, and keeps them when nothing else is left", () => {
+    expect(queryTerms("find a contact for me")).toEqual(["find", "contact"]);
+    expect(queryTerms("list the issues")).toEqual(["list", "issu"]);
+    expect(queryTerms("their")).toEqual(["their"]);
+  });
+});
+
+describe("stem", () => {
+  it("folds plurals and -ing/-ed forms onto one stem", () => {
+    const same = (...words: string[]) => new Set(words.map(stem)).size === 1;
+    expect(same("contact", "contacts")).toBe(true);
+    expect(same("issue", "issues")).toBe(true);
+    expect(same("create", "creates", "created", "creating")).toBe(true);
+    expect(same("search", "searches", "searching", "searched")).toBe(true);
+    expect(same("reply", "replies", "replied")).toBe(true);
+    expect(same("message", "messages")).toBe(true);
+    expect(same("list", "lists", "listing")).toBe(true);
+    expect(same("add", "added", "adding")).toBe(true);
+    expect(same("run", "running")).toBe(true);
+    expect(same("box", "boxes")).toBe(true);
+    expect(stem("status")).toBe("status");
+    expect(stem("address")).toBe("address");
+  });
+});
+
+describe("inputLabels", () => {
+  it("reads property names split at case, titles, and enum values, nested and in lists", () => {
+    expect(
+      inputLabels({
+        type: "object",
+        properties: {
+          objectType: { type: "string", title: "Object kind", enum: ["contacts", 3] },
+          page_size: { type: "integer" },
+          filters: {
+            type: "array",
+            items: { type: "object", properties: { fieldName: { type: "string" } } },
+          },
+        },
+      }),
+    ).toEqual(["object type", "object kind", "contacts", "page size", "filters", "field name"]);
+    expect(inputLabels({ type: "object" })).toEqual([]);
+    expect(inputLabels(undefined)).toEqual([]);
+  });
+});
+
+/**
+ * The stock catalogue as the boot reads it (`packages/stock/tools/`): each stock tool must be the
+ * first hit for the words a person would use for it, among every stock tool. One block per
+ * integration's basics; Slack's are GRA-251's.
+ */
+describe("the stock catalogue's real queries", async () => {
+  const workspace = await readStockWorkspace();
+  const stock: IndexedTool[] = workspace.map((t) => ({
+    vendor: t.vendor,
+    name: t.name,
+    description: t.description,
+    inputSchema: t.inputSchema,
+    readOnly: t.annotations.readOnly,
+  }));
+  const vendorNames = new Map([["slack", ["Slack"]]]);
+  const first = (query: string) => {
+    const hit = searchTools(stock, query, { vendorNames }).hits[0];
+    return hit ? `${hit.vendor}__${hit.name}` : null;
+  };
+
+  it.each([
+    ["list slack channels", "slack__list-channels"],
+    ["show me the channels", "slack__list-channels"],
+    ["read the messages in a channel", "slack__read-channel-history"],
+    ["slack channel history", "slack__read-channel-history"],
+    ["read a slack thread", "slack__read-thread"],
+    ["read the replies in a thread", "slack__read-thread"],
+    ["find a slack user by email", "slack__find-user"],
+    ["look up a person in slack", "slack__find-user"],
+    ["post a message to a slack channel", "slack__post-message"],
+    ["reply in a slack thread", "slack__reply-in-thread"],
+    ["send dm", "slack__send-direct-message"],
+    ["send a direct message on slack", "slack__send-direct-message"],
+    ["add a reaction", "slack__add-reaction"],
+    ["react with an emoji", "slack__add-reaction"],
+  ])('"%s" finds %s first', (query, wire) => {
+    expect(first(query)).toBe(wire);
+  });
+});
+
+/**
+ * GitHub's and HubSpot's stock tools as they ship (GRA-253, GRA-254): each is found first by a query
+ * a person would use for it, searched over every stock tool at once with the integrations' display
+ * names, as `find_tool` searches them (`meta.ts`).
+ */
+describe("GitHub's and HubSpot's stock tools (GRA-253, GRA-254)", () => {
+  const vendorNames = new Map(
+    STARTER_VENDORS.map((starter) => [starter.vendor, [starter.displayName]]),
+  );
+  const QUERIES: [query: string, wire: string][] = [
+    ["list my repositories", "github__list-my-repositories"],
+    ["my github repos", "github__list-my-repositories"],
+    ["list issues", "github__list-issues"],
+    ["get issue with comments", "github__get-issue"],
+    ["search issues", "github__search-issues-and-pull-requests"],
+    ["search pull requests", "github__search-issues-and-pull-requests"],
+    ["list pull requests", "github__list-pull-requests"],
+    ["pull request changed files", "github__get-pull-request"],
+    // "read a file" alone is Google Drive's since GRA-250; the repository says which.
+    ["read a file from a github repo", "github__get-file-contents"],
+    ["get readme", "github__get-file-contents"],
+    ["create issue", "github__create-issue"],
+    ["comment on pull request", "github__comment-on-issue-or-pull-request"],
+    ["close issue", "github__update-issue"],
+    ["create pull request", "github__create-pull-request"],
+    ["current weather", "open-meteo__current-weather"],
+    ["find a contact", "hubspot__find-contact"],
+    ["look up a contact by email", "hubspot__find-contact"],
+    ["search hubspot contacts", "hubspot__find-contact"],
+    ["find a deal", "hubspot__find-deal"],
+    ["search deals", "hubspot__find-deal"],
+    ["get a deal with its contacts", "hubspot__get-record"],
+    ["list owners", "hubspot__list-owners"],
+    ["list hubspot owners", "hubspot__list-owners"],
+    ["list pipelines", "hubspot__list-pipelines"],
+    ["list pipeline stages", "hubspot__list-pipelines"],
+    ["show deal pipelines", "hubspot__list-pipelines"],
+    ["create a contact", "hubspot__create-contact"],
+    ["add a contact to hubspot", "hubspot__create-contact"],
+    ["create a company", "hubspot__create-company"],
+    ["create a deal", "hubspot__create-deal"],
+    ["move a deal to another stage", "hubspot__update-record"],
+    ["update a contact", "hubspot__update-record"],
+    ["add a note to a contact", "hubspot__add-note"],
+    ["log a note on a deal", "hubspot__add-note"],
+    ["create a task", "hubspot__create-task"],
+    ["remind me to call a contact", "hubspot__create-task"],
+  ];
+
+  it.each(QUERIES)('"%s" finds %s first', async (query, wire) => {
+    const tools = (await readStockWorkspace()).map((tool) => ({
+      vendor: tool.vendor,
+      name: tool.name,
+      description: tool.description,
+      inputSchema: tool.inputSchema,
+      readOnly: tool.annotations.readOnly,
+    }));
+    const [first] = searchTools(tools, query, { vendorNames }).hits;
+    expect(first && `${first.vendor}__${first.name}`).toBe(wire);
+  });
+});
+
+/**
+ * Microsoft Outlook's stock tools as they ship (GRA-268), searched as the HubSpot suite above
+ * searches them: every stock tool at once, with the integrations' display names. A query that names
+ * Outlook finds Outlook's tool first. A query that names no vendor finds Outlook's tool or the
+ * Gmail or Google Calendar tool that does the same (GRA-248, GRA-249), whichever of them is in the
+ * workspace, and a query that names Gmail or Google Calendar never finds Outlook's.
+ */
+describe("Microsoft Outlook's stock tools (GRA-268)", () => {
+  const vendorNames = new Map(
+    STARTER_VENDORS.map((starter) => [starter.vendor, [starter.displayName]]),
+  );
+  const firstOf = async (query: string) => {
+    const tools = (await readStockWorkspace()).map((tool) => ({
+      vendor: tool.vendor,
+      name: tool.name,
+      description: tool.description,
+      inputSchema: tool.inputSchema,
+      readOnly: tool.annotations.readOnly,
+    }));
+    const [first] = searchTools(tools, query, { vendorNames }).hits;
+    return first && `${first.vendor}__${first.name}`;
+  };
+
+  const NAMED: [query: string, wire: string][] = [
+    ["send an outlook email", "microsoft-outlook__send-mail"],
+    ["find an outlook email from a sender", "microsoft-outlook__search-messages"],
+    ["search my outlook email", "microsoft-outlook__search-messages"],
+    ["unread outlook emails", "microsoft-outlook__search-messages"],
+    ["list outlook mail folders", "microsoft-outlook__list-mail-folders"],
+    ["draft an outlook email", "microsoft-outlook__create-draft"],
+    ["reply to an outlook email", "microsoft-outlook__reply-to-message"],
+    ["archive an outlook email", "microsoft-outlook__move-message"],
+    ["delete an outlook email", "microsoft-outlook__delete-message"],
+    ["my outlook meetings this week", "microsoft-outlook__list-events"],
+    ["list outlook calendars", "microsoft-outlook__list-calendars"],
+    ["find free time in outlook", "microsoft-outlook__find-free-time"],
+    ["schedule an outlook meeting", "microsoft-outlook__create-event"],
+    ["change the time of an outlook meeting", "microsoft-outlook__update-event"],
+    ["cancel an outlook meeting", "microsoft-outlook__delete-event"],
+    ["accept an outlook invitation", "microsoft-outlook__respond-to-event"],
+    ["decline an outlook meeting invite", "microsoft-outlook__respond-to-event"],
+  ];
+
+  it.each(NAMED)('"%s" finds %s first', async (query, wire) => {
+    expect(await firstOf(query)).toBe(wire);
+  });
+
+  const UNNAMED: [query: string, wires: string[]][] = [
+    ["send an email", ["microsoft-outlook__send-mail", "gmail__send-email"]],
+    ["find an email from", ["microsoft-outlook__search-messages", "gmail__search-messages"]],
+    ["move an email to a folder", ["microsoft-outlook__move-message"]],
+    ["my meetings this week", ["microsoft-outlook__list-events", "google-calendar__list-events"]],
+  ];
+
+  it.each(UNNAMED)('"%s" finds one of %j first', async (query, wires) => {
+    expect(wires).toContain(await firstOf(query));
+  });
+
+  it.each([
+    "send a gmail email",
+    "search gmail",
+    "my google calendar meetings this week",
+    "schedule a google calendar meeting",
+  ])('"%s" never finds an Outlook tool first', async (query) => {
+    expect((await firstOf(query)) ?? "").not.toMatch(/^microsoft-outlook__/);
+  });
+});
+
+/**
+ * Notion's stock tools as they ship (GRA-252), searched as the suites above search them: every stock
+ * tool at once, with the integrations' display names. A query that names Notion finds Notion's tool
+ * first; the unnamed ones are pinned where Notion's tool is the only one of its kind.
+ */
+describe("Notion's stock tools (GRA-252)", () => {
+  const vendorNames = new Map(
+    STARTER_VENDORS.map((starter) => [starter.vendor, [starter.displayName]]),
+  );
+  const firstOf = async (query: string) => {
+    const tools = (await readStockWorkspace()).map((tool) => ({
+      vendor: tool.vendor,
+      name: tool.name,
+      description: tool.description,
+      inputSchema: tool.inputSchema,
+      readOnly: tool.annotations.readOnly,
+    }));
+    const [first] = searchTools(tools, query, { vendorNames }).hits;
+    return first && `${first.vendor}__${first.name}`;
+  };
+
+  const QUERIES: [query: string, wire: string][] = [
+    ["search notion", "notion__search-pages-and-databases"],
+    ["find a notion page", "notion__search-pages-and-databases"],
+    ["search my notion pages", "notion__search-pages-and-databases"],
+    ["list my notion databases", "notion__search-pages-and-databases"],
+    ["read a notion page", "notion__get-page"],
+    ["get the content of a notion page", "notion__get-page"],
+    ["show me a notion page", "notion__get-page"],
+    // A read verb ("query", "list") ranks read-only tools first, and query-database is annotated a
+    // write: the check reads a reviewed POST's path only from literals (ADR 0008 as amended
+    // 2026-10-10), and a data source's id is not one. So its pins carry no read verb.
+    ["notion database entries", "notion__query-database"],
+    ["notion database rows", "notion__query-database"],
+    ["create a notion page", "notion__create-page"],
+    ["create a row in a notion database", "notion__create-page"],
+    ["new notion page", "notion__create-page"],
+    ["append to a notion page", "notion__append-to-page"],
+    ["add text to a notion page", "notion__append-to-page"],
+    ["add a paragraph to a notion page", "notion__append-to-page"],
+    ["update a notion page", "notion__update-page-properties"],
+    ["change the status of a notion row", "notion__update-page-properties"],
+    ["rename a notion page", "notion__update-page-properties"],
+    ["comment on a notion page", "notion__add-comment"],
+    ["reply to a notion comment", "notion__add-comment"],
+    ["append to a page", "notion__append-to-page"],
+  ];
+
+  it.each(QUERIES)('"%s" finds %s first', async (query, wire) => {
+    expect(await firstOf(query)).toBe(wire);
+  });
+});
+
+describe("owner words (GRA-269)", () => {
+  const tools = [
+    tool("acme", "comment-on-issue", "Comments on an issue.", {
+      inputSchema: { type: "object", properties: { issueId: { type: "string" } } },
+    }),
+    tool("acme", "list-my-issues", "Lists the issues assigned to the connected user."),
+    tool("acme", "list-teams", "Lists the teams."),
+  ];
+
+  it("ranks a tool whose name says my first, and makes no hit of it alone", () => {
+    // Singular, so number agreement (GRA-278) leaves the owner word alone to decide.
+    expect(names(searchTools(tools, "acme issue"))[0]).toBe("comment-on-issue");
+    expect(names(searchTools(tools, "my acme issue"))[0]).toBe("list-my-issues");
+    expect(names(searchTools(tools, "my acme issues"))[0]).toBe("list-my-issues");
+    expect(names(searchTools(tools, "my acme teams"))).toEqual(["list-teams"]);
+  });
+
+  it("reads a ticket as an issue and a sprint as a cycle", () => {
+    expect(names(searchTools(tools, "comment on a ticket"))).toEqual(["comment-on-issue"]);
+    expect(
+      names(searchTools([tool("acme", "list-cycles", "Lists cycles.")], "list sprints")),
+    ).toEqual(["list-cycles"]);
+  });
+});
+
+/**
+ * Linear's stock tools as they ship (GRA-269), searched as the suites above search them. A query
+ * that names Linear finds Linear's tool first; a query that names no integration and that GitHub's
+ * suite pins still finds GitHub's tool (GRA-253).
+ */
+describe("Linear's stock tools (GRA-269)", () => {
+  const vendorNames = new Map(
+    STARTER_VENDORS.map((starter) => [starter.vendor, [starter.displayName]]),
+  );
+  const firstOf = async (query: string) => {
+    const tools = (await readStockWorkspace()).map((tool) => ({
+      vendor: tool.vendor,
+      name: tool.name,
+      description: tool.description,
+      inputSchema: tool.inputSchema,
+      readOnly: tool.annotations.readOnly,
+    }));
+    const [first] = searchTools(tools, query, { vendorNames }).hits;
+    return first && `${first.vendor}__${first.name}`;
+  };
+
+  const NAMED: [query: string, wire: string][] = [
+    ["my linear issues", "linear__list-my-issues"],
+    ["list my linear issues", "linear__list-my-issues"],
+    ["show my linear tickets", "linear__list-my-issues"],
+    ["create a linear ticket", "linear__create-issue"],
+    ["create a linear issue", "linear__create-issue"],
+    ["new linear issue", "linear__create-issue"],
+    ["search linear issues", "linear__find-issues"],
+    ["find a linear issue", "linear__find-issues"],
+    ["search linear tickets", "linear__find-issues"],
+    ["get a linear issue with its comments", "linear__get-issue"],
+    ["comment on a linear issue", "linear__comment-on-issue"],
+    ["update a linear issue", "linear__update-issue"],
+    ["move a linear issue to done", "linear__update-issue"],
+    ["assign a linear issue", "linear__update-issue"],
+    ["change a linear issue's priority", "linear__update-issue"],
+    ["list linear teams", "linear__list-teams"],
+    ["linear projects", "linear__list-projects"],
+    ["list linear workflow states", "linear__list-workflow-states"],
+    ["linear cycles", "linear__list-cycles"],
+    ["current linear sprint", "linear__list-cycles"],
+    ["linear labels", "linear__list-labels"],
+    ["people in linear", "linear__list-users"],
+    ["list linear users", "linear__list-users"],
+  ];
+
+  it.each(NAMED)('"%s" finds %s first', async (query, wire) => {
+    expect(await firstOf(query)).toBe(wire);
+  });
+
+  it.each([
+    ["list issues", "github__list-issues"],
+    ["search issues", "github__search-issues-and-pull-requests"],
+    ["get issue with comments", "github__get-issue"],
+    ["create issue", "github__create-issue"],
+    ["close issue", "github__update-issue"],
+    ["create a github issue", "github__create-issue"],
+    ["search github issues", "github__search-issues-and-pull-requests"],
+  ])('"%s" still finds %s first', async (query, wire) => {
+    expect(await firstOf(query)).toBe(wire);
+  });
+});
+
+/**
+ * Apollo's stock tools as they ship (GRA-270), searched as the suites above search them: every
+ * stock tool at once, with the integrations' display names. Prospecting words find Apollo's tools
+ * first, and the generic contact words stay HubSpot's (the GRA-254 pins above, repeated here so a
+ * change to Apollo's names or descriptions that takes one fails beside Apollo's own). That is why
+ * Apollo's two contact writes are named `save-contact` (Apollo's own word for it) and
+ * `update-prospect`: `create-contact` tied HubSpot's and won it on the vendor's name, and any name
+ * holding *update*, *contact* or *person* outscores `hubspot__update-record` on "update a contact".
+ */
+describe("Apollo's stock tools (GRA-270)", () => {
+  const vendorNames = new Map(
+    STARTER_VENDORS.map((starter) => [starter.vendor, [starter.displayName]]),
+  );
+  const QUERIES: [query: string, wire: string][] = [
+    ["find leads", "apollo__search-people"],
+    ["search people at a company", "apollo__search-people"],
+    ["find prospects by job title", "apollo__search-people"],
+    ["search apollo for people", "apollo__search-people"],
+    ["find companies by industry and size", "apollo__search-companies"],
+    ["search apollo companies", "apollo__search-companies"],
+    ["search my apollo contacts", "apollo__search-contacts"],
+    ["find a contact in apollo", "apollo__search-contacts"],
+    ["search apollo accounts", "apollo__search-accounts"],
+    ["list sequences", "apollo__list-sequences"],
+    ["list apollo sequences", "apollo__list-sequences"],
+    ["list email accounts", "apollo__list-email-accounts"],
+    ["create a contact in apollo", "apollo__save-contact"],
+    ["save a lead to apollo", "apollo__save-contact"],
+    ["update an apollo contact", "apollo__update-prospect"],
+    ["add contacts to a sequence", "apollo__add-to-sequence"],
+    ["enroll a contact in an apollo sequence", "apollo__add-to-sequence"],
+    // HubSpot's contact pins, with Apollo's contact tools beside them.
+    ["find a contact", "hubspot__find-contact"],
+    ["look up a contact by email", "hubspot__find-contact"],
+    ["create a contact", "hubspot__create-contact"],
+    ["update a contact", "hubspot__update-record"],
+    ["add a note to a contact", "hubspot__add-note"],
+    ["remind me to call a contact", "hubspot__create-task"],
+  ];
+
+  it.each(QUERIES)('"%s" finds %s first', async (query, wire) => {
+    const tools = (await readStockWorkspace()).map((tool) => ({
+      vendor: tool.vendor,
+      name: tool.name,
+      description: tool.description,
+      inputSchema: tool.inputSchema,
+      readOnly: tool.annotations.readOnly,
+    }));
+    const [first] = searchTools(tools, query, { vendorNames }).hits;
+    expect(first && `${first.vendor}__${first.name}`).toBe(wire);
+  });
+});
+
+/**
+ * The 2026-10-11 production run (GRA-278): a person with Gmail connected, their own
+ * `gmail__list-latest-inbox-conversations` in the toolbox, and every stock tool beside it, tiered
+ * as `find_tool` tiers them (`meta.ts`): the toolbox 1, stock of a connected integration 2, the
+ * rest 3. "list my recent emails" answered get-message, get-thread, create-draft, Outlook's search
+ * and Apollo's contacts, and cut both the person's tool and Gmail's search. The person's tool's
+ * description is written here as such a tool's would be; its words are the test's.
+ */
+describe("the 2026-10-11 queries, tiered as find_tool tiers them (GRA-278)", async () => {
+  const vendorNames = new Map(
+    STARTER_VENDORS.map((starter) => [starter.vendor, [starter.displayName]]),
+  );
+  const own: IndexedTool = {
+    vendor: "gmail",
+    name: "list-latest-inbox-conversations",
+    description: "Lists the latest conversations in the inbox with subject, sender and snippet.",
+    inputSchema: { type: "object", properties: { maxResults: { type: "integer" } } },
+    readOnly: true,
+    tier: 1,
+  };
+  const stock: IndexedTool[] = (await readStockWorkspace()).map((t) => ({
+    vendor: t.vendor,
+    name: t.name,
+    description: t.description,
+    inputSchema: t.inputSchema,
+    readOnly: t.annotations.readOnly,
+    tier: t.vendor === "gmail" ? 2 : 3,
+  }));
+  const top = (query: string) => searchTools([own, ...stock], query, { vendorNames }).hits;
+  const wire = (hit: IndexedTool) => `${hit.vendor}__${hit.name}`;
+
+  it.each([
+    "list my recent emails",
+    "recent emails",
+    "read my email",
+    "show me my 5 most recent emails",
+    "latest emails",
+    "search my gmail",
+  ])("\"%s\" answers the person's tool, then Gmail's search, and no write", (query) => {
+    const hits = top(query);
+    expect(hits.slice(0, 2).map(wire)).toEqual([
+      "gmail__list-latest-inbox-conversations",
+      "gmail__search-messages",
+    ]);
+    expect(hits.filter((hit) => hit.readOnly !== true).map(wire)).toEqual([]);
+  });
+});
+
+describe("soft words, read verbs, references and number (GRA-278)", () => {
+  const search = tool("demo", "search-messages", "Finds messages matching a query.", {
+    readOnly: true,
+  });
+  const get = tool("demo", "get-message", "Reads one message, the newest when no id is given.", {
+    readOnly: true,
+  });
+  const draft = tool(
+    "demo",
+    "create-draft",
+    "Saves a draft. Threads come from demo__search-messages.",
+    { readOnly: false },
+  );
+
+  it("ranks by a soft word without deciding on it, unless it is all the query has", () => {
+    expect(names(searchTools([search], "most recent messages"))).toEqual(["search-messages"]);
+    expect(names(searchTools([search], "10 messages"))).toEqual(["search-messages"]);
+    expect(names(searchTools([search, get], "newest"))).toEqual(["get-message"]);
+  });
+
+  it("reads a read verb as a weak hit on any read-only tool, never a write", () => {
+    expect(names(searchTools([search, draft], "view messages"))).toEqual(["search-messages"]);
+    expect(names(searchTools([draft], "view draft"))).toEqual([]);
+  });
+
+  it("does not index another tool's wire name in a description", () => {
+    expect(names(searchTools([draft], "search"))).toEqual([]);
+  });
+
+  it("prefers a plural name for a plural word, and leaves a singular word to the score", () => {
+    expect(names(searchTools([get, search], "messages"))[0]).toBe("search-messages");
+    expect(names(searchTools([get, search], "latest message"))[0]).toBe("get-message");
+  });
+});

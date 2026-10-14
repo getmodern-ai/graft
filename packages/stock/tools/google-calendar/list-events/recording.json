@@ -1,0 +1,50 @@
+{
+  "format": 1,
+  "tool": "google-calendar__list-events",
+  "recordedAt": "2026-10-09T18:47:27.401Z",
+  "input": {
+    "calendarId": "primary",
+    "timeMin": "2020-05-20T04:00:54Z",
+    "timeMax": "2029-08-09T12:22:09Z",
+    "maxResults": 50
+  },
+  "exchanges": [
+    {
+      "kind": "read",
+      "method": "GET",
+      "url": "https://www.googleapis.com/calendar/v3/calendars/primary/events?singleEvents=true&orderBy=startTime&timeMin=2020-05-20T04%3A00%3A54Z&timeMax=2029-08-09T12%3A22%3A09Z&maxResults=50",
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json; charset=UTF-8"
+        },
+        "body": {
+          "json": {
+            "kind": "bwldieli#qqfqsm",
+            "etag": "\"c80eai17lverci3q\"",
+            "summary": "xzvcb@example.com",
+            "description": "",
+            "updated": "2002-01-28T18:06:55.745Z",
+            "timeZone": "Ygxymkpqy/Cilhksnxp",
+            "accessRole": "rsjtl",
+            "defaultReminders": [
+              {
+                "method": "trtod",
+                "minutes": 10
+              }
+            ],
+            "items": []
+          }
+        }
+      }
+    }
+  ],
+  "result": {
+    "calendarId": "primary",
+    "window": {
+      "timeMin": "2020-05-20T04:00:54Z",
+      "timeMax": "2029-08-09T12:22:09Z"
+    },
+    "events": []
+  }
+}

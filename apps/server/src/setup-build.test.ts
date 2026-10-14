@@ -1,18 +1,24 @@
 import { join } from "node:path";
 
 import {
+  type DirectoryEntry,
+  type IntegrationDirectory,
+  loadStockCatalogue,
   type SetupDeps,
   type StarterVendor,
   starterVendorOf,
   toProxyConnection,
 } from "@graft/core";
+import { createFakeStockCatalogue } from "@graft/core/stock/testing/fake-stock-deps";
 import type { SetupPatch, SetupRow } from "@graft/db/repo/setup";
 import {
   type AcquireRunner,
   createAcquireRunner,
   createMcpDeps,
+  createStockToolSource,
   createToolListChangedNotifier,
   openAgentSession,
+  type ToolSource,
 } from "@graft/mcp";
 import { createFakeDeps, createFakeStore, type FakeStore } from "@graft/mcp/testing/fake-deps";
 import { type FakeVendor, generateTestKeys, startFakeVendor } from "@graft/mcp/testing/fake-vendor";
@@ -29,6 +35,7 @@ import {
   DEFAULT_PACKAGE_POLICY,
 } from "@graft/publish";
 import { createFakeSandboxBackend, type FakeSandboxBackend } from "@graft/sandbox";
+import { readStockWorkspace } from "@graft/stock";
 import { createFilesystemToolboxStore, createNoopToolboxMirror } from "@graft/toolbox";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
@@ -105,12 +112,58 @@ const GIVING_UP: ScriptedStep[] = [
   { on: "goal", answer: { kind: "give_up", reason: "The documentation names no such read." } },
 ];
 
+/**
+ * A directory as a hosted backing answers one (Setup v2): a starter found there by its slug, and an
+ * integration that is no starter, proposed from its own entry.
+ */
+const ACME: DirectoryEntry = {
+  slug: "acme-crm",
+  name: "Acme CRM",
+  description: "Customers and deals.",
+  logoUrl: "https://logos.example/acme.png",
+  categories: ["CRM"],
+  hosts: ["api.acme-crm.com"],
+  docsUrl: null,
+  connect: "form",
+  scheme: "bearer",
+};
+const METEO_ENTRY: DirectoryEntry = {
+  ...ACME,
+  slug: "open-meteo",
+  name: "Open-Meteo",
+  hosts: ["api.open-meteo.com", "geocoding-api.open-meteo.com"],
+  scheme: "none",
+};
+const TEST_DIRECTORY: IntegrationDirectory = {
+  name: "test-directory",
+  home: async () => ({
+    total: 2,
+    categories: [{ name: "CRM", count: 1 }],
+    popular: [ACME, METEO_ENTRY],
+    wall: [{ slug: "acme-crm", name: "Acme CRM", logoUrl: ACME.logoUrl }],
+  }),
+  search: async ({ query }) => {
+    const entries = [ACME, METEO_ENTRY].filter((entry) =>
+      entry.name.toLowerCase().includes((query ?? "").toLowerCase()),
+    );
+    return { entries, nextCursor: null, total: entries.length };
+  },
+  get: async (slug) => [ACME, METEO_ENTRY].find((entry) => entry.slug === slug) ?? null,
+};
+
 let sandbox: FakeSandboxBackend;
 let vendor: FakeVendor;
 let store: FakeStore;
 let mcp: ReturnType<typeof createMcpDeps>;
 let runner: AcquireRunner;
 let app: ReturnType<typeof createServer>;
+/**
+ * The stock catalogue Setup's ready-made tools are offered from (GRA-276): Open-Meteo's weather tool
+ * from the workspace, and a write of the same integration's, loaded under a check that answers each
+ * one's annotations. The MCP deps copy from it only in the suite that sets `mcp.toolSource`.
+ */
+let catalogue: ReturnType<typeof createFakeStockCatalogue>;
+let stockSource: ToolSource;
 const captured: Capture[] = [];
 /**
  * Serialise the API's top-level transactions, as the record's row lock does in Postgres, for the
@@ -131,6 +184,9 @@ function inMemorySetup(now: () => Date): SetupDeps {
       step: "harness",
       harness: null,
       agentId: null,
+      starterId: null,
+      goal: null,
+      stockTool: null,
       pendingActionId: null,
       connectionId: null,
       acquireJobId: null,
@@ -182,9 +238,10 @@ beforeAll(async () => {
     contextMembersUsed: [],
     blobReadFields: [],
   });
+  const toolbox = createFilesystemToolboxStore({ root: join(sandbox.root, "toolboxes") });
   const publish = createPublishDeps({
     db: fake.db,
-    store: createFilesystemToolboxStore({ root: join(sandbox.root, "toolboxes") }),
+    store: toolbox,
     mirror: createNoopToolboxMirror(),
     sandbox,
     metadata: createFakeMetadataSource({}),
@@ -200,6 +257,8 @@ beforeAll(async () => {
     pollMs: 20,
   };
   mcp = createMcpDeps({
+    // No stock catalogue over the fake store: the stock path is `@graft/mcp`'s `stock.test.ts`.
+    toolSource: null,
     ...fake,
     sandbox,
     keys,
@@ -211,6 +270,32 @@ beforeAll(async () => {
     notifier: createToolListChangedNotifier({ windowMs: 50 }),
     model: null,
     acquire: { maxAttempts: 2, tokenCeiling: 400_000 },
+  });
+  catalogue = createFakeStockCatalogue();
+  const weather = (await readStockWorkspace()).filter((source) => source.vendor === "open-meteo");
+  const alert = { ...weather[0], name: "set-alert", sourceHash: "f".repeat(64) };
+  const loaded = await loadStockCatalogue(
+    { db: fake.db },
+    [...weather, alert] as typeof weather,
+    async (source) => ({
+      ok: true,
+      annotations: { readOnly: source.name !== "set-alert", destructive: false },
+      checkOutput: {},
+    }),
+    catalogue.deps,
+  );
+  expect(loaded.refused).toEqual([]);
+  stockSource = createStockToolSource({
+    db: fake.db,
+    publish: {
+      db: fake.db,
+      store: toolbox,
+      tool: fake.tool,
+      mirror: createNoopToolboxMirror(),
+      onMirror: () => {},
+      now: () => store.now(),
+    },
+    stock: catalogue.deps,
   });
   let chain: Promise<unknown> = Promise.resolve();
   const apiDb = {
@@ -249,6 +334,7 @@ beforeAll(async () => {
         pendingAction: fake.pendingAction,
         modelKey: fakeModelKeyDeps(),
         setup: inMemorySetup(() => store.now()),
+        stock: catalogue.deps,
       },
       corsOrigins: [],
       authUrl: CONSOLE_ORIGIN,
@@ -256,6 +342,7 @@ beforeAll(async () => {
       connectionRouting: mcp,
       acquire: mcp,
       run: mcp,
+      directory: TEST_DIRECTORY,
       analytics: {
         name: "recorder",
         shutdown: async () => {},
@@ -271,6 +358,7 @@ beforeAll(async () => {
 afterEach(async () => {
   await runner.idle();
   mcp.model = null;
+  mcp.toolSource = null;
   serialise = false;
 });
 
@@ -686,6 +774,250 @@ describe("Setup's goal and build steps", () => {
     expect(early.status).toBe(409);
     await onGoal(true);
     expect((await app.request("/api/setup/build", post({ goal: "   " }))).status).toBe(400);
+  });
+});
+
+describe("Setup v2: the task before the connection", () => {
+  it("saves the starter and the task, opens the ask, and the read that learns the connection builds", async () => {
+    mcp.model = createScriptedModel(PASSING_SCRIPT);
+    people += 1;
+    person = `person_${people}`;
+    const started = await read(await app.request("/api/setup/start", post({ harness: "claude" })));
+    const agentId: string = started.agent.id;
+
+    const chosen = await read(
+      await app.request("/api/setup/starter", post({ starterId: "open-meteo" })),
+    );
+    expect(chosen).toMatchObject({
+      step: "vendor",
+      setup: { starterId: "open-meteo", goal: null },
+    });
+
+    const tasked = await read(
+      await app.request("/api/setup/task", post({ goal: OPEN_METEO.goal })),
+    );
+    expect(tasked).toMatchObject({
+      step: "connect",
+      setup: { starterId: "open-meteo", goal: OPEN_METEO.goal },
+    });
+    const askId: string = tasked.setup.pendingActionId;
+    const { payload } = (await get("/api/pending-actions")).pendingActions[0];
+    const confirmed = await app.request(
+      `/api/pending-actions/${askId}/connection`,
+      post({ ...payload, credential: {}, approveBuild: false }),
+    );
+    expect(confirmed.status).toBe(201);
+
+    // No Build press: the read that learns the connection starts the job with the saved task.
+    const building = await get("/api/setup");
+    expect(building).toMatchObject({ step: "building", setup: { goal: OPEN_METEO.goal } });
+    const job = store.acquireJobs.get(building.setup.acquireJobId);
+    expect(job).toMatchObject({
+      agentId,
+      goal: OPEN_METEO.goal,
+      hints: `${OPEN_METEO.hints} The vendor's documentation starts at https://open-meteo.com/en/docs.`,
+    });
+    expect(buildApprovals(agentId)).toEqual([expect.objectContaining({ agentId })]);
+    await runner.idle();
+    expect(await get("/api/setup")).toMatchObject({ step: "result" });
+    expect(stepEvents()).toEqual(["vendor", "goal", "connect", "building"]);
+  }, 60_000);
+
+  it("builds at once for a task chosen on a connection the record already names", async () => {
+    mcp.model = createScriptedModel(PASSING_SCRIPT);
+    await onGoal(false);
+    const built = await read(await app.request("/api/setup/task", post({ goal: OPEN_METEO.goal })));
+    expect(built).toMatchObject({ step: "building", setup: { goal: OPEN_METEO.goal } });
+    await runner.idle();
+  }, 60_000);
+
+  it("refuses a task before a starter, and an unknown starter", async () => {
+    people += 1;
+    person = `person_${people}`;
+    await app.request("/api/setup/start", post({ harness: "claude" }));
+    const early = await app.request("/api/setup/task", post({ goal: "Anything" }));
+    expect(early.status).toBe(409);
+    const unknown = await app.request("/api/setup/starter", post({ starterId: "fax" }));
+    expect(unknown.status).toBe(400);
+  });
+});
+
+describe("Setup's ready-made tools (GRA-276)", () => {
+  const WEATHER = "open-meteo__current-weather";
+
+  it("offers the curated read-only tool for a starter, and none for a write or another integration", async () => {
+    await onGoal(false);
+    expect(await get("/api/setup/stock?starterId=open-meteo")).toEqual({
+      tools: [
+        {
+          tool: WEATHER,
+          goal: OPEN_METEO.goal,
+          description: expect.stringMatching(/^Get the current weather in a city/),
+          replaces: [],
+        },
+      ],
+    });
+    expect(await get("/api/setup/stock?starterId=gmail")).toEqual({ tools: [] });
+    expect(await get("/api/setup/stock?starterId=fax")).toEqual({ tools: [] });
+  });
+
+  it("takes a tool chosen before connecting the moment the connection lands: copied, promoted, the result with no job", async () => {
+    mcp.toolSource = stockSource;
+    people += 1;
+    person = `person_${people}`;
+    const started = await read(await app.request("/api/setup/start", post({ harness: "claude" })));
+    const agentId: string = started.agent.id;
+    await app.request("/api/setup/starter", post({ starterId: "open-meteo" }));
+
+    const chosen = await read(await app.request("/api/setup/stock", post({ tool: WEATHER })));
+    expect(chosen).toMatchObject({
+      step: "connect",
+      setup: { starterId: "open-meteo", goal: OPEN_METEO.goal, stockTool: WEATHER },
+    });
+    const { payload } = (await get("/api/pending-actions")).pendingActions[0];
+    const confirmed = await app.request(
+      `/api/pending-actions/${chosen.setup.pendingActionId}/connection`,
+      post({ ...payload, credential: {}, approveBuild: false }),
+    );
+    expect(confirmed.status).toBe(201);
+
+    const landed = await get("/api/setup");
+    expect(landed).toMatchObject({ step: "result", setup: { acquireJobId: null } });
+    const tool = store.tools.get(landed.setup.toolId);
+    expect(tool).toMatchObject({
+      personId: person,
+      vendor: "open-meteo",
+      name: "current-weather",
+      readOnly: true,
+      defaultConnectionId: landed.setup.connectionId,
+    });
+    expect(store.workingSet.has(`${agentId} ${tool?.id}`)).toBe(true);
+    expect([...store.acquireJobs.values()].filter((job) => job.agentId === agentId)).toEqual([]);
+    expect(buildApprovals(agentId)).toEqual([]);
+
+    // The result and finish steps read it as they read a built tool, its task as the goal.
+    expect(await get("/api/setup/tool")).toMatchObject({
+      goal: OPEN_METEO.goal,
+      job: null,
+      tool: { wireName: WEATHER, readOnly: true },
+    });
+    expect(await read(await app.request("/api/setup/result", post()))).toMatchObject({
+      step: "finish",
+    });
+    const steps = captured.filter(
+      (event) => event.event === "setup_step_completed" && event.distinctId === person,
+    );
+    expect(steps.map((event) => event.properties)).toContainEqual(
+      expect.objectContaining({ step: "goal", readyMade: true }),
+    );
+  });
+
+  it("takes a tool chosen on the task step at once", async () => {
+    mcp.toolSource = stockSource;
+    await onGoal(false);
+    const taken = await read(await app.request("/api/setup/stock", post({ tool: WEATHER })));
+    expect(taken).toMatchObject({ step: "result", setup: { stockTool: WEATHER } });
+    expect(store.tools.get(taken.setup.toolId)).toMatchObject({ name: "current-weather" });
+    // The result step names the record's connection; one outside the scope is the run's refusal.
+    const run = await read(
+      await app.request(
+        `/api/agents/${taken.agent.id}/tools/open-meteo/current-weather/run`,
+        post({ input: { city: "Melbourne" }, connectionId: "conn_elsewhere" }),
+      ),
+    );
+    expect(run).toMatchObject({ ok: false, reason: "connection_not_in_scope" });
+  });
+
+  it("refuses a write, another integration's tool and a choice off the tool's steps, saving nothing", async () => {
+    mcp.toolSource = stockSource;
+    await onGoal(false);
+    for (const tool of ["open-meteo__set-alert", "gmail__search-messages", "open-meteo"]) {
+      const refused = await app.request("/api/setup/stock", post({ tool }));
+      expect(refused.status).toBe(404);
+      expect(await read(refused)).toMatchObject({ details: { reason: "stock_tool_not_offered" } });
+    }
+    expect(await get("/api/setup")).toMatchObject({ step: "goal", setup: { stockTool: null } });
+
+    people += 1;
+    person = `person_${people}`;
+    await app.request("/api/setup/start", post({ harness: "claude" }));
+    const early = await app.request("/api/setup/stock", post({ tool: WEATHER }));
+    expect(early.status).toBe(404);
+  });
+
+  it("leaves a choice the copy refuses on the task step, where a task to build clears it", async () => {
+    // No tool source: the copy finds no such tool, as a release without it would.
+    mcp.model = createScriptedModel(PASSING_SCRIPT);
+    await onGoal(false);
+    const refused = await app.request("/api/setup/stock", post({ tool: WEATHER }));
+    expect(refused.status).toBe(409);
+    expect(await read(refused)).toMatchObject({ details: { reason: "tool_not_found" } });
+    expect(await get("/api/setup")).toMatchObject({
+      step: "goal",
+      setup: { stockTool: WEATHER, toolId: null },
+    });
+    const tasked = await read(
+      await app.request("/api/setup/task", post({ goal: "Tell me tomorrow's forecast" })),
+    );
+    expect(tasked).toMatchObject({
+      step: "building",
+      setup: { stockTool: null, goal: "Tell me tomorrow's forecast" },
+    });
+  }, 60_000);
+});
+
+describe("Setup v2: the integration directory", () => {
+  it("answers the backing's first view and its search, a starter's entry naming its starter", async () => {
+    people += 1;
+    person = `person_${people}`;
+    const home = await get("/api/setup/directory");
+    expect(home).toMatchObject({
+      total: 2,
+      source: "test-directory",
+      categories: [{ name: "CRM" }],
+    });
+    expect(home.popular.map((entry: { starterId: string | null }) => entry.starterId)).toEqual([
+      null,
+      "open-meteo",
+    ]);
+    const found = await get("/api/setup/directory/search?q=acme");
+    expect(found).toMatchObject({ total: 1, entries: [{ slug: "acme-crm", starterId: null }] });
+  });
+
+  it("connects an integration that is no starter from its own entry, with the task saved", async () => {
+    people += 1;
+    person = `person_${people}`;
+    await app.request("/api/setup/start", post({ harness: "claude" }));
+    const tasked = await read(
+      await app.request(
+        "/api/setup/task",
+        post({ goal: "List my ten newest deals", slug: "acme-crm" }),
+      ),
+    );
+    expect(tasked).toMatchObject({
+      step: "connect",
+      setup: { starterId: null, goal: "List my ten newest deals" },
+    });
+    const [ask] = (await get("/api/pending-actions")).pendingActions;
+    expect(ask.payload).toMatchObject({
+      vendor: "acme-crm",
+      displayName: "Acme CRM",
+      primaryHost: "https://api.acme-crm.com",
+      hosts: ["api.acme-crm.com"],
+      scheme: "bearer",
+    });
+  });
+
+  it("takes a starter found in the directory down the starter's path", async () => {
+    people += 1;
+    person = `person_${people}`;
+    await app.request("/api/setup/start", post({ harness: "claude" }));
+    const tasked = await read(
+      await app.request("/api/setup/task", post({ goal: OPEN_METEO.goal, slug: "open-meteo" })),
+    );
+    expect(tasked).toMatchObject({ step: "connect", setup: { starterId: "open-meteo" } });
+    const unknown = await app.request("/api/setup/task", post({ goal: "x", slug: "nothing" }));
+    expect(unknown.status).toBe(404);
   });
 });
 
