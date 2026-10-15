@@ -21,7 +21,10 @@ export type ModelKeyCheckInput = {
 export type ModelKeyCheck =
   /** The provider answered the list with the key. */
   | { outcome: "accepted" }
-  /** The provider refused the key: 401 or 403. */
+  /**
+   * The provider does not know the key: 401. A 403 is not this: a restricted key may be denied the
+   * list and still generate, so it is `unchecked` and the save goes ahead with a warning.
+   */
   | { outcome: "refused"; status: number }
   /** The base URL resolved to an address the guard refuses. */
   | { outcome: "not_public" }
@@ -76,7 +79,7 @@ export async function checkModelKey(
     return { outcome: "unchecked", reason: "unreachable" };
   }
   if (status >= 200 && status < 300) return { outcome: "accepted" };
-  if (status === 401 || status === 403) return { outcome: "refused", status };
+  if (status === 401) return { outcome: "refused", status };
   return { outcome: "unchecked", reason: "status", status };
 }
 

@@ -38,14 +38,16 @@ describe("checkModelKey", () => {
     expect(fetch.mock.calls[1]?.[1]?.headers).toMatchObject({ authorization: "Bearer gw-1" });
   });
 
-  it("reads 401 and 403 as refused, and any other status as unchecked", async () => {
+  it("reads 401 alone as refused, and any other status as unchecked", async () => {
     const input = { provider: "openai", apiKey: "not-a-key", baseUrl: null } as const;
     expect(await checkModelKey(input, { fetch: answering(401) })).toEqual({
       outcome: "refused",
       status: 401,
     });
+    // A restricted key denied the list may still generate: it is saved, with a warning.
     expect(await checkModelKey(input, { fetch: answering(403) })).toEqual({
-      outcome: "refused",
+      outcome: "unchecked",
+      reason: "status",
       status: 403,
     });
     expect(await checkModelKey(input, { fetch: answering(404) })).toEqual({

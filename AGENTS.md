@@ -1836,9 +1836,10 @@ never the endpoint's message or body); the raw error goes to the job's trace alo
 **A key is checked with its provider when it is saved, and a refused one mid-job is named as the
 person's** (GRA-340): `ModelKeyDeps.checkKey`, which `index.ts` binds to `model.ts`'s
 `createModelKeyCheck` (`@graft/model`'s `checkModelKey`: the provider's models list through the
-guarded fetch, bounded by `MODEL_KEY_CHECK_TIMEOUT_MS`), refuses a key the provider answers 401 or
-403 with a 400 on `apiKey` (`details.reason: "key_refused"`), and saves one it could not ask with
-`warning` beside `modelKey` in the `PUT` answer. `model.ts` wraps a person's adapter in
+guarded fetch, bounded by `MODEL_KEY_CHECK_TIMEOUT_MS`), refuses a key the provider answers 401
+with a 400 on `apiKey` (`details.reason: "key_refused"`), and saves one it could not ask, or that
+was denied the list (a 403: a restricted key may still generate), with `warning` beside `modelKey`
+in the `PUT` answer. `model.ts` wraps a person's adapter in
 `withOwnKeyRefusal`, so a 401 or 403 mid-job is `OwnModelKeyRefusedError` and the job ends
 `model_key_refused` with "Your own model key was refused by <provider>. Update it in Settings.";
 the console's `progressCard` reads it as `keyRefused`, and Setup's building step and the

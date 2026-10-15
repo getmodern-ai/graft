@@ -1001,9 +1001,11 @@ describe.skipIf(!adminUrl)("the schema, the account and the services over a real
       { provider: "openai", apiKey: MODEL_API_KEY, authoringModel: "gpt-test" },
       deps,
     );
-    expect(entered).toMatchObject({ provider: "openai", authoringModel: "gpt-test" });
+    expect(entered.modelKey).toMatchObject({ provider: "openai", authoringModel: "gpt-test" });
+    // No `checkKey` is bound here, so nothing was asked of the provider and nothing is warned.
+    expect(entered.warning).toBeNull();
     expect(JSON.stringify(entered)).not.toContain(MODEL_API_KEY);
-    expect(entered).not.toHaveProperty("keyCiphertext");
+    expect(entered.modelKey).not.toHaveProperty("keyCiphertext");
 
     // The resolver's read: the ciphertext, decryptable under this person's model-key scope and no other.
     const row = await findPersonModelKeyRow(ctx, personId, deps);

@@ -238,7 +238,7 @@ describe("setPersonModelKey's check with the provider (GRA-340)", () => {
       ctx,
       A,
       { provider: "openai", apiKey: "k", baseUrl: "https://gateway.example/v1" },
-      { ...deps, checkKey: async () => ({ outcome: "refused", status: 403 }) },
+      { ...deps, checkKey: async () => ({ outcome: "refused", status: 401 }) },
     ).catch((e: unknown) => e);
     expect((refused as ServiceError).message).toMatch(/^apiKey was refused by gateway\.example /);
     const rebound = await setPersonModelKey(
