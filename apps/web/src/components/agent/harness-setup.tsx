@@ -39,7 +39,10 @@ export function HarnessSetup({
 }) {
   const origin = window.location.origin;
   const id = useId();
-  const [harness, setHarness] = useState<Harness>(initialHarness);
+  // The person's pick once they make one; until then the hint, read on every render, so a Setup
+  // read that lands after the dialog opened still moves it (Greptile on #282).
+  const [picked, setHarness] = useState<Harness | null>(null);
+  const harness = picked ?? initialHarness;
   const blocks = harnessSetup(harness, origin, token);
 
   return (
