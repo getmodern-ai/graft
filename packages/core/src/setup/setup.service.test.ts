@@ -943,6 +943,7 @@ describe("Build over a job the record still holds (GRA-215)", () => {
         findConnection: vi.fn(async () => ({ id: "conn_1" })),
         insertBuildApproval: vi.fn(async (_db: unknown, row: unknown) => row),
         findBuildApproval: vi.fn(async () => null),
+        insertApprovalEvent: vi.fn(async (_db: unknown, row: unknown) => row),
         now: () => NOW,
       },
       acquireJob: {

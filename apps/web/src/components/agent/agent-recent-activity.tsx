@@ -7,7 +7,9 @@ import {
   BlockIcon,
   BoltIcon,
   CheckCircleIcon,
+  EditIcon,
   ErrorIcon,
+  HistoryIcon,
 } from "@/components/icons";
 import { IntegrationMark } from "@/components/marks";
 import { RetryNotice } from "@/components/retry-notice";
@@ -33,6 +35,8 @@ const ICONS: Record<ActivityIcon, { Icon: typeof CheckCircleIcon; className: str
   failed: { Icon: ErrorIcon, className: "text-destructive" },
   blocked: { Icon: BlockIcon, className: "text-muted-foreground" },
   denied: { Icon: BlockIcon, className: "text-muted-foreground" },
+  withdrawn: { Icon: HistoryIcon, className: "text-muted-foreground" },
+  changed: { Icon: EditIcon, className: "text-muted-foreground" },
 };
 
 /**

@@ -78,6 +78,7 @@ function world(
   const connectionRow = options.connection === undefined ? connection : options.connection;
   const jobs: Record<string, unknown>[] = [];
   const grants: Record<string, unknown>[] = [];
+  const events: Record<string, unknown>[] = [];
   const findConnection = vi.fn(async () => connectionRow);
   const deps = {
     agent: {
@@ -96,6 +97,10 @@ function world(
         return row;
       }),
       findBuildApproval: vi.fn(async () => null),
+      insertApprovalEvent: vi.fn(async (_db: unknown, row: Record<string, unknown>) => {
+        events.push(row);
+        return row;
+      }),
       now: () => NOW,
     },
     acquireJob: {
@@ -109,7 +114,7 @@ function world(
       now: () => NOW,
     },
   } as unknown as ConsoleAcquireDeps;
-  return { deps, jobs, grants };
+  return { deps, jobs, grants, events };
 }
 
 const input = {
@@ -125,6 +130,10 @@ describe("startConsoleAcquire", () => {
     const started = await startConsoleAcquire(ctx, PRINCIPAL, input, w.deps);
     expect(started.agent).toEqual({ id: "agent_1", name: "Claude" });
     expect(w.grants).toEqual([{ agentId: "agent_1", connectionId: "conn_1", grantedAt: NOW }]);
+    // GRA-341: Create is the person's build approval, given on the console.
+    expect(w.events).toEqual([
+      expect.objectContaining({ kind: "build", action: "allowed", via: "console" }),
+    ]);
     expect(w.jobs).toEqual([
       expect.objectContaining({
         id: "job_1",

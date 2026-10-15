@@ -1,6 +1,7 @@
 import {
   type AgentDeps,
   type ApprovalDeps,
+  type ApprovalEventOrigin,
   addConnectionToAgentScope,
   allowVendor,
   allowVendorWhenConnecting,
@@ -16,6 +17,7 @@ import {
   type PendingActionDeps,
   type Principal,
   type RegisterConnectionWithCredentialInput,
+  recordBuildEvent,
   registerConnectionWithCredential,
   type ServiceContext,
   ServiceError,
@@ -92,6 +94,18 @@ export type ApprovalAnswerDeps = {
   /** The scope write a `scope` ask's yes makes (GRA-104) — the agent page's own seam. */
   agent: AgentDeps;
 };
+
+/**
+ * The approval event's origin for an answer to this ask (GRA-341): the card's when the door said
+ * `via: "card"`, else the console's, and the ask itself, so the activity read shows the events
+ * rather than the ask a second time. An answer that writes no event leaves the ask to be shown.
+ */
+function answerOrigin(
+  action: PendingActionRow,
+  said: Record<string, unknown>,
+): ApprovalEventOrigin {
+  return { via: said.via === "card" ? "card" : "console", pendingActionId: action.id };
+}
 
 /** A revoke that beat the answer: the ask is closed and the caller is told, after the transaction. */
 type RevokedBeforeAnswer = { revoked: { connectionId: string; name: string | null } };
@@ -216,6 +230,7 @@ async function recordAnswer(
   {
     const scope = { personId: principal.personId, agentId: action.agentId };
     const said = readApprovalAnswer(action.answer);
+    const origin = answerOrigin(action, action.answer ?? {});
     /** Mark the answer spent; the agent may have taken it between the two statements, which is fine. */
     const settle = async () => {
       try {
@@ -237,6 +252,7 @@ async function recordAnswer(
         {
           // For the version the ask showed, never the tool's version now (GRA-245, Greptile on #190).
           asked: askedVersionOfPayload(action.payload),
+          event: origin,
           ...(said.allow && said.askEveryCall !== undefined
             ? { askEveryCall: said.askEveryCall }
             : {}),
@@ -253,25 +269,52 @@ async function recordAnswer(
             scoped,
             scope,
             tool.vendor,
-            { includesDestructive: said.includesDestructive === true },
+            { includesDestructive: said.includesDestructive === true, event: origin },
             deps.approval,
           )
         : undefined;
       if (!said.allow || !approval.askEveryCall) await settle();
       return { pendingAction: action, approval, ...(vendorApproval ? { vendorApproval } : {}) };
     }
-    if (action.kind === "build" && said.allow && typeof action.payload.connectionId === "string") {
+    if (action.kind === "build" && typeof action.payload.connectionId === "string") {
+      if (!said.allow) {
+        // No row records a declined build (ADR 0008); the person's record still does (GRA-341).
+        await recordBuildEvent(
+          scoped.db,
+          scope,
+          { id: action.payload.connectionId, vendor: payloadVendor(action) },
+          "denied",
+          origin,
+          deps.approval.now(),
+          deps.approval,
+        );
+        return { pendingAction: action };
+      }
       const buildApproval = await grantBuildApproval(
         scoped,
         scope,
         action.payload.connectionId,
         deps.approval,
+        origin,
       );
       await settle();
       return { pendingAction: action, buildApproval };
     }
     if (action.kind === SCOPE_ASK_KIND && typeof action.payload.connectionId === "string") {
-      return grantScope(scoped, principal, action, action.payload.connectionId, deps);
+      return grantScope(scoped, principal, action, action.payload.connectionId, origin, deps);
+    }
+    if (action.kind === "connection" && !said.allow) {
+      await deps.approval.insertApprovalEvent(scoped.db, {
+        personId: principal.personId,
+        agentId: action.agentId,
+        kind: "connection",
+        action: "denied",
+        via: origin.via,
+        vendor: payloadVendor(action),
+        connectionId: action.connectionId,
+        pendingActionId: action.id,
+        at: deps.approval.now(),
+      });
     }
     return { pendingAction: action };
   }
@@ -290,9 +333,21 @@ async function grantScope(
   principal: Principal,
   action: PendingActionRow,
   connectionId: string,
+  origin: ApprovalEventOrigin,
   deps: ApprovalAnswerDeps,
 ): Promise<ApprovalAnswerRecord> {
   const said = readScopeAnswer(action.answer);
+  await deps.approval.insertApprovalEvent(scoped.db, {
+    personId: principal.personId,
+    agentId: action.agentId,
+    kind: "scope",
+    action: said.allow ? "allowed" : "denied",
+    via: origin.via,
+    vendor: payloadVendor(action),
+    connectionId,
+    pendingActionId: action.id,
+    at: deps.approval.now(),
+  });
   if (!said.allow) return { pendingAction: action };
   const { connectionIds } = await addConnectionToAgentScope(
     scoped,
@@ -307,6 +362,7 @@ async function grantScope(
         { personId: principal.personId, agentId: action.agentId },
         connectionId,
         deps.approval,
+        origin,
       )
     : undefined;
   // *Full access* on the handoff page (GRA-314): the integration's tools, never destructive ones,
@@ -319,6 +375,7 @@ async function grantScope(
           { personId: principal.personId, agentId: action.agentId },
           vendor,
           deps.approval,
+          origin,
         )
       : undefined;
   return {
@@ -327,6 +384,11 @@ async function grantScope(
     ...(buildApproval ? { buildApproval } : {}),
     ...(vendorApproval ? { vendorApproval } : {}),
   };
+}
+
+/** The integration an ask's payload names, as the activity read takes it (`repo/activity.ts`). */
+function payloadVendor(action: PendingActionRow): string | null {
+  return typeof action.payload.vendor === "string" ? action.payload.vendor : null;
 }
 
 /**
@@ -456,12 +518,22 @@ export async function confirmConnectionAsk(
       );
       await addConnectionToAgentScope(scoped, principal, action.agentId, connection.id, deps.agent);
     }
+    // A consent leaves the ask open for the callback to answer, so the grants made here are not
+    // that ask's answer: their events name no ask, and the ask is shown once answered (GRA-341).
+    const consent = options.consent
+      ? await options.consent(scoped, principal, connection.id, connection.scheme, action.id)
+      : null;
+    const origin: ApprovalEventOrigin = {
+      via: options.answerExtra?.via === "card" ? "card" : "console",
+      pendingActionId: consent ? null : action.id,
+    };
     const buildApproval = approveBuild
       ? await grantBuildApproval(
           scoped,
           { personId: principal.personId, agentId: action.agentId },
           connection.id,
           deps.approval,
+          origin,
         )
       : undefined;
     const vendorApproval = allowVendorTools
@@ -470,15 +542,13 @@ export async function confirmConnectionAsk(
           { personId: principal.personId, agentId: action.agentId },
           connection.vendor,
           deps.approval,
+          origin,
         )
       : undefined;
     const granted = {
       ...(buildApproval ? { buildApproval } : {}),
       ...(vendorApproval ? { vendorApproval } : {}),
     };
-    const consent = options.consent
-      ? await options.consent(scoped, principal, connection.id, connection.scheme, action.id)
-      : null;
     if (consent) {
       return {
         connection: consent.connection,
@@ -494,6 +564,17 @@ export async function confirmConnectionAsk(
       { connectionId: connection.id, ...options.answerExtra },
       deps.pendingAction,
     );
+    await deps.approval.insertApprovalEvent(tx, {
+      personId: principal.personId,
+      agentId: action.agentId,
+      kind: "connection",
+      action: "allowed",
+      via: origin.via,
+      vendor: connection.vendor,
+      connectionId: connection.id,
+      pendingActionId: action.id,
+      at: deps.approval.now(),
+    });
     return { connection, pendingAction, ...granted };
   });
 }

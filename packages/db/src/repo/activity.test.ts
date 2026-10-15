@@ -43,16 +43,23 @@ const RUN_KEY = `('run:' || "usage_ledger"."id") collate "C"`;
 const TOOL_APPROVAL_KEY = `('tool_approval:' || "approval"."agent_id" || ':' || "approval"."tool_id") collate "C"`;
 const VENDOR_APPROVAL_KEY = `('vendor_approval:' || "vendor_approval"."agent_id" || ':' || "vendor_approval"."vendor") collate "C"`;
 const ASK_KEY = `('ask:' || "pending_action"."id") collate "C"`;
+const EVENT_KEY = `('event:' || "approval_event"."id") collate "C"`;
 const RUN_VENDOR = `coalesce("authored_tool"."vendor", "connection"."vendor")`;
 const ASK_CONNECTION = `coalesce("pending_action"."connection_id", "pending_action"."answer" ->> 'connectionId')`;
 
 describe("the activity stream names the person in every branch", () => {
-  it("merges runs, tool approvals, integration approvals and answered asks, each ordered and limited under the person", async () => {
+  it("merges runs, tool approvals, integration approvals, answered asks and approval events, each ordered and limited under the person", async () => {
     await listActivity(db, "person_1", { filter: {}, limit: 51 });
     const s = only();
     const branches = s.sql.split(") union all (");
-    expect(branches).toHaveLength(4);
-    const [runs, tools, vendors, asks] = branches as [string, string, string, string];
+    expect(branches).toHaveLength(5);
+    const [runs, tools, vendors, asks, events] = branches as [
+      string,
+      string,
+      string,
+      string,
+      string,
+    ];
 
     expect(runs).toMatch(/^select \* from \(\(select 'run' as kind, /);
     expect(runs).toContain(
@@ -67,20 +74,29 @@ describe("the activity stream names the person in every branch", () => {
     expect(tools).toContain(
       'from "approval" inner join "agent" on "approval"."agent_id" = "agent"."id" inner join "authored_tool" on ("approval"."tool_id" = "authored_tool"."id" and "authored_tool"."person_id" = $6)',
     );
+    // GRA-341: a standing answer is the record only where no answer event, under the person,
+    // covers it: one given before the events existed.
     expect(tools).toContain(
-      `where "agent"."person_id" = $7 order by "approval"."decided_at" desc, ${TOOL_APPROVAL_KEY} desc limit $8`,
+      `where ("agent"."person_id" = $7 and not exists (select 1 from "approval_event" where "approval_event"."person_id" = $8 and "approval_event"."agent_id" = "approval"."agent_id" and "approval_event"."kind" = 'tool' and "approval_event"."tool_id" = "approval"."tool_id" and "approval_event"."action" in ('allowed', 'denied') and "approval_event"."at" >= "approval"."decided_at")) order by "approval"."decided_at" desc, ${TOOL_APPROVAL_KEY} desc limit $9`,
     );
 
     expect(vendors).toContain(
-      `from "vendor_approval" inner join "agent" on "vendor_approval"."agent_id" = "agent"."id" where "agent"."person_id" = $9 order by "vendor_approval"."granted_at" desc, ${VENDOR_APPROVAL_KEY} desc limit $10`,
+      `from "vendor_approval" inner join "agent" on "vendor_approval"."agent_id" = "agent"."id" where ("agent"."person_id" = $10 and not exists (select 1 from "approval_event" where "approval_event"."person_id" = $11 and "approval_event"."agent_id" = "vendor_approval"."agent_id" and "approval_event"."kind" = 'vendor' and "approval_event"."vendor" = "vendor_approval"."vendor" and "approval_event"."action" in ('allowed', 'widened', 'narrowed') and "approval_event"."at" >= "vendor_approval"."granted_at")) order by "vendor_approval"."granted_at" desc, ${VENDOR_APPROVAL_KEY} desc limit $12`,
     );
 
-    // A tool ask's answer is the standing row it wrote, so the asks branch leaves `tool` out.
+    // A tool ask's answer is the standing row it wrote, so the asks branch leaves `tool` out; an
+    // ask an event names as the one it answered is shown as that event.
     expect(asks).toContain(
-      `from "pending_action" inner join "agent" on "pending_action"."agent_id" = "agent"."id" where ("agent"."person_id" = $11 and "pending_action"."answered_at" is not null and "pending_action"."kind" <> 'tool') order by "pending_action"."answered_at" desc, ${ASK_KEY} desc limit $12`,
+      `from "pending_action" inner join "agent" on "pending_action"."agent_id" = "agent"."id" where ("agent"."person_id" = $13 and "pending_action"."answered_at" is not null and "pending_action"."kind" <> 'tool' and not exists (select 1 from "approval_event" where "approval_event"."person_id" = $14 and "approval_event"."pending_action_id" = "pending_action"."id")) order by "pending_action"."answered_at" desc, ${ASK_KEY} desc limit $15`,
     );
-    expect(asks).toMatch(
-      /\)\) as activity order by activity\.at desc, activity\.key collate "C" desc limit \$13$/,
+
+    // The events, under the person on the row; the agent and the tool joined under the person,
+    // left, since a connection's revoke names no agent and a gone tool leaves its event.
+    expect(events).toContain(
+      `from "approval_event" left join "agent" on ("approval_event"."agent_id" = "agent"."id" and "agent"."person_id" = $16) left join "authored_tool" on ("approval_event"."tool_id" = "authored_tool"."id" and "authored_tool"."person_id" = $17) where "approval_event"."person_id" = $18 order by "approval_event"."at" desc, ${EVENT_KEY} desc limit $19`,
+    );
+    expect(events).toMatch(
+      /\)\) as activity order by activity\.at desc, activity\.key collate "C" desc limit \$20$/,
     );
 
     expect(s.params).toEqual([
@@ -91,9 +107,16 @@ describe("the activity stream names the person in every branch", () => {
       51,
       "person_1",
       "person_1",
-      51,
       "person_1",
       51,
+      "person_1",
+      "person_1",
+      51,
+      "person_1",
+      "person_1",
+      51,
+      "person_1",
+      "person_1",
       "person_1",
       51,
       51,
@@ -136,6 +159,9 @@ describe("the activity stream names the person in every branch", () => {
       "includes_destructive",
       "ask_kind",
       "answer",
+      "event_kind",
+      "event_action",
+      "event_via",
     ]);
   });
 
@@ -152,8 +178,9 @@ describe("the activity stream names the person in every branch", () => {
     expect(s.sql).toContain(`("approval"."decided_at", ${TOOL_APPROVAL_KEY}) < ($`);
     expect(s.sql).toContain(`("vendor_approval"."granted_at", ${VENDOR_APPROVAL_KEY}) < ($`);
     expect(s.sql).toContain(`("pending_action"."answered_at", ${ASK_KEY}) < ($`);
-    expect(s.params.filter((p) => p === "2026-10-14 09:00:00.123456")).toHaveLength(4);
-    expect(s.params.filter((p) => p === "run:u_9")).toHaveLength(4);
+    expect(s.sql).toContain(`("approval_event"."at", ${EVENT_KEY}) < ($`);
+    expect(s.params.filter((p) => p === "2026-10-14 09:00:00.123456")).toHaveLength(5);
+    expect(s.params.filter((p) => p === "run:u_9")).toHaveLength(5);
   });
 });
 
@@ -162,10 +189,15 @@ describe("a filter changes the statement", () => {
     await listActivity(db, "person_1", { filter: { agentId: "agent_1" }, limit: 10 });
     const s = only();
     expect(s.sql).toContain('("agent"."person_id" = $3 and "usage_ledger"."agent_id" = $4 and');
-    expect(s.sql).toContain('("agent"."person_id" = $8 and "approval"."agent_id" = $9)');
-    expect(s.sql).toContain('("agent"."person_id" = $11 and "vendor_approval"."agent_id" = $12)');
-    expect(s.sql).toContain('"pending_action"."agent_id" = $15');
-    expect(s.params.filter((p) => p === "agent_1")).toHaveLength(4);
+    expect(s.sql).toContain('"approval"."decided_at") and "approval"."agent_id" = $10)');
+    expect(s.sql).toContain(
+      '"vendor_approval"."granted_at") and "vendor_approval"."agent_id" = $14)',
+    );
+    expect(s.sql).toContain('"pending_action"."agent_id" = $');
+    // An agent leaves out the events that name none, a connection's revoke.
+    expect(s.sql).toContain('("approval_event"."person_id" = $');
+    expect(s.sql).toContain('and "approval_event"."agent_id" = $');
+    expect(s.params.filter((p) => p === "agent_1")).toHaveLength(5);
   });
 
   it("a vendor is read off the tool or the connection for a run, the tool for an approval, the row for an integration approval and the payload for an ask", async () => {
@@ -175,15 +207,17 @@ describe("a filter changes the statement", () => {
     expect(s.sql).toContain('"authored_tool"."vendor" = $');
     expect(s.sql).toContain('"vendor_approval"."vendor" = $');
     expect(s.sql).toContain(`"pending_action"."payload" ->> 'vendor' = $`);
-    expect(s.params.filter((p) => p === "gmail")).toHaveLength(4);
+    expect(s.sql).toContain('"approval_event"."vendor" = $');
+    expect(s.params.filter((p) => p === "gmail")).toHaveLength(5);
   });
 
-  it("a connection keeps the runs and the asks, which record one, and leaves the standing approvals out", async () => {
+  it("a connection keeps the runs, the asks and the events, which record one, and leaves the standing approvals out", async () => {
     await listActivity(db, "person_1", { filter: { connectionId: "conn_1" }, limit: 10 });
     const s = only();
-    expect(s.sql.split(") union all (")).toHaveLength(2);
+    expect(s.sql.split(") union all (")).toHaveLength(3);
     expect(s.sql).toContain('"usage_ledger"."connection_id" = $');
     expect(s.sql).toContain(`${ASK_CONNECTION} = $`);
+    expect(s.sql).toContain('"approval_event"."connection_id" = $');
     expect(s.sql).not.toContain('from "approval"');
     expect(s.sql).not.toContain('from "vendor_approval"');
   });
@@ -200,7 +234,7 @@ describe("a filter changes the statement", () => {
     await listActivity(db, "person_1", { filter: { kind: "approval" }, limit: 10 });
     const s = only();
     expect(s.sql).not.toContain('"usage_ledger"');
-    expect(s.sql.split(") union all (")).toHaveLength(3);
+    expect(s.sql.split(") union all (")).toHaveLength(4);
   });
 
   it("dry runs and meta-tools come back only when asked for, by dropping their predicates", async () => {

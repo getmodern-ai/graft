@@ -246,6 +246,7 @@ async function submitConnection(
       { personId: PERSON, agentId: action.agentId },
       connection.id,
       deps.approval,
+      { via: "console", pendingActionId: action.id },
     );
   }
   await answerPendingAction(

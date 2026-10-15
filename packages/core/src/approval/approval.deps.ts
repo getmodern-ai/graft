@@ -15,7 +15,12 @@ import {
   upsertApproval,
   upsertVendorApproval,
 } from "@graft/db/repo/approval";
-import { findConnection, findVendorConnectionsForUpdate } from "@graft/db/repo/connection";
+import { insertApprovalEvent } from "@graft/db/repo/approval-event";
+import {
+  findConnection,
+  findConnectionForNoKeyUpdate,
+  findVendorConnectionsForUpdate,
+} from "@graft/db/repo/connection";
 import {
   answerOpenToolActions,
   listOpenToolActions,
@@ -23,6 +28,7 @@ import {
 } from "@graft/db/repo/pending-action";
 import {
   findAuthoredToolById,
+  findAuthoredToolForNoKeyUpdate,
   findAuthoredToolForUpdate,
   listToolVersionOrigins,
 } from "@graft/db/repo/tool";
@@ -69,9 +75,18 @@ export type ApprovalDeps = {
    * and an advance serialise and the answer lands on the version it holds for (`setApproval`).
    */
   findAuthoredToolForUpdate: typeof findAuthoredToolForUpdate;
+  /**
+   * The ask-every-call switch and a withdraw queue on the tool row behind an answer, without
+   * blocking a revoke's foreign-key checks on it (GRA-341).
+   */
+  findAuthoredToolForNoKeyUpdate: typeof findAuthoredToolForNoKeyUpdate;
   /** The tool's versions by origin, which say whether a late answer carries (`answerCarriesTo`). */
   listToolVersionOrigins: typeof listToolVersionOrigins;
   findConnection: typeof findConnection;
+  /** A build approval's withdraw takes the connection first, as a revoke does (GRA-341). */
+  findConnectionForNoKeyUpdate: typeof findConnectionForNoKeyUpdate;
+  /** Every answer, withdraw and change is appended to the record in its own transaction (GRA-341). */
+  insertApprovalEvent: typeof insertApprovalEvent;
   now: () => Date;
 };
 
@@ -97,7 +112,10 @@ export const defaultApprovalDeps: ApprovalDeps = {
   findAgent,
   findAuthoredToolById,
   findAuthoredToolForUpdate,
+  findAuthoredToolForNoKeyUpdate,
   listToolVersionOrigins,
   findConnection,
+  findConnectionForNoKeyUpdate,
+  insertApprovalEvent,
   now: () => new Date(),
 };

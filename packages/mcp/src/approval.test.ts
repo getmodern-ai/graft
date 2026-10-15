@@ -61,6 +61,8 @@ const AGENT_I = "agent_i";
 const AGENT_J = "agent_j";
 const AGENT_K = "agent_k";
 const AGENT_L = "agent_l";
+const AGENT_P = "agent_p";
+const AGENT_Q = "agent_q";
 const TOKEN_A = "grft_approval_token_a_000000000000000000000000";
 const TOKEN_B = "grft_approval_token_b_000000000000000000000000";
 const TOKEN_C = "grft_approval_token_c_000000000000000000000000";
@@ -72,6 +74,8 @@ const TOKEN_I = "grft_approval_token_i_000000000000000000000000";
 const TOKEN_J = "grft_approval_token_j_000000000000000000000000";
 const TOKEN_K = "grft_approval_token_k_000000000000000000000000";
 const TOKEN_L = "grft_approval_token_l_000000000000000000000000";
+const TOKEN_P = "grft_approval_token_p_000000000000000000000000";
+const TOKEN_Q = "grft_approval_token_q_000000000000000000000000";
 const CONN_DEMO = "conn_demo";
 const CONSOLE_URL = "http://console.graft.test";
 const SECRET = "graft-approval-test-handoff-secret-long-enough-32";
@@ -153,6 +157,8 @@ beforeAll(async () => {
     [AGENT_J, TOKEN_J, "connecting Hermes"],
     [AGENT_K, TOKEN_K, "careful Hermes"],
     [AGENT_L, TOKEN_L, "console-answered Hermes"],
+    [AGENT_P, TOKEN_P, "recorded Hermes"],
+    [AGENT_Q, TOKEN_Q, "recorded elicitation Hermes"],
   ] as const) {
     store.addAgent({
       scopeMode: "listed",
@@ -188,6 +194,8 @@ beforeAll(async () => {
       AGENT_J,
       AGENT_K,
       AGENT_L,
+      AGENT_P,
+      AGENT_Q,
     ]) {
       store.promote(agent, tool.id);
     }
@@ -797,6 +805,14 @@ describe("an integration allowed when connecting", () => {
         vendor: "demo",
         includesDestructive: false,
       });
+      // GRA-341: the confirmation and its line are recorded as that ask's answer, so the read
+      // shows these rather than the ask a second time.
+      expect(
+        store.approvalEvents
+          .filter((row) => row.pendingActionId === confirmed.pendingAction.id)
+          .map(({ kind, action, via }) => `${kind} ${action} ${via}`)
+          .sort(),
+      ).toEqual(["connection allowed console", "vendor allowed console"]);
 
       const before = actionsOf(AGENT_J, "tool").length;
       expect(body(await j.call(CREATE_ITEM, { limit: 1 }))).toEqual(VENDOR_BODY);
@@ -820,7 +836,7 @@ describe("an integration allowed when connecting", () => {
         { db: deps.db },
         { personId: PERSON, agentId: AGENT_J },
         "demo",
-        { includesDestructive: true },
+        { includesDestructive: true, event: { via: "console" } },
         deps.approval,
       );
       const confirmed = await connectWithLine(j, "j-again", true);
@@ -902,7 +918,7 @@ describe("an answer the console sets outright", () => {
         { db: deps.db },
         scopeL,
         "demo",
-        { includesDestructive: false },
+        { includesDestructive: false, event: { via: "console" } },
         deps.approval,
       );
       awaiting(await l.call(DELETE_ITEM, { limit: 1 }));
@@ -1605,6 +1621,98 @@ describe("through an elicitation the client declines on its own — Hermes with 
   }, 60_000);
 });
 
+/**
+ * GRA-341: every answer, and every withdraw of one, is appended to the person's record once, by
+ * the door the person used, so the console's Activity keeps an answer the person later withdrew.
+ */
+describe("the record of answers", () => {
+  const eventsOf = (agentId: string) =>
+    store.approvalEvents
+      .filter((row) => row.agentId === agentId)
+      .map(({ kind, action, via, toolId, connectionId, pendingActionId }) => ({
+        kind,
+        action,
+        via,
+        toolId,
+        connectionId,
+        pendingActionId,
+      }));
+
+  it("an answer at the console is recorded once with its ask, the agent's take adds nothing, and a withdraw is a second row", async () => {
+    const p = await connect(TOKEN_P);
+    try {
+      const { action } = awaiting(await p.call(CREATE_ITEM, { limit: 1 }));
+      await answerAtDoor(action.id, { allow: true });
+      expect(body(await p.call(CREATE_ITEM, { limit: 1 }))).toEqual(VENDOR_BODY);
+      await revokeApproval(
+        { db: deps.db },
+        { personId: PERSON, agentId: AGENT_P },
+        "tool_create",
+        deps.approval,
+      );
+      expect(eventsOf(AGENT_P)).toEqual([
+        {
+          kind: "tool",
+          action: "allowed",
+          via: "console",
+          toolId: "tool_create",
+          connectionId: null,
+          pendingActionId: action.id,
+        },
+        {
+          kind: "tool",
+          action: "withdrew",
+          via: "console",
+          toolId: "tool_create",
+          connectionId: null,
+          pendingActionId: null,
+        },
+      ]);
+    } finally {
+      await p.close();
+    }
+  }, 30_000);
+
+  it("a build ask declined at the console is recorded, though no row holds a no", async () => {
+    const p = await connect(TOKEN_P);
+    try {
+      const { action } = awaiting(
+        await p.call(executeToolName(CONN_DEMO), { command: RUN_LIST_ITEMS }),
+      );
+      await answerAtDoor(action.id, { allow: false });
+      expect(eventsOf(AGENT_P).at(-1)).toEqual({
+        kind: "build",
+        action: "denied",
+        via: "console",
+        toolId: null,
+        connectionId: CONN_DEMO,
+        pendingActionId: action.id,
+      });
+    } finally {
+      await p.close();
+    }
+  }, 30_000);
+
+  it("an answer in the client's form is recorded as the elicitation's, with no ask to name", async () => {
+    const q = await connect(TOKEN_Q, async () => ({ action: "accept", content: { allow: true } }));
+    try {
+      expect(body(await q.call(UPDATE_ITEM, { limit: 1 }))).toEqual(VENDOR_BODY);
+      expect(eventsOf(AGENT_Q)).toEqual([
+        {
+          kind: "tool",
+          action: "allowed",
+          via: "elicitation",
+          toolId: "tool_update",
+          connectionId: null,
+          pendingActionId: null,
+        },
+      ]);
+    } finally {
+      await q.close();
+    }
+  }, 30_000);
+});
+
 describe("every approval and every pending action is a row with the agent and the tool or connection", () => {
   it("as the fake store holds them", () => {
     for (const row of store.approvals.values()) {
@@ -1759,6 +1867,7 @@ describe("an approval is for the version the person was shown", () => {
       v2Id = republish().id;
       await setApproval({ db: deps.db }, SCOPE_A, "tool_pinned", "allow", deps.approval, {
         asked: { versionId: v2Id, annotations: { readOnly: false, destructive: false } },
+        event: { via: "console" },
       });
       return null;
     });

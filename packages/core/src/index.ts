@@ -105,6 +105,7 @@ export {
 } from "./approval/approval.decision";
 export { type ApprovalDeps, defaultApprovalDeps } from "./approval/approval.deps";
 export {
+  type ApprovalEventOrigin,
   type AskedVersion,
   allowVendor,
   allowVendorWhenConnecting,
@@ -118,6 +119,7 @@ export {
   listApprovals,
   listBuildApprovals,
   listVendorApprovals,
+  recordBuildEvent,
   revokeApproval,
   SETTING_ANSWER_VIA,
   setApproval,

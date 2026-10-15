@@ -160,9 +160,38 @@ function approval(over: Partial<Extract<ActivityRow, { kind: "approval" }>>): Ac
     includesDestructive: null,
     askKind: null,
     answer: null,
+    event: null,
     ...over,
   };
 }
+
+describe("activityRowView over approval events (GRA-341)", () => {
+  const ev = (
+    kind: "tool" | "vendor" | "build",
+    action: "allowed" | "withdrew" | "ask_every_call_on" | "narrowed",
+  ) => approval({ source: "event", event: { kind, action, via: "console" } });
+
+  it("keeps an answer and its withdraw as two rows, and says the switch without always", () => {
+    expect(activityRowView(ev("tool", "allowed"), "HubSpot")).toMatchObject({
+      icon: "allowed",
+      title: "Allowed Update deal",
+    });
+    expect(activityRowView(ev("tool", "withdrew"), "HubSpot")).toMatchObject({
+      icon: "withdrawn",
+      title: "Withdrew your answer on Update deal",
+    });
+    expect(activityRowView(ev("tool", "ask_every_call_on"), "HubSpot").title).toBe(
+      "Asks before every call to Update deal",
+    );
+    expect(activityRowView(ev("vendor", "narrowed"), "HubSpot")).toMatchObject({
+      icon: "changed",
+      title: "Allowed every HubSpot tool except ones that delete",
+    });
+    expect(activityRowView(ev("build", "withdrew"), "HubSpot").title).toBe(
+      "Withdrew building tools for HubSpot",
+    );
+  });
+});
 
 describe("activityRowView", () => {
   it("reads a run that went through without an ask, and one approved", () => {
