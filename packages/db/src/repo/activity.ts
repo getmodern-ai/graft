@@ -3,6 +3,12 @@ import { and, desc, eq, inArray, type SQL, sql } from "drizzle-orm";
 import type { DbOrTx } from "../index";
 import { agent } from "../schema/agent";
 import { type ApprovalDecision, approval, vendorApproval } from "../schema/approval";
+import {
+  type ApprovalEventAction,
+  type ApprovalEventKind,
+  type ApprovalEventVia,
+  approvalEvent,
+} from "../schema/approval-event";
 import { connection } from "../schema/connection";
 import { pendingAction } from "../schema/pending-action";
 import { authoredTool } from "../schema/tool";
@@ -14,28 +20,34 @@ import type { AgentScope } from "./scope";
  * The console's activity (GRA-308): one person-wide stream that Home, the agent page, the
  * integration page's Activity tab and the Activity screen each read with their own filters. Two
  * kinds of row, newest first: a `run` is a usage-ledger line, and an `approval` is a moment the
- * person answered, from three records (a tool's standing answer, an integration's standing
- * approval, an answered ask that is not a tool's). Every branch names the person on the agent row
- * it joins, and on the tool and the connection where it reads one (ADR 0007).
+ * person answered, withdrew, changed or revoked something. Since GRA-341 an approval row is an
+ * `approval_event`, appended when the change was made; the three older records (a tool's standing
+ * answer, an integration's standing approval, an answered ask that is not a tool's) are read only
+ * where no event covers them, which is every answer given before the events existed. Every branch
+ * names the person, on the row itself or on the agent row it joins, and on the tool and the
+ * connection where it reads one (ADR 0007).
  */
 
 export const activityKind = ["run", "approval"] as const;
 export type ActivityKind = (typeof activityKind)[number];
 
 /**
- * Where an `approval` row came from. `tool`: the `approval` row, at its `decided_at`. `vendor`: the
- * `vendor_approval` row, at its `granted_at`. `ask`: an answered pending action, at its
- * `answered_at`, of any kind but `tool`, whose answer is the `approval` or `vendor_approval` row it
- * wrote (`@graft/mcp`'s `ask-answer.ts`), so it is not shown twice. A standing row re-decided moves
- * to its new moment; the earlier answer is on Requests' Done list.
+ * Where an `approval` row came from. `event`: an `approval_event` row, at its `at` (GRA-341), the
+ * record of every answer, withdraw, change and revoke made since it existed. The other three are
+ * the record before it, each read only where no event covers it, so nothing is shown twice:
+ * `tool`, the `approval` row at its `decided_at`, unless an answer event for the tool and agent is
+ * at or after that moment; `vendor`, the `vendor_approval` row at its `granted_at`, on the same
+ * rule; `ask`, an answered pending action of any kind but `tool` at its `answered_at`, unless an
+ * event names it as the ask it answered. A standing row answered before the events and withdrawn
+ * after is gone, so the withdraw's event is all that shows of it.
  */
-export const activityApprovalSource = ["tool", "vendor", "ask"] as const;
+export const activityApprovalSource = ["event", "tool", "vendor", "ask"] as const;
 export type ActivityApprovalSource = (typeof activityApprovalSource)[number];
 
 /**
  * A row's place in the stream: its moment as Postgres prints it, to the microsecond, and a key
- * unique across the four branches (`run:<id>`, `tool_approval:<agent>:<tool>`,
- * `vendor_approval:<agent>:<vendor>`, `ask:<id>`). The order and the cursor are both on this pair,
+ * unique across the five branches (`run:<id>`, `tool_approval:<agent>:<tool>`,
+ * `vendor_approval:<agent>:<vendor>`, `ask:<id>`, `event:<id>`). The order and the cursor are both on this pair,
  * so a row written after a page was read lands above it and moves nothing below. The key compares
  * under `collate "C"`, bytewise, so the order is the same on any database's default collation.
  */
@@ -44,8 +56,6 @@ export type ActivityPosition = { at: string; key: string };
 type ActivityRowBase = {
   position: ActivityPosition;
   at: Date;
-  agentId: string;
-  agentName: string;
   /** The integration's slug, or null where nothing recorded it (a meta-tool, a line before GRA-301). */
   vendor: string | null;
   /** The connection the line ran against, or the ask was about; null where none is recorded. */
@@ -57,6 +67,8 @@ export type ActivityTool = { id: string; vendor: string; name: string; descripti
 
 export type ActivityRunRow = ActivityRowBase & {
   kind: "run";
+  agentId: string;
+  agentName: string;
   id: string;
   /** The wire name the ledger stored, which outlives the tool's row. */
   toolName: string;
@@ -68,21 +80,36 @@ export type ActivityRunRow = ActivityRowBase & {
   dryRun: boolean;
 };
 
+/** What an `event` row records (`schema/approval-event.ts` says what each word means). */
+export type ActivityEvent = {
+  kind: ApprovalEventKind;
+  action: ApprovalEventAction;
+  via: ApprovalEventVia;
+};
+
 export type ActivityApprovalRow = ActivityRowBase & {
   kind: "approval";
+  /** Null only on an `event` with no agent: a connection's revoke, the person's act on every agent. */
+  agentId: string | null;
+  agentName: string | null;
   source: ActivityApprovalSource;
-  /** The pending action's id for `ask`; null for a standing row, which has no id of its own. */
+  /**
+   * The pending action's id for `ask`, and for an `event` that answered one; null for a standing
+   * row, which has no id of its own.
+   */
   pendingActionId: string | null;
-  /** The tool a `tool` approval is for; null for the other two sources. */
+  /** The tool a `tool` approval or a `tool` event is for, while its row stands; null otherwise. */
   tool: ActivityTool | null;
-  /** The answer on a `tool` approval; null for the other two. */
+  /** The answer on a `tool` approval; null for the other sources. */
   decision: ApprovalDecision | null;
-  /** Whether a `vendor` approval passes destructive tools too; null for the other two. */
+  /** Whether a `vendor` approval, or a `vendor` event, passes destructive tools too; else null. */
   includesDestructive: boolean | null;
-  /** The ask's kind for `ask` (`connection`, `build`, `scope`, …); null for the other two. */
+  /** The ask's kind for `ask` (`connection`, `build`, `scope`, …); null for the other sources. */
   askKind: string | null;
-  /** The ask's answer as recorded, as the Done list reads it; null for the other two. */
+  /** The ask's answer as recorded, as the Done list reads it; null for the other sources. */
   answer: Record<string, unknown> | null;
+  /** What an `event` recorded; null for the other three sources. */
+  event: ActivityEvent | null;
 };
 
 export type ActivityRow = ActivityRunRow | ActivityApprovalRow;
@@ -91,7 +118,8 @@ export type ActivityRow = ActivityRunRow | ActivityApprovalRow;
  * The stream's filters, each of which changes the statement rather than the page the client gets.
  * `outcome` is a run's, so naming one leaves the approval branches out, as `kind: "run"` does; a
  * `connectionId` leaves out the two standing branches, which are per tool and per integration and
- * name no connection. Meta-tool lines and dry runs are left out unless asked for.
+ * name no connection. An `agentId` leaves out the events that name no agent. Meta-tool lines and
+ * dry runs are left out unless asked for.
  */
 export type ActivityFilter = {
   agentId?: string | null;
@@ -107,8 +135,8 @@ type RawActivityRow = {
   kind: ActivityKind;
   key: string;
   at: string;
-  agent_id: string;
-  agent_name: string;
+  agent_id: string | null;
+  agent_name: string | null;
   vendor: string | null;
   connection_id: string | null;
   id: string | null;
@@ -127,7 +155,15 @@ type RawActivityRow = {
   includes_destructive: boolean | null;
   ask_kind: string | null;
   answer: Record<string, unknown> | null;
+  event_kind: ApprovalEventKind | null;
+  event_action: ApprovalEventAction | null;
+  event_via: ApprovalEventVia | null;
 };
+
+/** The three columns only the event branch fills, as every other branch selects them. */
+const NO_EVENT = sql.raw(
+  "null::text as event_kind, null::text as event_action, null::text as event_via",
+);
 
 /**
  * A meta-tool carries a single underscore and never the separator, which every authored and
@@ -147,7 +183,7 @@ function where(conditions: (SQL | undefined)[]): SQL {
 function runBranch(personId: string, filter: ActivityFilter, after?: ActivityPosition | null) {
   const key = sql`('run:' || ${usageLedger.id}) collate "C"`;
   const vendor = sql`coalesce(${authoredTool.vendor}, ${connection.vendor})`;
-  return sql`select 'run' as kind, ${key} as key, ${usageLedger.createdAt} as at, ${usageLedger.agentId} as agent_id, ${agent.name} as agent_name, ${vendor} as vendor, ${usageLedger.connectionId} as connection_id, ${usageLedger.id} as id, ${usageLedger.toolName} as wire_name, ${authoredTool.id} as tool_id, ${authoredTool.vendor} as tool_vendor, ${authoredTool.name} as tool_short_name, ${authoredTool.description} as tool_description, ${usageLedger.outcome} as outcome, ${usageLedger.reason} as reason, ${usageLedger.asked} as asked, ${usageLedger.latencyMs} as latency_ms, ${usageLedger.dryRun} as dry_run, null::text as source, null::text as decision, null::boolean as includes_destructive, null::text as ask_kind, null::jsonb as answer from ${usageLedger} inner join ${agent} on ${usageLedger.agentId} = ${agent.id} left join ${authoredTool} on (${usageLedger.toolId} = ${authoredTool.id} and ${authoredTool.personId} = ${personId}) left join ${connection} on (${usageLedger.connectionId} = ${connection.id} and ${connection.personId} = ${personId}) where ${where(
+  return sql`select 'run' as kind, ${key} as key, ${usageLedger.createdAt} as at, ${usageLedger.agentId} as agent_id, ${agent.name} as agent_name, ${vendor} as vendor, ${usageLedger.connectionId} as connection_id, ${usageLedger.id} as id, ${usageLedger.toolName} as wire_name, ${authoredTool.id} as tool_id, ${authoredTool.vendor} as tool_vendor, ${authoredTool.name} as tool_short_name, ${authoredTool.description} as tool_description, ${usageLedger.outcome} as outcome, ${usageLedger.reason} as reason, ${usageLedger.asked} as asked, ${usageLedger.latencyMs} as latency_ms, ${usageLedger.dryRun} as dry_run, null::text as source, null::text as decision, null::boolean as includes_destructive, null::text as ask_kind, null::jsonb as answer, ${NO_EVENT} from ${usageLedger} inner join ${agent} on ${usageLedger.agentId} = ${agent.id} left join ${authoredTool} on (${usageLedger.toolId} = ${authoredTool.id} and ${authoredTool.personId} = ${personId}) left join ${connection} on (${usageLedger.connectionId} = ${connection.id} and ${connection.personId} = ${personId}) where ${where(
     [
       eq(agent.personId, personId),
       filter.agentId ? eq(usageLedger.agentId, filter.agentId) : undefined,
@@ -167,9 +203,10 @@ function toolApprovalBranch(
   after?: ActivityPosition | null,
 ) {
   const key = sql`('tool_approval:' || ${approval.agentId} || ':' || ${approval.toolId}) collate "C"`;
-  return sql`select 'approval' as kind, ${key} as key, ${approval.decidedAt} as at, ${approval.agentId} as agent_id, ${agent.name} as agent_name, ${authoredTool.vendor} as vendor, null::text as connection_id, null::text as id, null::text as wire_name, ${authoredTool.id} as tool_id, ${authoredTool.vendor} as tool_vendor, ${authoredTool.name} as tool_short_name, ${authoredTool.description} as tool_description, null::text as outcome, null::text as reason, null::boolean as asked, null::integer as latency_ms, null::boolean as dry_run, 'tool' as source, ${approval.decision} as decision, null::boolean as includes_destructive, null::text as ask_kind, null::jsonb as answer from ${approval} inner join ${agent} on ${approval.agentId} = ${agent.id} inner join ${authoredTool} on (${approval.toolId} = ${authoredTool.id} and ${authoredTool.personId} = ${personId}) where ${where(
+  return sql`select 'approval' as kind, ${key} as key, ${approval.decidedAt} as at, ${approval.agentId} as agent_id, ${agent.name} as agent_name, ${authoredTool.vendor} as vendor, null::text as connection_id, null::text as id, null::text as wire_name, ${authoredTool.id} as tool_id, ${authoredTool.vendor} as tool_vendor, ${authoredTool.name} as tool_short_name, ${authoredTool.description} as tool_description, null::text as outcome, null::text as reason, null::boolean as asked, null::integer as latency_ms, null::boolean as dry_run, 'tool' as source, ${approval.decision} as decision, null::boolean as includes_destructive, null::text as ask_kind, null::jsonb as answer, ${NO_EVENT} from ${approval} inner join ${agent} on ${approval.agentId} = ${agent.id} inner join ${authoredTool} on (${approval.toolId} = ${authoredTool.id} and ${authoredTool.personId} = ${personId}) where ${where(
     [
       eq(agent.personId, personId),
+      sql`not exists (select 1 from ${approvalEvent} where ${approvalEvent.personId} = ${personId} and ${approvalEvent.agentId} = ${approval.agentId} and ${approvalEvent.kind} = 'tool' and ${approvalEvent.toolId} = ${approval.toolId} and ${approvalEvent.action} in ('allowed', 'denied') and ${approvalEvent.at} >= ${approval.decidedAt})`,
       filter.agentId ? eq(approval.agentId, filter.agentId) : undefined,
       filter.vendor ? eq(authoredTool.vendor, filter.vendor) : undefined,
       before(sql`${approval.decidedAt}`, key, after),
@@ -183,9 +220,10 @@ function vendorApprovalBranch(
   after?: ActivityPosition | null,
 ) {
   const key = sql`('vendor_approval:' || ${vendorApproval.agentId} || ':' || ${vendorApproval.vendor}) collate "C"`;
-  return sql`select 'approval' as kind, ${key} as key, ${vendorApproval.grantedAt} as at, ${vendorApproval.agentId} as agent_id, ${agent.name} as agent_name, ${vendorApproval.vendor} as vendor, null::text as connection_id, null::text as id, null::text as wire_name, null::text as tool_id, null::text as tool_vendor, null::text as tool_short_name, null::text as tool_description, null::text as outcome, null::text as reason, null::boolean as asked, null::integer as latency_ms, null::boolean as dry_run, 'vendor' as source, null::text as decision, ${vendorApproval.includesDestructive} as includes_destructive, null::text as ask_kind, null::jsonb as answer from ${vendorApproval} inner join ${agent} on ${vendorApproval.agentId} = ${agent.id} where ${where(
+  return sql`select 'approval' as kind, ${key} as key, ${vendorApproval.grantedAt} as at, ${vendorApproval.agentId} as agent_id, ${agent.name} as agent_name, ${vendorApproval.vendor} as vendor, null::text as connection_id, null::text as id, null::text as wire_name, null::text as tool_id, null::text as tool_vendor, null::text as tool_short_name, null::text as tool_description, null::text as outcome, null::text as reason, null::boolean as asked, null::integer as latency_ms, null::boolean as dry_run, 'vendor' as source, null::text as decision, ${vendorApproval.includesDestructive} as includes_destructive, null::text as ask_kind, null::jsonb as answer, ${NO_EVENT} from ${vendorApproval} inner join ${agent} on ${vendorApproval.agentId} = ${agent.id} where ${where(
     [
       eq(agent.personId, personId),
+      sql`not exists (select 1 from ${approvalEvent} where ${approvalEvent.personId} = ${personId} and ${approvalEvent.agentId} = ${vendorApproval.agentId} and ${approvalEvent.kind} = 'vendor' and ${approvalEvent.vendor} = ${vendorApproval.vendor} and ${approvalEvent.action} in ('allowed', 'widened', 'narrowed') and ${approvalEvent.at} >= ${vendorApproval.grantedAt})`,
       filter.agentId ? eq(vendorApproval.agentId, filter.agentId) : undefined,
       filter.vendor ? eq(vendorApproval.vendor, filter.vendor) : undefined,
       before(sql`${vendorApproval.grantedAt}`, key, after),
@@ -199,11 +237,12 @@ function askBranch(personId: string, filter: ActivityFilter, after?: ActivityPos
   // the connection on its column or, for a proposal, the one it was answered with.
   const vendor = sql`${pendingAction.payload} ->> 'vendor'`;
   const connectionId = sql`coalesce(${pendingAction.connectionId}, ${pendingAction.answer} ->> 'connectionId')`;
-  return sql`select 'approval' as kind, ${key} as key, ${pendingAction.answeredAt} as at, ${pendingAction.agentId} as agent_id, ${agent.name} as agent_name, ${vendor} as vendor, ${connectionId} as connection_id, ${pendingAction.id} as id, null::text as wire_name, null::text as tool_id, null::text as tool_vendor, null::text as tool_short_name, null::text as tool_description, null::text as outcome, null::text as reason, null::boolean as asked, null::integer as latency_ms, null::boolean as dry_run, 'ask' as source, null::text as decision, null::boolean as includes_destructive, ${pendingAction.kind} as ask_kind, ${pendingAction.answer} as answer from ${pendingAction} inner join ${agent} on ${pendingAction.agentId} = ${agent.id} where ${where(
+  return sql`select 'approval' as kind, ${key} as key, ${pendingAction.answeredAt} as at, ${pendingAction.agentId} as agent_id, ${agent.name} as agent_name, ${vendor} as vendor, ${connectionId} as connection_id, ${pendingAction.id} as id, null::text as wire_name, null::text as tool_id, null::text as tool_vendor, null::text as tool_short_name, null::text as tool_description, null::text as outcome, null::text as reason, null::boolean as asked, null::integer as latency_ms, null::boolean as dry_run, 'ask' as source, null::text as decision, null::boolean as includes_destructive, ${pendingAction.kind} as ask_kind, ${pendingAction.answer} as answer, ${NO_EVENT} from ${pendingAction} inner join ${agent} on ${pendingAction.agentId} = ${agent.id} where ${where(
     [
       eq(agent.personId, personId),
       sql`${pendingAction.answeredAt} is not null`,
       sql`${pendingAction.kind} <> 'tool'`,
+      sql`not exists (select 1 from ${approvalEvent} where ${approvalEvent.personId} = ${personId} and ${approvalEvent.pendingActionId} = ${pendingAction.id})`,
       filter.agentId ? eq(pendingAction.agentId, filter.agentId) : undefined,
       filter.vendor ? sql`${vendor} = ${filter.vendor}` : undefined,
       filter.connectionId ? sql`${connectionId} = ${filter.connectionId}` : undefined,
@@ -213,18 +252,37 @@ function askBranch(personId: string, filter: ActivityFilter, after?: ActivityPos
 }
 
 /**
+ * The events (GRA-341), under the person on the row itself. The agent and the tool are joined
+ * under the person too, and left joined: a connection's revoke names no agent, and a tool whose
+ * row is gone still leaves its event. The integration and the connection are the event's own
+ * columns, so a filter by either needs no join.
+ */
+function eventBranch(personId: string, filter: ActivityFilter, after?: ActivityPosition | null) {
+  const key = sql`('event:' || ${approvalEvent.id}) collate "C"`;
+  return sql`select 'approval' as kind, ${key} as key, ${approvalEvent.at} as at, ${approvalEvent.agentId} as agent_id, ${agent.name} as agent_name, ${approvalEvent.vendor} as vendor, ${approvalEvent.connectionId} as connection_id, ${approvalEvent.pendingActionId} as id, null::text as wire_name, ${authoredTool.id} as tool_id, ${authoredTool.vendor} as tool_vendor, ${authoredTool.name} as tool_short_name, ${authoredTool.description} as tool_description, null::text as outcome, null::text as reason, null::boolean as asked, null::integer as latency_ms, null::boolean as dry_run, 'event' as source, null::text as decision, ${approvalEvent.includesDestructive} as includes_destructive, null::text as ask_kind, null::jsonb as answer, ${approvalEvent.kind} as event_kind, ${approvalEvent.action} as event_action, ${approvalEvent.via} as event_via from ${approvalEvent} left join ${agent} on (${approvalEvent.agentId} = ${agent.id} and ${agent.personId} = ${personId}) left join ${authoredTool} on (${approvalEvent.toolId} = ${authoredTool.id} and ${authoredTool.personId} = ${personId}) where ${where(
+    [
+      eq(approvalEvent.personId, personId),
+      filter.agentId ? eq(approvalEvent.agentId, filter.agentId) : undefined,
+      filter.vendor ? eq(approvalEvent.vendor, filter.vendor) : undefined,
+      filter.connectionId ? eq(approvalEvent.connectionId, filter.connectionId) : undefined,
+      before(sql`${approvalEvent.at}`, key, after),
+    ],
+  )} order by ${approvalEvent.at} desc, ${key} desc`;
+}
+
+/**
  * The branches a filter keeps. `outcome` and `kind: "run"` keep the runs alone; a `connectionId`
- * keeps the runs and the asks, the two that record one.
+ * keeps the runs, the asks and the events, the three that record one.
  */
 export function activityBranches(
   filter: ActivityFilter,
-): ("run" | "tool_approval" | "vendor_approval" | "ask")[] {
+): ("run" | "tool_approval" | "vendor_approval" | "ask" | "event")[] {
   const runs = filter.kind !== "approval";
   const approvals = filter.kind !== "run" && !filter.outcome;
   return [
     ...(runs ? (["run"] as const) : []),
     ...(approvals && !filter.connectionId ? (["tool_approval", "vendor_approval"] as const) : []),
-    ...(approvals ? (["ask"] as const) : []),
+    ...(approvals ? (["ask", "event"] as const) : []),
   ];
 }
 
@@ -243,6 +301,7 @@ export async function listActivity(
     tool_approval: toolApprovalBranch,
     vendor_approval: vendorApprovalBranch,
     ask: askBranch,
+    event: eventBranch,
   };
   const branches = activityBranches(args.filter).map(
     (name) => sql`(${builders[name](personId, args.filter, args.after)} limit ${args.limit})`,
@@ -263,8 +322,6 @@ function toActivityRow(raw: RawActivityRow): ActivityRow {
   const base: ActivityRowBase = {
     position: { at: raw.at, key: raw.key },
     at: parseTimestamp(raw.at),
-    agentId: raw.agent_id,
-    agentName: raw.agent_name,
     vendor: raw.vendor,
     connectionId: raw.connection_id,
   };
@@ -281,6 +338,8 @@ function toActivityRow(raw: RawActivityRow): ActivityRow {
     return {
       ...base,
       kind: "run",
+      agentId: raw.agent_id ?? "",
+      agentName: raw.agent_name ?? "",
       id: raw.id ?? raw.key.slice("run:".length),
       toolName: raw.wire_name ?? "",
       tool,
@@ -291,16 +350,24 @@ function toActivityRow(raw: RawActivityRow): ActivityRow {
       dryRun: raw.dry_run ?? false,
     };
   }
+  // An event whose agent row was not found under the person names no agent, as a revoke does.
+  const agentId = raw.agent_name === null ? null : raw.agent_id;
   return {
     ...base,
     kind: "approval",
+    agentId,
+    agentName: agentId === null ? null : raw.agent_name,
     source: raw.source ?? "ask",
-    pendingActionId: raw.source === "ask" ? raw.id : null,
+    pendingActionId: raw.source === "ask" || raw.source === "event" ? raw.id : null,
     tool,
     decision: raw.decision,
     includesDestructive: raw.includes_destructive,
     askKind: raw.ask_kind,
     answer: raw.answer,
+    event:
+      raw.source === "event" && raw.event_kind && raw.event_action && raw.event_via
+        ? { kind: raw.event_kind, action: raw.event_action, via: raw.event_via }
+        : null,
   };
 }
 

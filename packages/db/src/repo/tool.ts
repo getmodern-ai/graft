@@ -193,6 +193,26 @@ export async function findAuthoredToolForUpdate(
   return row ?? null;
 }
 
+/**
+ * The same read locked `FOR NO KEY UPDATE` (GRA-341): it queues behind an answer's `FOR UPDATE`
+ * (`findAuthoredToolForUpdate`) and an answer queues behind it, but it does not block the `KEY
+ * SHARE` lock a foreign-key check takes, so a revoke writing a `working_set_change` that names the
+ * tool while it holds the tool's approvals never deadlocks against it.
+ */
+export async function findAuthoredToolForNoKeyUpdate(
+  db: DbOrTx,
+  personId: string,
+  id: string,
+): Promise<AuthoredToolRow | null> {
+  const [row] = await db
+    .select()
+    .from(authoredTool)
+    .where(and(eq(authoredTool.id, id), eq(authoredTool.personId, personId)))
+    .limit(1)
+    .for("no key update");
+  return row ?? null;
+}
+
 /** A republish's changes to the tool itself: the prose, the schema, the derived annotations. */
 export async function updateAuthoredTool(
   db: DbOrTx,

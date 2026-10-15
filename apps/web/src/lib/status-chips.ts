@@ -142,6 +142,9 @@ export const ACTIVITY_ANSWER_CHIP = {
   connected: { variant: "secondary", label: "Connected" },
   denied: { variant: "outline", label: "Denied" },
   declined: { variant: "outline", label: "Declined" },
+  withdrawn: { variant: "outline", label: "Withdrawn" },
+  changed: { variant: "secondary", label: "Changed" },
+  revoked: { variant: "outline", label: "Revoked" },
 } as const satisfies Record<ActivityAnswerOutcome, StatusChip>;
 
 /** A dry run reached the vendor for reads only (CONTEXT.md, *Dry run*); the chip rides beside the tool name. */

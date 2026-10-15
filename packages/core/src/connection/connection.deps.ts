@@ -4,6 +4,7 @@ import {
   deleteBuildApprovalsForConnection,
   deleteVendorApprovalsForVendor,
 } from "@graft/db/repo/approval";
+import { insertApprovalEvent } from "@graft/db/repo/approval-event";
 import {
   addConnectionHosts,
   findConnection,
@@ -73,6 +74,8 @@ export type ConnectionDeps = {
   insertWorkingSetChange: typeof insertWorkingSetChange;
   /** The agents whose list a revoke changes, for the caller to announce `tools/list_changed` to (GRA-69). */
   listAgentIdsForConnection: typeof listAgentIdsForConnection;
+  /** A revoke is appended to the person's record of answers, once, on the transition (GRA-341). */
+  insertApprovalEvent: typeof insertApprovalEvent;
   vault: EncryptOnlyVault;
   /**
    * The deployment's connection providers, in routing order, the keyring last (ADR 0019;
@@ -116,6 +119,7 @@ export function createConnectionDeps(
     deleteWorkingSetEntriesForConnection,
     insertWorkingSetChange,
     listAgentIdsForConnection,
+    insertApprovalEvent,
     vault,
     providers,
     newId: () => crypto.randomUUID(),

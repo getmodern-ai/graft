@@ -180,12 +180,16 @@ export function activityItems(
       group: "Activity",
       // Home's sentence for the row (GRA-327), so the two never word one run differently.
       label: homeActivityCopy(row, names).title,
-      keywords: [row.agent.name, ...(row.vendor ? [row.vendor] : [])],
+      // A connection's revoke names no agent (GRA-341), so it filters by integration alone.
+      keywords: [...(row.agent ? [row.agent.name] : []), ...(row.vendor ? [row.vendor] : [])],
       detail: formatRelative(row.at, now) || undefined,
-      mark: integrationMark(row.vendor, integration ?? row.agent.name),
+      mark: integrationMark(row.vendor, integration ?? row.agent?.name ?? "Activity"),
       open: {
         to: "/activity",
-        search: { ...(row.vendor ? { vendor: row.vendor } : {}), agent: row.agent.id },
+        search: {
+          ...(row.vendor ? { vendor: row.vendor } : {}),
+          ...(row.agent ? { agent: row.agent.id } : {}),
+        },
       },
     };
   });
