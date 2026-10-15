@@ -75,10 +75,21 @@ export const GATEWAY_PREFIX_PASS_THROUGH: readonly string[] = [
  */
 export function gatewayRelayUrl(upstream: URL, vendor: URL): URL {
   const relay = new URL(upstream.origin);
-  const base = upstream.pathname.replace(/\/+$/, "");
+  const base = withoutTrailingSlashes(upstream.pathname);
   relay.pathname = `${base}/${vendor.host}${vendor.pathname}`;
   relay.search = vendor.search;
   return relay;
+}
+
+/**
+ * Trailing slashes trimmed by index, as `@graft/core`'s `withoutTrailingSlashes` does (this package
+ * does not depend on it): `/\/+$/` backtracks polynomially on a long run of slashes (CodeQL's
+ * polynomial-redos rule).
+ */
+function withoutTrailingSlashes(path: string): string {
+  let end = path.length;
+  while (end > 0 && path.charCodeAt(end - 1) === 47) end -= 1;
+  return path.slice(0, end);
 }
 
 /** A field the relay cannot leave without — the same refusal a signing scheme earns, `credential_incomplete`. */

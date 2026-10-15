@@ -984,6 +984,33 @@ describe("Setup v2: the integration directory", () => {
     expect(found).toMatchObject({ total: 1, entries: [{ slug: "acme-crm", starterId: null }] });
   });
 
+  it.each(["/api/setup/directory/search", "/api/integrations/directory/search"])(
+    "puts what a search found beside what it asked on the wide event at %s (GRA-281)",
+    async (route) => {
+      people += 1;
+      person = `person_${people}`;
+      const drained: { event: Record<string, unknown> }[] = [];
+      initLogger({
+        silent: true,
+        drain: (ctx) => {
+          drained.push(ctx as unknown as { event: Record<string, unknown> });
+        },
+      });
+      try {
+        await get(`${route}?q=acme`);
+        expect(drained.at(-1)?.event).toMatchObject({
+          directory: { query: "acme", total: 1, shown: 1 },
+        });
+        await get(`${route}?q=ilustrator`);
+        expect(drained.at(-1)?.event).toMatchObject({
+          directory: { query: "ilustrator", total: 0, shown: 0 },
+        });
+      } finally {
+        initLogger({ silent: true });
+      }
+    },
+  );
+
   it("connects an integration that is no starter from its own entry, with the task saved", async () => {
     people += 1;
     person = `person_${people}`;

@@ -542,7 +542,7 @@ export function decodeEntities(text: string): string {
 function tidy(text: string): string {
   return text
     .replace(/\r\n?/g, "\n")
-    .replace(/ /g, " ")
+    .replace(/\u00a0/g, " ")
     .replace(/[ \t]+\n/g, "\n")
     .replace(/\n[ \t]+/g, "\n")
     .replace(/[ \t]{2,}/g, " ")
