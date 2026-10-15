@@ -3,7 +3,8 @@ import { describe, expect, it } from "vitest";
 import type { ConnectionAccessView } from "./connection-queries";
 import type { NewToolJob } from "./integration-queries";
 import {
-  defaultNewToolAgentId,
+  buildingAgentId,
+  buildingAgentLine,
   isNewToolJobWorking,
   newToolAgentChoices,
   newToolAttemptsLine,
@@ -16,6 +17,8 @@ import {
   newToolReadyLine,
   newToolStep,
   runningNewToolJob,
+  tryInAgents,
+  tryInHint,
 } from "./new-tool";
 import { TOOL_ACCESS_CHIP, toolAccessChip } from "./status-chips";
 
@@ -75,7 +78,44 @@ describe("newToolAgentChoices", () => {
   });
 });
 
-describe("defaultNewToolAgentId", () => {
+describe("buildingAgentLine", () => {
+  it("says why the build runs as that agent", () => {
+    expect(
+      buildingAgentLine(
+        { agent: { id: "a", name: "Hermes" }, lastUsedAt: "2026-10-01T00:00:00.000Z" },
+        "Gmail",
+      ),
+    ).toBe(
+      "Graft builds it as Hermes, the agent that last used Gmail. Creating it lets Hermes build Gmail tools.",
+    );
+    expect(
+      buildingAgentLine({ agent: { id: "a", name: "Hermes" }, lastUsedAt: null }, "Gmail"),
+    ).toBe(
+      "Graft builds it as Hermes, the first agent that can use Gmail. Creating it lets Hermes build Gmail tools.",
+    );
+  });
+});
+
+describe("tryInAgents and tryInHint", () => {
+  const built = { id: "b", name: "B" };
+
+  it("puts the build's agent first and keeps it when the reads no longer list it", () => {
+    const choices = [{ agent: { id: "a", name: "A" } }, { agent: { id: "b", name: "B" } }];
+    expect(tryInAgents(choices, built).map((agent) => agent.id)).toEqual(["b", "a"]);
+    expect(tryInAgents([], built)).toEqual([built]);
+  });
+
+  it("says the build's agent has it and another finds it", () => {
+    expect(tryInHint(built, built, "Gmail")).toBe(
+      "The tool is in B's working set. Paste this into its chat.",
+    );
+    expect(tryInHint({ id: "a", name: "A" }, built, "Gmail")).toBe(
+      "A finds the tool through Graft, since Gmail is in its connections. Paste this into its chat.",
+    );
+  });
+});
+
+describe("buildingAgentId", () => {
   it("picks the agent that last used the integration", () => {
     const choices = newToolAgentChoices(
       ["c1"],
@@ -87,13 +127,13 @@ describe("defaultNewToolAgentId", () => {
         ]),
       ],
     );
-    expect(defaultNewToolAgentId(choices)).toBe("b");
+    expect(buildingAgentId(choices)).toBe("b");
   });
 
   it("falls back to the first offered when nobody used it, and to null with nobody", () => {
     const choices = newToolAgentChoices(["c1"], [access("c1", [row("a", true), row("b", true)])]);
-    expect(defaultNewToolAgentId(choices)).toBe("a");
-    expect(defaultNewToolAgentId([])).toBeNull();
+    expect(buildingAgentId(choices)).toBe("a");
+    expect(buildingAgentId([])).toBeNull();
   });
 });
 

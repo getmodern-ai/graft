@@ -1341,8 +1341,8 @@ or a throw, so a timeout does not hide the chips for the hour. It is its own rou
 once; `components/setup/goal-suggestions.tsx` asks it after, keyed by the connection outside
 `["setup"]`, and draws outline `Button` chips that fill the field, or nothing.
 
-**An integration's page builds a tool for an agent picked before Create** (GRA-303; ADR 0024 as
-amended 2026-10-14; `apps/server/src/connection-acquire.ts`). `POST /api/connections/:id/acquire`
+**An integration's page builds a tool, as an agent the console picks by rule** (GRA-303, GRA-346;
+ADR 0024 as amended 2026-10-14 and 2026-10-15; `apps/server/src/connection-acquire.ts`). `POST /api/connections/:id/acquire`
 (`ConnectionAcquireBody`: `{ agentId, goal }`) is `@graft/core`'s `startConsoleAcquire`, one
 transaction with no Setup record: the connection read locked (`findConnectionForNoKeyUpdate`, so a
 revoke's deletion of build approvals cannot interleave and a scope save's foreign-key check is not blocked), then the agent (`findAgentForUpdate`, the
@@ -1359,7 +1359,13 @@ twenty, newest first, across the person's agents (`repo/acquire-job.ts`'s
 the agent's job route. `GET /api/connections/:id/goal-suggestions` (`ConnectionGoalSuggestions`)
 is Setup's proposal keyed by the connection alone (`proposeGoalsForConnection`, the same memo) with
 `build` beside it. Another person's agent or connection is a 404 on all three; Create counts as
-`acquire_started` with `job_id` and `agent_id`.
+`acquire_started` with `job_id` and `agent_id`. The console's dialog (`components/integration/new-tool-dialog.tsx`,
+GRA-320, GRA-346) asks only for the goal: the build runs as `lib/new-tool.ts`'s `buildingAgentId`,
+the agent that last used the integration (the access read's `lastUsedAt`) or else the first whose
+scope reaches a connected connection, named beside Create since Create records its build approval;
+with nobody, Create is disabled. The ready view's *Try it in* picks the agent to copy a prompt for
+afterwards (`tryInAgents`, the build's agent first), because any agent with the integration in
+scope finds the tool through `find_tool`.
 
 **A connection can be proposed from an API's docs, for the console's Flow C** (GRA-299). The person
 names an integration and pastes a link to its API docs; `POST /api/connection-proposals`
