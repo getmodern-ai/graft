@@ -1,10 +1,13 @@
 import type { LookupAddress } from "node:dns";
+import { createServer, type Server } from "node:http";
+import type { AddressInfo } from "node:net";
 
 import { MockAgent } from "undici";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 
 import {
   createGuardedFetch,
+  createUpstreamFetch,
   guardedLookup,
   isPrivateAddressFailure,
   isTimeoutFailure,
@@ -230,3 +233,78 @@ describe("failure classification through a cause chain", () => {
     expect(isTimeoutFailure(new Error("ECONNRESET"))).toBe(false);
   });
 });
+
+/**
+ * A vendor whose handshake answers after Node's 250 ms happy-eyeballs attempt timer (GRA-339:
+ * `geocoding-api.open-meteo.com` from ap-southeast-2, one IPv4 address ~330 ms away, its IPv6
+ * address unroutable). A local server answers its handshake at once, so the late answer is made
+ * the way the event loop sees it: the resolver hands the addresses back from a check-phase
+ * callback and then holds the loop past the attempt timer, so when the loop next runs its timers
+ * phase the timer has expired with the handshake's completion still unread. Node abandons the
+ * first address, the second (`::1`, where nothing listens on that port, or no IPv6 at all) fails
+ * at once, and the connect is `AggregateError [ETIMEDOUT]` — the production failure exactly.
+ */
+describe("a handshake slower than the happy-eyeballs default", () => {
+  let server: Server | undefined;
+  afterEach(() => new Promise<void>((done) => (server ? server.close(() => done()) : done())));
+
+  async function slowUpstream(): Promise<{ url: string; resolveAll: ResolveAll }> {
+    server = createServer((_request, response) => response.end("ok"));
+    await new Promise<void>((done) => server?.listen(0, "127.0.0.1", done));
+    const { port } = server.address() as AddressInfo;
+    const resolveAll: ResolveAll = (_hostname, callback) => {
+      setImmediate(() => {
+        callback(null, [
+          { address: "127.0.0.1", family: 4 },
+          { address: "::1", family: 6 },
+        ]);
+        const until = Date.now() + 400;
+        while (Date.now() < until) {
+          // Hold the loop: the handshake lands now, but is read only after the timers phase.
+        }
+      });
+    };
+    return { url: `http://slow.vendor.test:${port}/`, resolveAll };
+  }
+
+  const get = (url: string) => ({ url, method: "GET", headers: new Headers(), body: null });
+  const signal = () => AbortSignal.timeout(5_000);
+
+  it("fails as production did under Node's 250 ms attempt timeout", async () => {
+    const { url, resolveAll } = await slowUpstream();
+    const fetch = createUpstreamFetch({
+      resolveAll,
+      unguardedHosts: ["slow.vendor.test"],
+      connectAttemptTimeoutMs: 250,
+    });
+
+    const failure = await fetch(get(url), { signal: signal() }).catch((error: unknown) => error);
+
+    expect(causeCodes(failure)).toContain("ETIMEDOUT");
+  });
+
+  it("connects under the proxy's attempt timeout", async () => {
+    const { url, resolveAll } = await slowUpstream();
+    const fetch = createUpstreamFetch({ resolveAll, unguardedHosts: ["slow.vendor.test"] });
+
+    const response = await fetch(get(url), { signal: signal() });
+
+    expect(response.status).toBe(200);
+    expect(await new Response(response.body).text()).toBe("ok");
+  });
+});
+
+/** Every `code` down a `cause` chain and inside an `AggregateError`'s `errors`. */
+function causeCodes(error: unknown): string[] {
+  const codes: string[] = [];
+  const pending = [error];
+  while (pending.length > 0) {
+    const next = pending.pop();
+    if (!(next instanceof Error)) continue;
+    const code = (next as NodeJS.ErrnoException).code;
+    if (code) codes.push(code);
+    pending.push(next.cause);
+    if (next instanceof AggregateError) pending.push(...next.errors);
+  }
+  return codes;
+}

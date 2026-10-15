@@ -5,6 +5,7 @@ import {
   describeCauseChain,
   describeLink,
   hasCauseNamed,
+  MAX_AGGREGATE_ERRORS,
   MAX_CAUSE_DEPTH,
 } from "./cause-chain";
 
@@ -71,6 +72,35 @@ describe("describeLink", () => {
     expect(describeCauseChain(wrapped)).not.toContain("[object Object]");
     expect(describeLink({ message: "not found", status: "404" })).toBe("not found (404)");
     expect(describeLink({ code: 500 })).toBe('{"code":500}');
+  });
+});
+
+describe("an AggregateError", () => {
+  /** Node's happy eyeballs raises one with an empty message — production's line was bare. */
+  it("names each attempt, as production's connect failure did not (GRA-339)", () => {
+    const attempt = (message: string, code: string) => Object.assign(new Error(message), { code });
+    const aggregate = Object.assign(
+      new AggregateError([
+        attempt("connect ETIMEDOUT 202.61.206.6:443", "ETIMEDOUT"),
+        attempt("connect EHOSTUNREACH 2a03:4000:5b:4f3::1:443", "EHOSTUNREACH"),
+      ]),
+      { code: "ETIMEDOUT" },
+    );
+
+    expect(describeCauseChain(new TypeError("fetch failed", { cause: aggregate }))).toBe(
+      "TypeError: fetch failed <- AggregateError [ETIMEDOUT]:  (connect ETIMEDOUT " +
+        "202.61.206.6:443; connect EHOSTUNREACH 2a03:4000:5b:4f3::1:443)",
+    );
+  });
+
+  it("reads at most MAX_AGGREGATE_ERRORS attempts and says when it stopped", () => {
+    const many = new AggregateError(
+      Array.from({ length: MAX_AGGREGATE_ERRORS + 2 }, (_, index) => new Error(`a${index}`)),
+      "all failed",
+    );
+
+    expect(describeLink(many)).toBe("AggregateError: all failed (a0; a1; a2; a3; ...)");
+    expect(describeLink(new AggregateError([], "none"))).toBe("AggregateError: none");
   });
 });
 

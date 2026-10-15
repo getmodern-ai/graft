@@ -93,7 +93,38 @@ export type UpstreamFetchOptions = {
    * upstreamFetch`); the header of this file says why the shared fetch takes none. Exact, lower-case.
    */
   unguardedHosts?: readonly string[];
+  /** How long one address may take to connect before the next is tried; a test shortens it. */
+  connectAttemptTimeoutMs?: number;
 };
+
+/**
+ * How long one resolved address may take to answer the TCP handshake before the next is tried.
+ * Node's happy eyeballs (`autoSelectFamily`, on by default) gives each address but the last
+ * 250 ms and then *abandons* it rather than racing it, so a vendor whose handshake takes longer
+ * than that — any host on another continent from ap-southeast-2 — failed outright when a second
+ * address followed and itself failed, as an IPv6 one does where the network has no IPv6 route:
+ * `AggregateError [ETIMEDOUT]` after ~250 ms (GRA-339). A far handshake with one SYN retransmit
+ * still fits inside this; a black-holed first address costs this long before the next one.
+ */
+export const CONNECT_ATTEMPT_TIMEOUT_MS = 2_500;
+
+/** The whole connect, every address together — undici's own default, stated so it is read here. */
+export const CONNECT_TIMEOUT_MS = 10_000;
+
+/**
+ * The connector both fetches below open sockets through: the guarded resolver and the connect
+ * timeouts, in one place so the vendor's way out and a person's model call cannot drift apart.
+ */
+function guardedAgent(options: UpstreamFetchOptions): Agent {
+  return new Agent({
+    connect: {
+      lookup: guardedLookup(options.resolveAll, options.unguardedHosts),
+      autoSelectFamily: true,
+      autoSelectFamilyAttemptTimeout: options.connectAttemptTimeoutMs ?? CONNECT_ATTEMPT_TIMEOUT_MS,
+      timeout: CONNECT_TIMEOUT_MS,
+    },
+  });
+}
 
 /**
  * undici's fetch over an `Agent` whose connector resolves through `guardedLookup`. undici's own
@@ -102,9 +133,7 @@ export type UpstreamFetchOptions = {
  * to the other. `redirect: "manual"` always — the proxy decides about redirects, never the fetch.
  */
 export function createUpstreamFetch(options: UpstreamFetchOptions = {}): UpstreamFetch {
-  const agent = new Agent({
-    connect: { lookup: guardedLookup(options.resolveAll, options.unguardedHosts) },
-  });
+  const agent = guardedAgent(options);
 
   return async (request, { signal }) => {
     const response = await undiciFetch(request.url, {
@@ -134,7 +163,7 @@ export function createUpstreamFetch(options: UpstreamFetchOptions = {}): Upstrea
  * client reads the 3xx as the failure it is. No `unguardedHosts`: nothing a person typed is exempt.
  */
 export function createGuardedFetch(
-  options: Pick<UpstreamFetchOptions, "resolveAll"> & {
+  options: Pick<UpstreamFetchOptions, "resolveAll" | "connectAttemptTimeoutMs"> & {
     /**
      * A test's `MockAgent`, standing where the guarded agent would, so the request and response
      * conversion is exercised with no socket. Nothing outside a test passes one: it replaces the
@@ -143,8 +172,13 @@ export function createGuardedFetch(
     dispatcher?: Dispatcher;
   } = {},
 ): typeof globalThis.fetch {
+  // The vendor fetch's connector less `unguardedHosts`: the same resolver and timeouts.
   const agent =
-    options.dispatcher ?? new Agent({ connect: { lookup: guardedLookup(options.resolveAll) } });
+    options.dispatcher ??
+    guardedAgent({
+      resolveAll: options.resolveAll,
+      connectAttemptTimeoutMs: options.connectAttemptTimeoutMs,
+    });
 
   return async (input, init) => {
     const request = new Request(input, init);
