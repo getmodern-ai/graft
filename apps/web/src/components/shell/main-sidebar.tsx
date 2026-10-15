@@ -64,7 +64,7 @@ export function MainSidebar() {
             aria-label="Graft, home"
             className="flex min-w-0 items-center rounded-sm outline-hidden ring-ring/50 focus-visible:ring-3"
           >
-            <GraftWordmark className="h-6" />
+            <GraftWordmark className="h-5.5" />
           </Link>
           <SidebarToggle />
         </div>

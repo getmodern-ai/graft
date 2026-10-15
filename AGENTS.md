@@ -1683,7 +1683,7 @@ the `Sidebar` primitive off canvas at its own 16rem — the `sidebar_state` cook
 back by `src/lib/sidebar-state.ts`, ⌘B toggles it, and below `md` it is the drawer, closed on the
 router's `onBeforeNavigate` — with `SkipNav` first in the tree and the `<main>` region carrying
 `MAIN_CONTENT_ID`. `main-sidebar.tsx` draws the wordmark (`src/components/graft-wordmark.tsx` — the
-supplied SVG with outlined lettering, also used by `AuthHeader`, drawn in tokens; GRA-108) linking to Home at `/`, the
+Figma library's `Logo` lockup outlined, also used by `AuthHeader`, drawn in tokens; GRA-108, GRA-343; the favicons, touch icon and `site.webmanifest` under `public/` carry the same mark) linking to Home at `/`, the
 main group and the footer group (Docs & help, out to `DOCS_URL`, then Settings) from
 `src/lib/main-sidebar-nav-items.ts` (a pure data module, tested, which the palette's rows derive
 from too; GRA-309) with the open-ask count as a `SidebarMenuBadge` on Requests and the count in the
