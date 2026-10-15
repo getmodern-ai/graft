@@ -89,7 +89,17 @@ export async function setApproval(
   toolId: string,
   decision: ApprovalDecision,
   deps: ApprovalDeps,
-  options: { asked: AskedVersion; askEveryCall?: boolean; event: ApprovalEventOrigin | null },
+  options: {
+    asked: AskedVersion;
+    askEveryCall?: boolean;
+    event: ApprovalEventOrigin | null;
+    /**
+     * When the person gave the answer, where it was given earlier than it is written: an agent
+     * taking an answer off an ask passes the ask's `answeredAt`, so the row keeps the moment its
+     * event records and the activity read never shows it a second time (GRA-341).
+     */
+    decidedAt?: Date;
+  },
 ): Promise<ApprovalRow> {
   return ctx.db.transaction(async (tx) => {
     const tool = orNotFound(
@@ -147,7 +157,7 @@ export async function setApproval(
       agentId: scope.agentId,
       toolId,
       decision,
-      decidedAt: now,
+      decidedAt: options.decidedAt ?? now,
       toolVersionId,
       ...(options.askEveryCall === undefined ? {} : { askEveryCall: options.askEveryCall }),
     });
@@ -185,7 +195,10 @@ export async function setAskEveryCall(
     );
   }
   return ctx.db.transaction(async (tx) => {
-    // Read under the row's lock, so two switches at once each judge the setting the other left.
+    // The tool row's lock first, the order an answer takes (`setApproval`), so a switch and an
+    // answer at once queue on it rather than each holding a row the other's event needs; then
+    // the approval, so two switches at once each judge the setting the other left.
+    await deps.findAuthoredToolForUpdate(tx, scope.personId, toolId);
     const before = await deps.findApproval(tx, scope, toolId, { forUpdate: true });
     const row = orNotFound(
       await deps.updateAskEveryCall(tx, scope, toolId, on),
@@ -228,6 +241,8 @@ export async function revokeApproval(
     "Tool not found",
   );
   return ctx.db.transaction(async (tx) => {
+    // The tool row's lock before the approval's, as an answer and the switch take them.
+    await deps.findAuthoredToolForUpdate(tx, scope.personId, toolId);
     const row = await deps.deleteApproval(tx, scope, toolId);
     const now = deps.now();
     await deps.settleAnsweredToolActions(tx, scope, toolId, now);
@@ -618,8 +633,11 @@ export async function withdrawBuildApproval(
   connectionId: string,
   deps: ApprovalDeps,
 ): Promise<BuildApprovalRow | null> {
-  const connection = await deps.findConnection(ctx.db, scope.personId, connectionId);
   return ctx.db.transaction(async (tx) => {
+    // The connection first, in the order a revoke takes it and then its build approvals, so a
+    // withdraw and a revoke at once queue on it: the event's key on the connection would otherwise
+    // wait on the revoke's lock while the revoke waits on this row (GRA-341).
+    const connection = await deps.findConnectionForNoKeyUpdate(tx, scope.personId, connectionId);
     const row = await deps.deleteBuildApproval(tx, scope, connectionId);
     if (row) {
       await recordBuildEvent(

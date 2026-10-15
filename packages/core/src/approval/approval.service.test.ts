@@ -132,6 +132,7 @@ function fakeDeps(overrides: Partial<ApprovalDeps> = {}): ApprovalDeps {
     findAuthoredToolForUpdate: vi.fn(async () => writeTool),
     listToolVersionOrigins: vi.fn(async () => []),
     findConnection: vi.fn(async () => ({ id: "conn_1", vendor: "hubspot" }) as never),
+    findConnectionForNoKeyUpdate: vi.fn(async () => ({ id: "conn_1", vendor: "hubspot" }) as never),
     insertApprovalEvent: vi.fn(async (_db, input) => ({ id: "event_1", ...input }) as never),
     now: () => NOW,
     ...overrides,
@@ -853,6 +854,60 @@ describe("approval events", () => {
     await setAskEveryCall(ctx, SCOPE, "tool_1", false, deps);
     expect(events(deps).map((event) => event.action)).toEqual(["ask_every_call_on"]);
     expect(deps.findApproval).toHaveBeenCalledWith(ctx.db, SCOPE, "tool_1", { forUpdate: true });
+  });
+
+  /** Greptile on #276: the tool row's lock first, the order an answer takes, so neither deadlocks. */
+  it("takes the tool row's lock before the approval's for the switch and the withdraw", async () => {
+    const order: string[] = [];
+    const deps = fakeDeps({
+      findAuthoredToolForUpdate: vi.fn(async () => {
+        order.push("tool");
+        return writeTool;
+      }),
+      findApproval: vi.fn(async () => {
+        order.push("approval");
+        return approval;
+      }),
+      deleteApproval: vi.fn(async () => {
+        order.push("delete");
+        return approval;
+      }),
+    });
+    await setAskEveryCall(ctx, SCOPE, "tool_1", true, deps);
+    await revokeApproval(ctx, SCOPE, "tool_1", deps);
+    expect(order).toEqual(["tool", "approval", "tool", "delete"]);
+  });
+
+  it("locks the connection before a build approval's withdraw, as a revoke does", async () => {
+    const order: string[] = [];
+    const deps = fakeDeps({
+      findConnectionForNoKeyUpdate: vi.fn(async () => {
+        order.push("connection");
+        return { id: "conn_1", vendor: "hubspot" } as never;
+      }),
+      deleteBuildApproval: vi.fn(async () => {
+        order.push("delete");
+        return build;
+      }),
+    });
+    await withdrawBuildApproval(ctx, SCOPE, "conn_1", deps);
+    expect(order).toEqual(["connection", "delete"]);
+    expect(events(deps)).toMatchObject([{ kind: "build", action: "withdrew", vendor: "hubspot" }]);
+  });
+
+  it("keeps the moment the person answered when an answer is written again with no event", async () => {
+    const answered = new Date("2026-09-09T09:59:00Z");
+    const deps = fakeDeps();
+    await setApproval(ctx, SCOPE, "tool_1", "allow", deps, {
+      asked: ASKED_V1,
+      event: null,
+      decidedAt: answered,
+    });
+    expect(deps.upsertApproval).toHaveBeenCalledWith(
+      ctx.db,
+      expect.objectContaining({ decidedAt: answered }),
+    );
+    expect(deps.insertApprovalEvent).not.toHaveBeenCalled();
   });
 
   it("records an answer set from the console as the console's", async () => {

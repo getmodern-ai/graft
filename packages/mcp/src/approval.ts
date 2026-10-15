@@ -803,11 +803,17 @@ async function applyAnswer(
   if (answer.allow) {
     // The console or the card recorded the integration-wide yes when the person answered
     // (`ask-answer.ts`); taking the answer later must not record it again (Greptile on #181).
-    // Nor its event, which that door wrote when the person answered (GRA-341).
-    await recordAllow(ctx, scope, subject, answer, deps, { recordVendor: false, event: null });
+    // Nor its event, which that door wrote when the person answered (GRA-341); a row written
+    // again keeps the moment the person answered, which is the moment the event records.
+    const answeredAt = taken.answeredAt ?? undefined;
+    await recordAllow(ctx, scope, subject, answer, deps, {
+      recordVendor: false,
+      event: null,
+      decidedAt: answeredAt,
+    });
     return PASS;
   }
-  await recordDeny(ctx, scope, subject, deps, null);
+  await recordDeny(ctx, scope, subject, deps, null, taken.answeredAt ?? undefined);
   return refuse(
     "approval_declined",
     subject.kind === "tool"
@@ -835,7 +841,7 @@ async function recordAllow(
   subject: AskSubject,
   said: ApprovalAnswer,
   deps: McpDeps,
-  options: { recordVendor: boolean; event: ApprovalEventOrigin | null },
+  options: { recordVendor: boolean; event: ApprovalEventOrigin | null; decidedAt?: Date },
 ): Promise<void> {
   if (subject.kind === "build") {
     await grantBuildApproval(ctx, scope, subject.connection.id, deps.approval, options.event);
@@ -854,6 +860,7 @@ async function recordAllow(
       asked: askedVersionOf(subject),
       askEveryCall,
       event: options.event,
+      ...(options.decidedAt ? { decidedAt: options.decidedAt } : {}),
     });
   } else if (options.event) {
     // A yes to one call of a tool that asks every call moves no row, and is still an answer.
@@ -904,6 +911,7 @@ async function recordDeny(
   subject: AskSubject,
   deps: McpDeps,
   event: ApprovalEventOrigin | null,
+  decidedAt?: Date,
 ): Promise<void> {
   if (subject.kind !== "tool") {
     await recordBuildEvent(
@@ -922,6 +930,19 @@ async function recordDeny(
     await setApproval(ctx, scope, subject.tool.id, "deny", deps.approval, {
       asked: askedVersionOf(subject),
       event,
+      ...(decidedAt ? { decidedAt } : {}),
+    });
+  } else if (event) {
+    // A no given while another stands moves no row, and is still this person's answer.
+    await deps.approval.insertApprovalEvent(ctx.db, {
+      personId: scope.personId,
+      agentId: scope.agentId,
+      kind: "tool",
+      action: "denied",
+      via: event.via,
+      toolId: subject.tool.id,
+      vendor: subject.tool.vendor,
+      at: deps.approval.now(),
     });
   }
 }

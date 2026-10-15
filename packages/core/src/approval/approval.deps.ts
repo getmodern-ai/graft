@@ -16,7 +16,11 @@ import {
   upsertVendorApproval,
 } from "@graft/db/repo/approval";
 import { insertApprovalEvent } from "@graft/db/repo/approval-event";
-import { findConnection, findVendorConnectionsForUpdate } from "@graft/db/repo/connection";
+import {
+  findConnection,
+  findConnectionForNoKeyUpdate,
+  findVendorConnectionsForUpdate,
+} from "@graft/db/repo/connection";
 import {
   answerOpenToolActions,
   listOpenToolActions,
@@ -73,6 +77,8 @@ export type ApprovalDeps = {
   /** The tool's versions by origin, which say whether a late answer carries (`answerCarriesTo`). */
   listToolVersionOrigins: typeof listToolVersionOrigins;
   findConnection: typeof findConnection;
+  /** A build approval's withdraw takes the connection first, as a revoke does (GRA-341). */
+  findConnectionForNoKeyUpdate: typeof findConnectionForNoKeyUpdate;
   /** Every answer, withdraw and change is appended to the record in its own transaction (GRA-341). */
   insertApprovalEvent: typeof insertApprovalEvent;
   now: () => Date;
@@ -102,6 +108,7 @@ export const defaultApprovalDeps: ApprovalDeps = {
   findAuthoredToolForUpdate,
   listToolVersionOrigins,
   findConnection,
+  findConnectionForNoKeyUpdate,
   insertApprovalEvent,
   now: () => new Date(),
 };

@@ -473,6 +473,7 @@ function approvalDeps(): ApprovalDeps {
     findAuthoredToolForUpdate: vi.fn(async () => destructiveTool),
     listToolVersionOrigins: vi.fn(async () => []),
     findConnection: vi.fn(async () => connectionRow),
+    findConnectionForNoKeyUpdate: vi.fn(async () => connectionRow),
     insertApprovalEvent: vi.fn(async (_db, input) => ({ id: "event_1", ...input }) as never),
     now: () => NOW,
   };

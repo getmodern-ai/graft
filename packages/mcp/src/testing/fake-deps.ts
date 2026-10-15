@@ -1405,6 +1405,7 @@ export function createFakeDeps(store: FakeStore): FakeDeps {
     findAuthoredToolForUpdate: tool.findAuthoredToolForUpdate,
     listToolVersionOrigins: tool.listToolVersionOrigins,
     findConnection: connection.findConnection,
+    findConnectionForNoKeyUpdate: connection.findConnectionForNoKeyUpdate,
     now: store.now,
   };
 
