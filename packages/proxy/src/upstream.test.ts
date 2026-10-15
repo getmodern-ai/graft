@@ -3,6 +3,7 @@ import type { LookupAddress } from "node:dns";
 import { describe, expect, it } from "vitest";
 
 import {
+  createGuardedFetch,
   guardedLookup,
   isPrivateAddressFailure,
   isTimeoutFailure,
@@ -115,6 +116,45 @@ describe("guardedLookup", () => {
 
     expect(error).toBe(failure);
     expect(empty).toBeInstanceOf(PrivateAddressError);
+  });
+});
+
+describe("createGuardedFetch", () => {
+  it("refuses a name that resolves to a private address, at the socket", async () => {
+    const guarded = createGuardedFetch({
+      resolveAll: resolver({ "gateway.example": [{ address: "127.0.0.1", family: 4 }] }),
+    });
+    const error = await guarded("https://gateway.example/v1/chat", {
+      method: "POST",
+      body: "{}",
+    }).then(
+      () => null,
+      (e: unknown) => e,
+    );
+    expect(isPrivateAddressFailure(error)).toBe(true);
+  });
+
+  it("refuses a private literal, any spelling the URL parser canonicalises, without a lookup", async () => {
+    let looked = 0;
+    const guarded = createGuardedFetch({
+      resolveAll: (_hostname, callback) => {
+        looked += 1;
+        callback(null, PUBLIC);
+      },
+    });
+    for (const url of [
+      "http://169.254.169.254/latest",
+      "http://2852039166/",
+      "http://[::ffff:10.0.0.1]/",
+      "http://localhost:3000/v1",
+    ]) {
+      const error = await guarded(url).then(
+        () => null,
+        (e: unknown) => e,
+      );
+      expect(error).toBeInstanceOf(PrivateAddressError);
+    }
+    expect(looked).toBe(0);
   });
 });
 

@@ -42,6 +42,7 @@ import {
   type ModelSituation,
   type ModelUsage,
   type ModuleDraft,
+  modelFailureSentence,
   type ProofRead,
   type ProofReadTarget,
   proofReadLabel,
@@ -768,16 +769,18 @@ class AcquireLoop {
     try {
       reply = await conversation.turn(situation);
     } catch (error) {
-      const failed = `the model failed: ${errorMessage(error)}`;
-      await this.closeOpen(this.openOutcome(), this.setAside(failed));
-      throw this.end(
-        "model_failed",
-        `The model failed to answer ${situation.kind}: ${errorMessage(error)}`,
-        {
-          error: errorMessage(error),
-          last: this.lastDiagnostics,
-        },
-      );
+      // The raw error quotes whatever answered the call, a person's base URL included, so it goes
+      // to the trace alone and the result carries a sentence (GRA-338; `@graft/model`'s rule).
+      const sentence = modelFailureSentence(error);
+      await this.trace("model", `The model call failed on ${situation.kind}.`, {
+        attempt: this.open?.number ?? null,
+        data: { situation: situation.kind, error: errorMessage(error) },
+      });
+      await this.closeOpen(this.openOutcome(), this.setAside(`the model failed: ${sentence}`));
+      throw this.end("model_failed", `The model failed to answer ${situation.kind}: ${sentence}`, {
+        error: sentence,
+        last: this.lastDiagnostics,
+      });
     }
     if (!isValidUsage(reply.usage)) {
       throw this.end(

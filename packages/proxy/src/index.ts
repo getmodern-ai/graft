@@ -98,4 +98,8 @@ export type {
   UpstreamRequest,
 } from "./types";
 export { AUTH_SCHEMES, isAuthScheme, isRelayScheme, RELAY_SCHEME, RELAY_SCHEMES } from "./types";
-export { createUpstreamFetch, type UpstreamFetchOptions } from "./upstream";
+export {
+  createGuardedFetch,
+  createUpstreamFetch,
+  type UpstreamFetchOptions,
+} from "./upstream";
