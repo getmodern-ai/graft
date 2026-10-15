@@ -24,6 +24,7 @@ import {
   readScriptConnectionProposal,
 } from "@graft/model";
 import type { ModelTelemetryBacking } from "@graft/observability";
+import { createGuardedFetch } from "@graft/proxy";
 import type { CredentialVault } from "@graft/vault";
 
 /**
@@ -105,6 +106,11 @@ export type CreateModelInput = {
   onRoute?: (route: ModelRoute) => void;
   /** The telemetry backing every adapter is built with — `Backings.modelTelemetry`; null runs them under `NO_TELEMETRY`. */
   telemetry?: ModelTelemetryBacking | null;
+  /**
+   * The client a person's own provider calls a base URL of theirs through; the proxy's
+   * address-guarded fetch when absent. A test hands one over a scripted resolver.
+   */
+  personFetch?: typeof globalThis.fetch;
   /** Test seams: a stand-in for the provider adapter, and the script reader. */
   providerFactory?: (config: ProviderModelConfig, deps: ProviderModelDeps) => ModelAdapter;
   readScript?: (path: string) => Promise<string>;
@@ -116,6 +122,7 @@ async function ownModelFor(
   input: CreateModelInput,
   telemetry: ModelTelemetry,
   providerFactory: NonNullable<CreateModelInput["providerFactory"]>,
+  personFetch: typeof globalThis.fetch,
 ): Promise<ModelAdapter | null> {
   const ctx: ServiceContext = { db: input.db };
   const row = await findPersonModelKeyRow(ctx, personId, input.modelKey);
@@ -135,13 +142,17 @@ async function ownModelFor(
       triageModel: row.triageModel,
       baseUrl: row.baseUrl,
     },
-    { telemetry },
+    // A base URL the person typed is where this server sends a request, so the call resolves and
+    // connects to public addresses only, whatever the name answers by then (GRA-338; the rule at
+    // save is `@graft/core`'s). The provider's own host needs no guard and keeps the platform's.
+    row.baseUrl ? { telemetry, fetch: personFetch } : { telemetry },
   );
 }
 
 export async function createModel(input: CreateModelInput): Promise<ModelSetup> {
   const { env } = input;
   const providerFactory = input.providerFactory ?? createProviderModel;
+  const personFetch = input.personFetch ?? createGuardedFetch();
 
   const telemetry = input.telemetry?.telemetry ?? NO_TELEMETRY;
 
@@ -189,7 +200,8 @@ export async function createModel(input: CreateModelInput): Promise<ModelSetup> 
   const model = routing
     ? createRoutedModel({
         fixed,
-        resolve: (personId) => ownModelFor(personId, input, telemetry, providerFactory),
+        resolve: (personId) =>
+          ownModelFor(personId, input, telemetry, providerFactory, personFetch),
         onRoute: input.onRoute,
       })
     : null;

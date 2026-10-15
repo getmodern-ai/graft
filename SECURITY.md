@@ -27,6 +27,14 @@ where a decision is theirs. Anything that breaks either is in scope:
   not name, or minted for an agent outside its scope.
 - The **vault**: a stored credential that becomes readable, or a decrypt outside the proxy binding
   and the OAuth callback. The **sandbox**: egress that is not the proxy, or escape.
+- A person's **own model key** (ADR 0014): the key read back by anyone, or used for another
+  person's jobs. A base URL entered with it is where the server sends that person's model calls,
+  so it is held to the proxy's address rule: refused at save when its host is private, loopback,
+  link-local, carrier-NAT, metadata, unique-local or internal (and when it is not https in
+  production), and judged again at call time on the address the name resolves to. A model call
+  that reaches a private address from a person's base URL, or a job failure that shows the person
+  what answered there, is in scope. The operator's own `GRAFT_MODEL_BASE_URL` is configuration
+  and is not held to the rule.
 - The **approval and ask flows**: an approval or a connection confirmation that something other
   than the person can answer, or a handoff URL that works for someone it was not signed for. The
   console's session also records a build approval with no pending action, when the person presses

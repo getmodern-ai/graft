@@ -734,6 +734,22 @@ describe("a state-changing call to /api has to come from the console's origin", 
     expect(deps.modelKey.rows.get("person_1")?.baseUrl).toBe("https://evil.example");
   });
 
+  it("refuses a base URL on a private address with 400 and a sentence naming the field (GRA-338)", async () => {
+    const { app, deps } = harness({ user: { id: "person_1" } });
+    for (const baseUrl of [
+      "http://169.254.169.254/latest",
+      "http://localhost:3000/v1",
+      "https://10.0.0.1/v1",
+    ]) {
+      const res = await app.request("/api/me/model-key", json({ ...MODEL_KEY, baseUrl }, "PUT"));
+      expect(res.status, baseUrl).toBe(400);
+      expect(await res.json()).toMatchObject({
+        message: expect.stringMatching(/^baseUrl must be/),
+      });
+    }
+    expect(deps.modelKey.rows.size).toBe(0);
+  });
+
   /**
    * A browser sends `Origin` on every state-changing request, but a proxy may strip it; the fetch
    * metadata is the browser's own word for the same fact and is taken when nothing else says.

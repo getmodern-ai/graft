@@ -242,7 +242,10 @@ const connectionDeps = createConnectionDeps({ encrypt: vault.encrypt }, provider
  * `ModelKeyDeps`); the decrypt goes to the model resolver alone (`model.ts`), which is the second
  * and last place on this server a stored secret becomes plaintext, after the proxy binding.
  */
-const modelKeyDeps = createModelKeyDeps({ encrypt: vault.encrypt });
+const modelKeyDeps = createModelKeyDeps(
+  { encrypt: vault.encrypt },
+  { requireHttps: env.NODE_ENV === "production" },
+);
 
 /**
  * Which model answers `acquire` (ADR 0004, ADR 0014; `model.ts`): the deployment's fixed model from

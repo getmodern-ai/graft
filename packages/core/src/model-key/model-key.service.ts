@@ -1,7 +1,9 @@
 import type { PersonModelKeyRow } from "@graft/db/repo/person-model-key";
 import { type ModelKeyProvider, modelKeyProvider } from "@graft/db/schema/person-model-key";
+import { isPublicHost } from "@graft/proxy/public-host";
 import type { CredentialScope } from "@graft/vault";
 
+import { HOST_NOT_PUBLIC } from "../connection/connection.rules";
 import type { ServiceContext } from "../context";
 import { ServiceError } from "../errors";
 import type { Principal } from "../tenancy";
@@ -77,22 +79,40 @@ function optionalId(value: string | null | undefined, field: string): string | n
   return trimmed;
 }
 
-function optionalBaseUrl(value: string | null | undefined): string | null {
+function badBaseUrl(message: string, reason?: typeof HOST_NOT_PUBLIC): ServiceError {
+  return new ServiceError("BAD_REQUEST", message, {
+    details: reason ? { field: "baseUrl", reason } : { field: "baseUrl" },
+  });
+}
+
+/**
+ * The base URL is where the server itself sends the person's jobs, so it is held to the address
+ * rule a vendor host is (`isPublicHost`, ADR 0010; GRA-338): no metadata service, loopback port or
+ * private network. The URL parser canonicalises a decimal or hex IPv4 spelling before the check.
+ * This judges the literal; what a public name resolves to is judged at call time by the guarded
+ * fetch `apps/server/src/model.ts` hands the person's provider.
+ */
+function optionalBaseUrl(value: string | null | undefined, requireHttps: boolean): string | null {
   if (value === undefined || value === null) return null;
   const trimmed = value.trim();
   if (trimmed.length === 0) return null;
+  const notAbsolute = `baseUrl must be an absolute ${requireHttps ? "https" : "http(s)"} URL`;
   let url: URL;
   try {
     url = new URL(trimmed);
   } catch {
-    throw new ServiceError("BAD_REQUEST", "baseUrl must be an absolute http(s) URL", {
-      details: { field: "baseUrl" },
-    });
+    throw badBaseUrl(notAbsolute);
   }
-  if (url.protocol !== "https:" && url.protocol !== "http:") {
-    throw new ServiceError("BAD_REQUEST", "baseUrl must be an absolute http(s) URL", {
-      details: { field: "baseUrl" },
-    });
+  const schemes = requireHttps ? ["https:"] : ["https:", "http:"];
+  if (!schemes.includes(url.protocol)) throw badBaseUrl(notAbsolute);
+  if (url.username || url.password) {
+    throw badBaseUrl("baseUrl must not carry credentials; the key goes in its own field");
+  }
+  if (!isPublicHost(url.hostname)) {
+    throw badBaseUrl(
+      `baseUrl must be on a public host: ${url.hostname} is a private, loopback, link-local, metadata or internal address`,
+      HOST_NOT_PUBLIC,
+    );
   }
   return trimmed;
 }
@@ -134,7 +154,7 @@ export async function setPersonModelKey(
   }
   const authoringModel = optionalId(input.authoringModel, "authoringModel");
   const triageModel = optionalId(input.triageModel, "triageModel");
-  const baseUrl = optionalBaseUrl(input.baseUrl);
+  const baseUrl = optionalBaseUrl(input.baseUrl, deps.requireHttps ?? true);
 
   const keyCiphertext = await deps.vault.encrypt(
     { [MODEL_KEY_FIELD]: apiKey },
