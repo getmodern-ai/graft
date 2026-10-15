@@ -8,8 +8,8 @@ import { ConnectionTab } from "@/components/integration/connection-tab";
 import { IntegrationHeader } from "@/components/integration/integration-header";
 import { IntegrationTabs } from "@/components/integration/integration-tabs";
 import { ToolsTab } from "@/components/integration/tools-tab";
+import { PageBreadcrumb } from "@/components/page/page-breadcrumb";
 import { PageContainer } from "@/components/page/page-container";
-import { PageNavBreadcrumb } from "@/components/page/page-nav-breadcrumb";
 import { useScreenTitle } from "@/components/shell/screen-title";
 import { Button } from "@/components/ui/button";
 import {
@@ -73,15 +73,18 @@ function IntegrationRoute() {
   );
   const name = page.kind === "integration" ? page.displayName : vendor;
 
-  useScreenTitle(
-    <PageNavBreadcrumb parentLabel="Integrations" parentTo="/integrations">
+  useScreenTitle(name);
+  // Above the header on every branch, the missing one included: it is the way back to the list.
+  const breadcrumb = (
+    <PageBreadcrumb parentLabel="Integrations" parentTo="/integrations">
       {name}
-    </PageNavBreadcrumb>,
+    </PageBreadcrumb>
   );
 
   if (page.kind === "missing") {
     return (
-      <PageContainer size="large">
+      <PageContainer size="large" className="gap-6">
+        {breadcrumb}
         <Empty>
           <EmptyHeader>
             <EmptyMedia variant="icon">
@@ -107,7 +110,11 @@ function IntegrationRoute() {
     // `large`, with `gap-6` for a detail screen of several regions (AGENTS.md, *Screens follow
     // Cando's patterns*): the Connection tab is two columns, as the agent page's editors are.
     <PageContainer size="large" className="gap-6">
-      <IntegrationHeader page={page} />
+      {/* The breadcrumb sits 12px over the header (Figma 2044:7001), inside the page's gap-6. */}
+      <div className="flex flex-col gap-3">
+        {breadcrumb}
+        <IntegrationHeader page={page} />
+      </div>
       <IntegrationTabs
         vendor={page.vendor}
         current={tab}

@@ -11,8 +11,8 @@ import { BuildApprovalsCard } from "@/components/agent/build-approvals-card";
 import { IntegrationApprovalsCard } from "@/components/agent/integration-approvals-card";
 import { WorkingSetHistory } from "@/components/agent/working-set-history";
 import { WorkingSetTable } from "@/components/agent/working-set-table";
+import { PageBreadcrumb } from "@/components/page/page-breadcrumb";
 import { PageContainer } from "@/components/page/page-container";
-import { PageNavBreadcrumb } from "@/components/page/page-nav-breadcrumb";
 import { useScreenTitle } from "@/components/shell/screen-title";
 import { agentRecentActivityQuery, agentStatsQuery } from "@/lib/agent-page";
 import { agentQuery, workingSetChangesQuery, workingSetQuery } from "@/lib/agent-queries";
@@ -55,17 +55,18 @@ function AgentRoute() {
   const { data: connectionData } = useSuspenseQuery(connectionsQuery);
   const { agent, connectionIds } = data;
 
-  // The breadcrumb's parent half is the way back to the list; the header's own title repeats the
-  // name at every width, as the page's heading rather than as this breadcrumb.
-  useScreenTitle(
-    <PageNavBreadcrumb parentLabel="Agents" parentTo="/agents">
-      {agent.name}
-    </PageNavBreadcrumb>,
-  );
+  useScreenTitle(agent.name);
 
   return (
     <PageContainer size="large" className="gap-6">
-      <AgentHeader agent={agent} />
+      {/* The breadcrumb's parent half is the way back to the list, 12px over the header (Figma
+          2047:7614), inside the page's gap-6. */}
+      <div className="flex flex-col gap-3">
+        <PageBreadcrumb parentLabel="Agents" parentTo="/agents">
+          {agent.name}
+        </PageBreadcrumb>
+        <AgentHeader agent={agent} />
+      </div>
       <AgentStats agent={agent} connectionIds={connectionIds} />
 
       {/* Two columns (Figma 2047:8070): the integrations panel (GRA-326) on the left; on the

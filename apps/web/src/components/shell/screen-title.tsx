@@ -1,38 +1,34 @@
 import * as React from "react";
 
 /**
- * The mounted screen's title, as the shell's two bars show it: the 48px page strip at `md` and
- * up, and the mobile top bar below it (`app-shell.tsx`, `mobile-top-bar.tsx`). A screen calls
- * `useScreenTitle` with what the bars should say — a plain string for a list screen, a breadcrumb
- * of parent link, slash and `PageNavSubPageTitle` for a detail screen — and the bars read it back
- * through the same context, so a title is written once and the two surfaces cannot disagree.
+ * The mounted screen's title, as the mobile top bar shows it below `md` (`mobile-top-bar.tsx`). A
+ * screen calls `useScreenTitle` with a plain string, the list's name or the record's, and the bar
+ * reads it back through the same context. At `md` and up nothing reads it: App v2 has no page
+ * strip, and every screen's own `PageHeader` carries its title, a detail screen's with a
+ * breadcrumb above it (`page/page-breadcrumb.tsx`, GRA-344). It does not set `document.title`,
+ * which the root route's `head` holds.
  *
  * This is Cando's `useMobileTopBar` slot (`apps/web/src/components/shell/mobile-top-bar.tsx`,
- * its CAN-352) under a name that says what it feeds here. Cando's strip is mounted per screen,
- * because its screens' strips differ — tabs on automations, an editable thread title on chat —
- * and each fills the mobile bar separately; the console's screens differ only in the title, so
- * the shell mounts one strip and both bars read this one slot. One consequence: no screen can
- * forget the collapsed-sidebar toggle, which is the omission Cando's `sidebar-collapse.test.tsx`
- * exists to catch.
+ * its CAN-352) under a name that says what it feeds here, narrowed to a string: the breadcrumb a
+ * detail screen used to pass lives in the page now.
  *
  * Two contexts, not one holding both fields — Cando's split, kept for the reason it records.
  * `useScreenTitle` only ever *writes*, but `React.useContext` subscribes its caller to the whole
  * value a context carries. A single `{ title, setTitle }` context would re-render every screen
- * that sets a title on every title change, including its own: the effect below depends on
- * `title`, which is a fresh object on every render whenever a caller passes inline JSX, so the
- * re-render re-runs the effect, which sets again, forever. The setter in its own context — the
- * `useState` setter, referentially stable for the provider's lifetime — breaks the cycle.
+ * that sets a title on every title change, including its own. Since the title is a string the
+ * effect below no longer loops on it (it did while a caller could pass inline JSX, a fresh object
+ * every render), but the split still spares every screen a re-render it has no use for.
  *
- * Defaulted rather than `null`, so the bars and the hook both work — the hook as a harmless
+ * Defaulted rather than `null`, so the bar and the hook both work — the hook as a harmless
  * no-op — without a provider in the tree.
  */
-const ScreenTitleContext = React.createContext<React.ReactNode>(null);
+const ScreenTitleContext = React.createContext<string | null>(null);
 const SetScreenTitleContext = React.createContext<
-  React.Dispatch<React.SetStateAction<React.ReactNode>>
+  React.Dispatch<React.SetStateAction<string | null>>
 >(() => {});
 
 export function ScreenTitleProvider({ children }: { children: React.ReactNode }) {
-  const [title, setTitle] = React.useState<React.ReactNode>(null);
+  const [title, setTitle] = React.useState<string | null>(null);
 
   return (
     <SetScreenTitleContext.Provider value={setTitle}>
@@ -46,18 +42,15 @@ export function ScreenTitleProvider({ children }: { children: React.ReactNode })
  * to what was passed, and clears itself on unmount: a screen that stops rendering — a navigation
  * away, an error boundary — must not leave its title standing over the next one.
  *
- * `useLayoutEffect`, not `useEffect`. The bars persist across navigations while the screen under
- * them is swapped, so a passive effect — which runs after the browser may have painted — lets the
- * strip show the previous screen's title, or nothing on first load, for one frame above the new
+ * `useLayoutEffect`, not `useEffect`. The bar persists across navigations while the screen under
+ * it is swapped, so a passive effect — which runs after the browser may have painted — lets the
+ * bar show the previous screen's title, or nothing on first load, for one frame above the new
  * content. A layout effect runs synchronously after commit and before paint, and the leaving
- * screen's cleanup and the arriving screen's setup land in the same commit, so the bars re-render
+ * screen's cleanup and the arriving screen's setup land in the same commit, so the bar re-renders
  * with the new title before anything is drawn (Greptile on PR #28; Cando's `useMobileTopBar` pays
  * that frame, and `theme-provider.tsx` here already takes the same route for the same reason).
- *
- * A string is drawn in the bars' own type (`ScreenTitle` below); a node is drawn as passed, which
- * is how a detail screen composes its breadcrumb.
  */
-export function useScreenTitle(title: React.ReactNode) {
+export function useScreenTitle(title: string) {
   const setTitle = React.useContext(SetScreenTitleContext);
 
   React.useLayoutEffect(() => {
@@ -66,12 +59,9 @@ export function useScreenTitle(title: React.ReactNode) {
   }, [setTitle, title]);
 }
 
-/** What the bars render: the screen's title in the strip's type, or nothing until a screen sets one. */
+/** What the mobile bar renders: the screen's title, or nothing until a screen sets one. */
 export function ScreenTitle() {
   const title = React.useContext(ScreenTitleContext);
 
-  if (typeof title === "string") {
-    return <span className="truncate font-medium text-base">{title}</span>;
-  }
-  return title;
+  return title ? <span className="truncate font-medium text-base">{title}</span> : null;
 }

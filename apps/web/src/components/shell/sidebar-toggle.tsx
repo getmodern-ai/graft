@@ -8,8 +8,8 @@ import { cn } from "@/lib/utils";
  * tooltip, and the ⌘B hint.
  *
  * One component for the two desktop surfaces that draw it: the sidebar's own header
- * (`main-sidebar.tsx`) and the page strip's collapsed control (`page-nav-collapsed-sidebar.tsx`)
- * — shared so the label and the shortcut hint cannot drift between them.
+ * (`main-sidebar.tsx`) and the floating control a collapsed sidebar leaves behind
+ * (`collapsed-sidebar-toggle.tsx`) — shared so the label and the shortcut hint cannot drift between them.
  *
  * Cando's `apps/web/src/components/shell/sidebar-toggle.tsx` (its CAN-326), with one change: the
  * hint is the `Kbd` primitive rather than Cando's hand-styled `<kbd>`, because the primitive
