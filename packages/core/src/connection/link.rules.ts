@@ -12,6 +12,7 @@
  * connection when there is one. The waiting console is waiting on the ask.
  */
 
+import { withoutTrailingSlashes } from "../url.rules";
 import { FROM_CARD, FROM_CARD_PARAM } from "./card.rules";
 
 /** Where the provider's page sends the browser back: the server's return route, no session. */
@@ -19,7 +20,7 @@ export const LINK_CALLBACK_PATH = "/api/providers/link/callback";
 
 /** `GRAFT_AUTH_URL` plus the return path — a trailing slash on the origin is not doubled. */
 export function linkCallbackUri(authUrl: string): string {
-  return `${authUrl.replace(/\/+$/, "")}${LINK_CALLBACK_PATH}`;
+  return `${withoutTrailingSlashes(authUrl)}${LINK_CALLBACK_PATH}`;
 }
 
 /** The query the return route reads beside the state: which of the two URIs the provider used. */
@@ -92,7 +93,7 @@ export function linkCallbackRedirect(
   outcome: LinkCallbackOutcome,
   options: { fromCard?: boolean } = {},
 ): string {
-  const base = consoleUrl.replace(/\/+$/, "");
+  const base = withoutTrailingSlashes(consoleUrl);
   const query = new URLSearchParams({ status: outcome.status });
   if (outcome.pendingActionId !== null) query.set("pendingActionId", outcome.pendingActionId);
   if (outcome.connectionId !== null) query.set("connectionId", outcome.connectionId);

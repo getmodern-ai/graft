@@ -139,6 +139,11 @@ describe("htmlToText", () => {
     expect(text).toBe("- one\n- two <b>");
   });
 
+  it("reads a non-breaking space, raw or as an entity, as a space", () => {
+    const { text } = htmlToText("<p>one\u00a0two &nbsp; three\u00a0\u00a0four</p>");
+    expect(text).toBe("one two three four");
+  });
+
   /**
    * GRA-139: on Google's reference pages the menu and the language switcher were the first 14,900
    * of the 16,000 characters the job reads, and the response body fell past the cut. The chrome is
