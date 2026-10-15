@@ -82,6 +82,7 @@ const connectionRow: ConnectionRow = {
   oauthScopes: null,
   oauthRefreshState: null,
   providerReleaseFailedAt: null,
+  account: null,
   revokedAt: null,
   owner: "person",
   createdAt: NOW,
@@ -125,6 +126,7 @@ const openAction: PendingActionRow = {
   answer: null,
   consumedAt: null,
   closedReason: null,
+  askedCount: 1,
   owner: "person",
   createdAt: NOW,
   updatedAt: NOW,
@@ -2258,6 +2260,23 @@ describe("pending actions", () => {
     expect(pendingActions[0]?.url).toBe(`http://console.graft.test/app/pending/pa_1?t=${token}`);
   });
 
+  it("says how many times each was asked and the account of the connection it is about, null where neither is known (GRA-300)", async () => {
+    const { app, deps } = harness({ user: { id: "person_1" } });
+    vi.mocked(deps.connection.listConnections).mockResolvedValue([
+      { ...connectionRow, account: "seb@demo.example" },
+    ]);
+    vi.mocked(deps.pendingAction.listOpenPendingActions).mockResolvedValue([
+      { ...openAction, askedCount: 3 },
+      { ...buildAction, connectionId: null },
+    ]);
+    const res = await app.request("/api/pending-actions");
+    const { pendingActions } = (await res.json()) as { pendingActions: Record<string, unknown>[] };
+    expect(pendingActions[0]).toMatchObject({ askedCount: 3, account: "seb@demo.example" });
+    expect(pendingActions[1]).toMatchObject({ askedCount: 1, account: null });
+    // One read of the person's connections for the whole list, not one per card.
+    expect(deps.connection.listConnections).toHaveBeenCalledTimes(1);
+  });
+
   /** GRA-292: Requests › Done. The statement is pinned in `@graft/db`'s `scope.test.ts`. */
   describe("the Done list", () => {
     const answered: PendingActionRow = {
@@ -2301,6 +2320,7 @@ describe("pending actions", () => {
         id: "pa_1",
         state: "answered",
         closedReason: null,
+        askedCount: 1,
         finishedAt: answered.answeredAt?.toISOString(),
         agent: { id: "agent_1", name: "laptop Hermes" },
         answer: { allow: true },
@@ -2311,6 +2331,7 @@ describe("pending actions", () => {
         id: "pa_3",
         state: "expired",
         closedReason: null,
+        askedCount: 1,
         subject: { toolId: null, vendor: "demo", connectionId: "conn_2" },
       });
     });

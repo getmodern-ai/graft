@@ -310,6 +310,7 @@ export function ConnectionAskCard({
             docsUrl: payload.docsUrl,
             finish,
             addedHosts: widens?.addedHosts,
+            askedCount: action.askedCount,
           }),
           summary: proposalSummary({
             primaryHost: draft.primaryHost,

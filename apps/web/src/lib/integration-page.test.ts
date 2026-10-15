@@ -4,6 +4,8 @@ import type { Connection } from "./connection-queries";
 import {
   agentsCanUseLine,
   connectedThroughLabel,
+  connectionAccountOf,
+  headerAccountOf,
   integrationPageOf,
   loginHolderLine,
   oauthScopesOf,
@@ -30,6 +32,7 @@ const base: Connection = {
   credentialSetAt: "2026-09-21T09:00:00.000Z",
   oauth: null,
   providerReleaseFailedAt: null,
+  account: null,
   revokedAt: null,
   createdAt: "2026-09-21T09:00:00.000Z",
   updatedAt: "2026-09-21T09:00:00.000Z",
@@ -217,6 +220,35 @@ describe("the header's agent count", () => {
     expect(agentsCanUseLine(0)).toBe("no agent can use it");
     expect(agentsCanUseLine(1)).toBe("1 agent can use it");
     expect(agentsCanUseLine(4)).toBe("4 agents can use it");
+  });
+});
+
+describe("the account a connection is signed in as (GRA-300)", () => {
+  it("reads the label when there is one, and nothing for none or a blank", () => {
+    expect(connectionAccountOf({ account: " seb@getmodern.ai " })).toBe("seb@getmodern.ai");
+    expect(connectionAccountOf({ account: null })).toBeNull();
+    expect(connectionAccountOf({ account: "  " })).toBeNull();
+  });
+
+  it("puts the account in the header only for one live connection", () => {
+    const signed = { ...base, account: "seb@getmodern.ai" };
+    const page = (connections: Connection[]) => {
+      const built = integrationPageOf(
+        "gmail",
+        [row({ connections: connections.filter((c) => !c.revokedAt).map((c) => live(c)) })],
+        connections,
+        [],
+      );
+      if (built.kind !== "integration") throw new Error("expected the page");
+      return built;
+    };
+    expect(headerAccountOf(page([signed]))).toBe("seb@getmodern.ai");
+    expect(headerAccountOf(page([base]))).toBeNull();
+    // A revoked second connection does not hide the live one's account.
+    const revoked = { ...base, id: "con_old", revokedAt: "2026-10-01T00:00:00.000Z" };
+    expect(headerAccountOf(page([signed, revoked]))).toBe("seb@getmodern.ai");
+    // Two live connections: each names its own on the Connection tab, the header none.
+    expect(headerAccountOf(page([signed, { ...base, id: "con_2" }]))).toBeNull();
   });
 });
 

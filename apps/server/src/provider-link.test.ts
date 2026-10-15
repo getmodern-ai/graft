@@ -472,6 +472,8 @@ describe("a Gmail connection through a link provider: the ask, the button, the r
       hosts: ["gmail.googleapis.com", "www.googleapis.com"],
       credentialSetAt: null,
       providerReleaseFailedAt: null,
+      // The label `complete` answered is the row's account (GRA-300), for the console's "As ...".
+      account: "aleks@example.com",
       revokedAt: null,
     });
     expect(JSON.stringify(connection)).not.toContain(account.id);
@@ -610,12 +612,17 @@ describe("a Gmail connection through a link provider: the ask, the button, the r
         await app.request(`/api/pending-actions/${newAsk}/link`, linkPost())
       ).json()) as { url: string };
       expect(started.url).toContain("app=gmail");
-      broker.connectAccount({ personId: PERSON, target: "gmail", label: "aleks@example.com" });
+      broker.connectAccount({ personId: PERSON, target: "gmail", label: "aleks+work@example.com" });
       const outcome = consoleOutcome(await landing(broker.minted.at(-1)?.success ?? ""));
       expect(outcome).toMatchObject({ status: "connected", connectionId });
       const connections = await listConnections();
       expect(connections).toHaveLength(1);
-      expect(connections[0]).toMatchObject({ id: connectionId, revokedAt: null });
+      // The reconnected row names the account the provider answered this time (GRA-300).
+      expect(connections[0]).toMatchObject({
+        id: connectionId,
+        revokedAt: null,
+        account: "aleks+work@example.com",
+      });
       expect(body(await a.call("request_connection", PROPOSAL))).toMatchObject({
         status: "connected",
         connectionId,

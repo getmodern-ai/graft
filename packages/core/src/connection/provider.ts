@@ -122,7 +122,11 @@ export type ProviderLinkComplete = {
 };
 
 export type ProviderLinkOutcome =
-  /** `ref` goes on the row's `provider_ref`; `label` is the account's own name at the provider, for the card. */
+  /**
+   * `ref` goes on the row's `provider_ref`; `label` is the account's own name at the provider — an
+   * email, a username — for the card, and stored as the row's `account` (GRA-300), which the
+   * console draws as "As …". Null when the provider names none; nothing is refused for want of it.
+   */
   | { ok: true; ref: string; label: string | null }
   /** One sentence for the person; the ask stays open for another try. */
   | { ok: false; message: string };

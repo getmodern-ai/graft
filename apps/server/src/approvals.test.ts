@@ -503,6 +503,7 @@ describe("an expired link (GRA-314)", () => {
       answer: null,
       consumedAt: null,
       closedReason: null,
+      askedCount: 1,
       owner: "person" as const,
       createdAt,
       updatedAt: createdAt,

@@ -8,6 +8,7 @@ import { consentScopesFor } from "../setup/starter-vendors";
 import type { Principal } from "../tenancy";
 import type { ConnectionDeps } from "./connection.deps";
 import {
+  accountLabelOf,
   type HostSetRefusal,
   takesCredential,
   validateCredentialFields,
@@ -75,6 +76,11 @@ export type ConnectionOutput = {
    * outstanding: the keyring's rows always, a relay provider's once its release answered.
    */
   providerReleaseFailedAt: Date | null;
+  /**
+   * Which account at the vendor the row is connected to — an email, a username — when the provider
+   * or the consent named one (GRA-300), for the console's "As …". Null is the common case.
+   */
+  account: string | null;
   revokedAt: Date | null;
   createdAt: Date;
   updatedAt: Date;
@@ -95,6 +101,7 @@ export function toConnectionOutput(row: ConnectionRow): ConnectionOutput {
       ? oauthPublicState(readOAuthState(row.oauthRefreshState))
       : null,
     providerReleaseFailedAt: row.providerReleaseFailedAt,
+    account: row.account,
     revokedAt: row.revokedAt,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
@@ -532,6 +539,11 @@ export type ConnectThroughProviderInput = {
   /** The provider's reference for what the person connected — a broker's account id — as `complete` answered it. */
   ref: string;
   /**
+   * The account's own name at the provider, `complete`'s `label` (GRA-300): stored as the row's
+   * `account`, trimmed and bounded by `accountLabelOf`. Omitted or blank, the row names none.
+   */
+  account?: string | null;
+  /**
    * The id the row takes, when the caller names one: the console connect's record id (GRA-304),
    * so a landing repeated finds the row by that id alone and two landings cannot insert two. Named,
    * the row is always a new one and no released row is reconnected in place, whose id would not
@@ -624,6 +636,7 @@ export async function connectThroughProvider(
         principal.personId,
         released.row.id,
         input.ref,
+        accountLabelOf(input.account),
       );
     } catch (error) {
       if (isUniqueViolation(error)) throw claimed();
@@ -648,6 +661,7 @@ export async function connectThroughProvider(
       personId: principal.personId,
       provider: provider.name,
       providerRef: input.ref,
+      account: accountLabelOf(input.account),
       vendor: input.vendor,
       displayName: input.displayName.trim(),
       scheme: link.scheme,
@@ -876,6 +890,12 @@ export async function completeOAuthConsent(
   connectionId: string,
   fields: Record<string, unknown>,
   deps: ConnectionDeps,
+  /**
+   * The account the token response named (GRA-300; `@graft/proxy`'s `TokenResponse.account`),
+   * written beside the tokens. Null replaces whatever an earlier consent named, since this consent
+   * may be for another account; best-effort, so it never refuses the consent.
+   */
+  account: string | null = null,
 ): Promise<ConnectionOutput> {
   const row = await oauthRow(ctx, principal, connectionId, deps);
   refuse(validateIssuedCredentialFields(row.scheme, fields));
@@ -894,6 +914,7 @@ export async function completeOAuthConsent(
       ciphertext,
       setAt: now,
       oauthRefreshState: state,
+      account: accountLabelOf(account),
     }),
     "Connection not found",
   );

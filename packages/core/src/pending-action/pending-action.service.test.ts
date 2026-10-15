@@ -28,6 +28,7 @@ const open: PendingActionRow = {
   answer: null,
   consumedAt: null,
   closedReason: null,
+  askedCount: 1,
   owner: "person",
   createdAt: NOW,
   updatedAt: NOW,

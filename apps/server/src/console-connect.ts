@@ -579,6 +579,7 @@ export async function completeConsoleLink(
             primaryHost: record.primaryHost,
             hosts: record.hosts,
             ref,
+            account: label,
             id: record.connectId,
           },
           deps.connection,

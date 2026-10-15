@@ -360,6 +360,39 @@ export async function consumePendingAction(
 }
 
 /**
+ * The agent asked again for what an open ask already asks (GRA-300): `asked_count` goes up by one
+ * in the statement, so two repeats at once both count. Only while the ask is open and in time — a
+ * call that finds the person's answer waiting is taking it, not asking again — and `updated_at` is
+ * kept as it was, because the provider-link fallback reads it as "nobody has written this ask
+ * since" (`updatePendingActionPayload`), and a repeat changes nothing that rewrite would lose.
+ * Null is "nothing open to count against".
+ */
+export async function countPendingActionRepeat(
+  db: DbOrTx,
+  scope: AgentScope,
+  id: string,
+  now: Date,
+): Promise<PendingActionRow | null> {
+  const [row] = await db
+    .update(pendingAction)
+    .set({
+      askedCount: sql`${pendingAction.askedCount} + 1`,
+      updatedAt: sql`${pendingAction.updatedAt}`,
+    })
+    .where(
+      and(
+        eq(pendingAction.id, id),
+        inArray(pendingAction.agentId, scopedAgentIds(db, scope)),
+        isNull(pendingAction.answeredAt),
+        isNull(pendingAction.consumedAt),
+        gt(pendingAction.expiresAt, now),
+      ),
+    )
+    .returning();
+  return row ?? null;
+}
+
+/**
  * The agent's actions of one kind that a waiting meta-tool may still act on: unconsumed and not yet
  * expired, answered or not, newest first. This is how a call finds the action a previous call left
  * behind — answered while the agent was away, or still open — rather than creating a second one for

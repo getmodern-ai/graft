@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { type PendingAction, readAsk } from "./pending-action-queries";
 import {
+  askedTimesPhrase,
   EXPIRY_SHOWN_WITHIN_MS,
   requestRowAnswer,
   requestRowCopy,
@@ -23,6 +24,8 @@ function action(kind: string, payload: Record<string, unknown>): PendingAction {
     answeredAt: null,
     answer: null,
     consumedAt: null,
+    askedCount: 1,
+    account: null,
     url: "https://console.example/pending/pa_1?t=h",
   };
 }
@@ -97,6 +100,38 @@ describe("requestRowCopy", () => {
     expect(copy.title).toBe("Codex wants to delete contacts in HubSpot");
     expect(copy.destructive).toBe(true);
     expect(copy.detail).toBe("As seb@getmodern.ai");
+  });
+
+  it("names the connection's own account when the card carries one, over the connection's name (GRA-300)", () => {
+    const ask = readAsk({
+      ...action("tool", tool({ connectionName: "Gmail (work)" })),
+      account: "seb@getmodern.ai",
+    });
+    expect(requestRowCopy(ask).detail).toBe("As seb@getmodern.ai");
+    // A blank label says nothing, and the connection's name stands as before.
+    const blank = readAsk({
+      ...action("tool", tool({ connectionName: "Gmail (work)" })),
+      account: " ",
+    });
+    expect(requestRowCopy(blank).detail).toBe("As Gmail (work)");
+  });
+
+  it("appends how many times the agent asked, past the first (GRA-300)", () => {
+    const asked = (count: number, payload = proposal()) =>
+      requestRowCopy(readAsk({ ...action("connection", payload), askedCount: count })).detail;
+    expect(asked(3)).toBe("Needs your Notion key · asked 3 times");
+    expect(asked(1)).toBe("Needs your Notion key");
+    // A row whose sentence has no sub-line of its own gets the count alone.
+    const tooled = readAsk({ ...action("tool", tool()), askedCount: 2 });
+    expect(requestRowCopy(tooled).detail).toBe("asked 2 times");
+  });
+
+  it("reads the count only when it is a whole number past one", () => {
+    expect(askedTimesPhrase({ askedCount: 2 })).toBe("asked 2 times");
+    expect(askedTimesPhrase({ askedCount: 1 })).toBeNull();
+    expect(askedTimesPhrase({ askedCount: 0 })).toBeNull();
+    expect(askedTimesPhrase({ askedCount: 2.5 })).toBeNull();
+    expect(askedTimesPhrase({} as { askedCount: number })).toBeNull();
   });
 
   it("answers a build ask on the spot", () => {

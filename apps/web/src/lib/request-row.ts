@@ -91,14 +91,48 @@ function providerFallbackFrom(payload: Record<string, unknown>): string | null {
   return typeof from === "string" && from !== "" ? from : null;
 }
 
-/** The row's words for an ask. */
+/**
+ * "asked 3 times" when the agent asked again for an ask still open (GRA-300; the card's
+ * `askedCount`), null for an ask asked once or a card that says nothing about it.
+ */
+export function askedTimesPhrase(action: Pick<PendingAction, "askedCount">): string | null {
+  const count = action.askedCount;
+  return typeof count === "number" && Number.isInteger(count) && count > 1
+    ? `asked ${count} times`
+    : null;
+}
+
+/**
+ * The row's words for an ask: its kind's sentence and sub-line, with how many times it was asked
+ * appended to the sub-line when more than once.
+ */
 export function requestRowCopy(ask: Ask): RequestRowCopy {
+  const copy = kindRowCopy(ask);
+  const asked = askedTimesPhrase(ask.action);
+  if (!asked) return copy;
+  return { ...copy, detail: copy.detail ? `${copy.detail} · ${asked}` : asked };
+}
+
+/**
+ * The account a tool's ask runs as, for "As …": the connection's own account label when the server
+ * knows it (GRA-300), else the connection's name where the person named it apart from the
+ * integration (several accounts of one integration). Null when neither says anything.
+ */
+function toolAskAccount(ask: Extract<Ask, { kind: "tool" }>, integration: string): string | null {
+  const account = ask.action.account;
+  if (typeof account === "string" && account.trim() !== "") return account;
+  const name = ask.payload.connectionName;
+  return name !== integration ? name : null;
+}
+
+function kindRowCopy(ask: Ask): RequestRowCopy {
   const agent = requestAgentName(ask.action);
   switch (ask.kind) {
     case "tool": {
       const { payload } = ask;
       const integration = toolAskIntegrationName(payload);
       const action = toolActionWords(payload.toolName);
+      const account = toolAskAccount(ask, integration);
       return {
         variant: "tool",
         vendor: payload.vendor,
@@ -107,8 +141,7 @@ export function requestRowCopy(ask: Ask): RequestRowCopy {
           ? `${agent} wants to ${action} in ${integration}`
           : `${agent} wants to use a ${integration} tool`,
         destructive: payload.annotations.destructiveHint === true,
-        // The account, when the person holds more than one of the integration under its own name.
-        detail: payload.connectionName !== integration ? `As ${payload.connectionName}` : null,
+        detail: account ? `As ${account}` : null,
         decline: "Deny",
         primary: { label: "Allow", does: "menu" },
       };

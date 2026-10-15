@@ -64,6 +64,7 @@ import {
   findVendorConnectionsForUpdate,
   lockConnectionKey,
   revokeConnection,
+  setConnectionCredential,
   setConnectionProviderRef,
 } from "./connection";
 import {
@@ -71,6 +72,7 @@ import {
   answerPendingAction,
   closePendingActionsForAgent,
   consumePendingAction,
+  countPendingActionRepeat,
   expirePendingActionsForConnection,
   findPendingAction,
   insertPendingAction,
@@ -162,6 +164,7 @@ const PENDING_ACTION_COLUMNS = [
   "answer",
   "consumed_at",
   "closed_reason",
+  "asked_count",
   "owner",
   "created_at",
   "updated_at",
@@ -674,6 +677,21 @@ describe("agent-scoped writes take both ids too, so a mis-scoped write edits not
     expect(attempt.sql).toMatch(SCOPED_AGENT);
   });
 
+  it("counting a repeat of an open ask: one more in the statement, under the agent, open and in time", async () => {
+    await countPendingActionRepeat(db, SCOPE, "pa_1", new Date("2026-10-15T00:00:00Z"));
+    const s = only();
+    // The count is added in SQL, so two repeats at once both land; `updated_at` is written as
+    // itself, so the provider-link fallback's optimistic check is not tripped by a repeat.
+    expect(s.sql).toMatch(
+      /^update "pending_action" set "asked_count" = "pending_action"\."asked_count" \+ 1, "updated_at" = "pending_action"\."updated_at"/,
+    );
+    expect(s.sql).toMatch(SCOPED_AGENT);
+    expect(s.sql).toContain('"pending_action"."id" = $');
+    expect(s.sql).toContain('"pending_action"."answered_at" is null');
+    expect(s.sql).toContain('"pending_action"."consumed_at" is null');
+    expect(s.sql).toContain('"pending_action"."expires_at" > $');
+  });
+
   it("a trace line is numbered in the statement, over the job's own lines", async () => {
     // The fake client answers no row, which the insert reports as a throw once the statement is out.
     await insertAcquireTrace(db, {
@@ -1127,6 +1145,27 @@ describe("person-scoped statements take the person", () => {
     expect(s.sql).toContain('"connection"."person_id" = $');
   });
 
+  it("a credential write names the account only when the caller does, under the person", async () => {
+    const write = { ciphertext: Buffer.from("x"), setAt: new Date("2026-10-15T00:00:00Z") };
+    await setConnectionCredential(db, "person_1", "conn_1", write);
+    const plain = only();
+    expect(plain.sql).not.toContain('"account" = ');
+    expect(plain.sql).toContain('"connection"."person_id" = $');
+
+    statements = [];
+    await setConnectionCredential(db, "person_1", "conn_1", {
+      ...write,
+      account: "seb@example.com",
+    });
+    const consent = only();
+    expect(consent.sql).toContain('"account" = $');
+    expect(consent.sql).toContain('"connection"."id" = $');
+    expect(consent.sql).toContain('"connection"."person_id" = $');
+    expect(consent.params).toEqual(
+      expect.arrayContaining(["seb@example.com", "conn_1", "person_1"]),
+    );
+  });
+
   /**
    * The two statements a link's return reconnects a released row with (GRA-122): the reference
    * written and the stamp cleared, then the host set grown to the union — each under the person.
@@ -1135,12 +1174,19 @@ describe("person-scoped statements take the person", () => {
     await setConnectionProviderRef(db, "person_1", "conn_1", "acct_1");
     const reference = only();
     expect(reference.sql).toMatch(/^update "connection" set/);
-    for (const column of ["provider_ref", "revoked_at", "provider_release_failed_at"]) {
+    for (const column of ["provider_ref", "account", "revoked_at", "provider_release_failed_at"]) {
       expect(reference.sql).toContain(`"${column}" = `);
     }
     expect(reference.sql).toContain('"connection"."id" = $');
     expect(reference.sql).toContain('"connection"."person_id" = $');
     expect(reference.params).toEqual(expect.arrayContaining(["acct_1", "conn_1", "person_1"]));
+
+    // The account the provider named rides in the same statement (GRA-300).
+    statements = [];
+    await setConnectionProviderRef(db, "person_1", "conn_1", "acct_2", "seb@example.com");
+    expect(only().params).toEqual(
+      expect.arrayContaining(["acct_2", "seb@example.com", "conn_1", "person_1"]),
+    );
 
     statements = [];
     await addConnectionHosts(db, "person_1", "conn_1", ["www.googleapis.com"]);

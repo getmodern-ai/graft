@@ -412,3 +412,29 @@ export function validateIssuedCredentialFields(
   }
   return null;
 }
+
+/** The longest account label a row keeps (GRA-300); a vendor's email or username fits well inside. */
+export const ACCOUNT_LABEL_MAX = 200;
+
+/**
+ * The account label a provider or a token response named, made safe to store and draw (GRA-300):
+ * control characters dropped (judged by code point, so no control character sits in a pattern),
+ * whitespace collapsed, cut to `ACCOUNT_LABEL_MAX` characters at a whole code point, so a cut never
+ * leaves half an emoji (Greptile on #271). Null for anything that is not a string or
+ * leaves nothing, so a label that is no use is never a reason to refuse a connection.
+ */
+export function accountLabelOf(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const printable = [...value]
+    .filter((char) => {
+      const code = char.codePointAt(0) ?? 0;
+      return code >= 0x20 && !(code >= 0x7f && code <= 0x9f);
+    })
+    .join("");
+  const label = printable.replace(/\s+/g, " ").trim();
+  if (label === "") return null;
+  const chars = [...label];
+  return chars.length > ACCOUNT_LABEL_MAX
+    ? chars.slice(0, ACCOUNT_LABEL_MAX).join("").trimEnd()
+    : label;
+}

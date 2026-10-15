@@ -56,6 +56,7 @@ const connection: Connection = {
   credentialSetAt: null,
   oauth: null,
   providerReleaseFailedAt: null,
+  account: null,
   revokedAt: null,
   createdAt: at,
   updatedAt: at,

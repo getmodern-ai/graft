@@ -171,6 +171,12 @@ export async function setConnectionCredential(
      * it is — a key-shaped scheme never touches it.
      */
     oauthRefreshState?: Record<string, unknown> | null;
+    /**
+     * The account the consent was for, as the token response named it (GRA-300), written in the
+     * same statement as the tokens it came with, null when the response named none. Omitted, the
+     * column is left as it is — a key re-entry or a refresh says nothing about the account.
+     */
+    account?: string | null;
   },
 ): Promise<ConnectionRow | null> {
   const [row] = await db
@@ -182,6 +188,7 @@ export async function setConnectionCredential(
       ...(args.oauthRefreshState === undefined
         ? {}
         : { oauthRefreshState: args.oauthRefreshState }),
+      ...(args.account === undefined ? {} : { account: args.account }),
     })
     .where(and(eq(connection.id, id), eq(connection.personId, personId)))
     .returning();
@@ -334,10 +341,15 @@ export async function setConnectionProviderRef(
   personId: string,
   id: string,
   providerRef: string,
+  /**
+   * The account's label as the provider named it (GRA-300), or null. Always written: the
+   * reference is a new account's, so a label the old one carried no longer says who this is.
+   */
+  account: string | null = null,
 ): Promise<ConnectionRow | null> {
   const [row] = await db
     .update(connection)
-    .set({ providerRef, revokedAt: null, providerReleaseFailedAt: null })
+    .set({ providerRef, account, revokedAt: null, providerReleaseFailedAt: null })
     .where(and(eq(connection.id, id), eq(connection.personId, personId)))
     .returning();
   return row ?? null;

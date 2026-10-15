@@ -22,14 +22,14 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { count } from "@/lib/format";
-import { agentsCanUseLine, type IntegrationPage } from "@/lib/integration-page";
+import { agentsCanUseLine, headerAccountOf, type IntegrationPage } from "@/lib/integration-page";
 
 type Page = Extract<IntegrationPage, { kind: "integration" }>;
 
 /**
  * The integration page's header (GRA-315; Figma 2044:7001): the mark in a 56px outlined tile, the
  * name, the status chip and one line of facts (since when, the tool count, how many agents can use
- * it). The account label joins the line when GRA-300 provides it. Get a new tool (GRA-320,
+ * it), then "As …" when its one live connection names its account (GRA-300). Get a new tool (GRA-320,
  * `new-tool-dialog.tsx`) is offered while the integration has a live connection.
  *
  * The ⋯ menu holds the page's ways out and, for an integration with one live connection, its
@@ -39,6 +39,7 @@ export function IntegrationHeader({ page }: { page: Page }) {
   const [revoking, setRevoking] = useState(false);
   const liveConnections = page.connections.filter((connection) => connection.state !== "revoked");
   const only = liveConnections.length === 1 ? liveConnections[0] : undefined;
+  const account = headerAccountOf(page);
 
   return (
     <PageHeader className="items-center gap-4">
@@ -59,6 +60,7 @@ export function IntegrationHeader({ page }: { page: Page }) {
           <span>
             {page.since.verb} <Time iso={page.since.at} /> · {count(page.toolCount, "tool")} ·{" "}
             {agentsCanUseLine(page.agentCount)}
+            {account ? ` · As ${account}` : null}
           </span>
         </div>
       </PageHeaderContent>

@@ -245,6 +245,7 @@ export function ProviderLinkAskCard({
             docsUrl: payload.docsUrl,
             finish: "link",
             provider,
+            askedCount: action.askedCount,
           }),
           summary: proposalSummary({
             primaryHost: payload.primaryHost,

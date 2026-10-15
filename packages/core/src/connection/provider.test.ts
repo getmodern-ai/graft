@@ -43,6 +43,7 @@ const row: ConnectionRow = {
   oauthScopes: null,
   oauthRefreshState: null,
   providerReleaseFailedAt: null,
+  account: null,
   revokedAt: null,
   owner: "person",
   createdAt: NOW,

@@ -34,6 +34,7 @@ const outFile = join(dirname(fileURLToPath(import.meta.url)), "../src/components
  * without touching this list.
  */
 const NAMES = [
+  "account_circle",
   "add",
   "apps",
   "arrow_back",

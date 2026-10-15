@@ -43,6 +43,7 @@ const action = {
   answer: null,
   consumedAt: null,
   closedReason: null,
+  askedCount: 1,
   owner: "person" as const,
   createdAt: NOW,
   updatedAt: NOW,

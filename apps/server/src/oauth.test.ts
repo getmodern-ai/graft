@@ -257,6 +257,7 @@ type ConnectionWire = {
   scheme: string;
   credentialSetAt: string | null;
   revokedAt: string | null;
+  account: string | null;
   oauth: {
     status: string;
     consentedAt: string | null;
@@ -455,8 +456,19 @@ describe("an OAuth connection proposed over MCP, consented in the browser, calle
     );
     const state = authorize.searchParams.get("state") as string;
     const verifier = verifierOf(connectionId);
+    // The vendor answers an OpenID Connect id_token beside the tokens: its email claim is the
+    // connection's account label (GRA-300), and the id_token itself is stored nowhere.
+    const claims = Buffer.from(JSON.stringify({ sub: "1", email: "seb@mail.example" })).toString(
+      "base64url",
+    );
+    tokenEndpoint = () => tokenResponse({ id_token: `e30.${claims}.` });
 
-    const landed = landing(await callback({ code: "the-code", state }));
+    let landed: ReturnType<typeof landing>;
+    try {
+      landed = landing(await callback({ code: "the-code", state }));
+    } finally {
+      tokenEndpoint = () => tokenResponse();
+    }
     expect(landed).toMatchObject({
       status: "connected",
       connectionId,
@@ -498,6 +510,7 @@ describe("an OAuth connection proposed over MCP, consented in the browser, calle
       status: "connected",
       consentedAt: expect.any(String),
     });
+    expect(connections[0]?.account).toBe("seb@mail.example");
     expectNoSecret(JSON.stringify(connections));
 
     // The ask is answered by the callback; the waiting tool takes it. Neither announces: the list
