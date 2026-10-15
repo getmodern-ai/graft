@@ -195,10 +195,11 @@ export async function setAskEveryCall(
     );
   }
   return ctx.db.transaction(async (tx) => {
-    // The tool row's lock first, the order an answer takes (`setApproval`), so a switch and an
-    // answer at once queue on it rather than each holding a row the other's event needs; then
-    // the approval, so two switches at once each judge the setting the other left.
-    await deps.findAuthoredToolForUpdate(tx, scope.personId, toolId);
+    // The tool row first, as an answer takes it (`setApproval`), so a switch and an answer at once
+    // queue on it rather than each holding a row the other's event needs; `NO KEY UPDATE`, so a
+    // revoke holding the approval can still write the demotion that names the tool. Then the
+    // approval, so two switches at once each judge the setting the other left.
+    await deps.findAuthoredToolForNoKeyUpdate(tx, scope.personId, toolId);
     const before = await deps.findApproval(tx, scope, toolId, { forUpdate: true });
     const row = orNotFound(
       await deps.updateAskEveryCall(tx, scope, toolId, on),
@@ -241,8 +242,8 @@ export async function revokeApproval(
     "Tool not found",
   );
   return ctx.db.transaction(async (tx) => {
-    // The tool row's lock before the approval's, as an answer and the switch take them.
-    await deps.findAuthoredToolForUpdate(tx, scope.personId, toolId);
+    // The tool row before the approval, as an answer and the switch take them (the switch says why).
+    await deps.findAuthoredToolForNoKeyUpdate(tx, scope.personId, toolId);
     const row = await deps.deleteApproval(tx, scope, toolId);
     const now = deps.now();
     await deps.settleAnsweredToolActions(tx, scope, toolId, now);

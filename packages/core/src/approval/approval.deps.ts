@@ -28,6 +28,7 @@ import {
 } from "@graft/db/repo/pending-action";
 import {
   findAuthoredToolById,
+  findAuthoredToolForNoKeyUpdate,
   findAuthoredToolForUpdate,
   listToolVersionOrigins,
 } from "@graft/db/repo/tool";
@@ -74,6 +75,11 @@ export type ApprovalDeps = {
    * and an advance serialise and the answer lands on the version it holds for (`setApproval`).
    */
   findAuthoredToolForUpdate: typeof findAuthoredToolForUpdate;
+  /**
+   * The ask-every-call switch and a withdraw queue on the tool row behind an answer, without
+   * blocking a revoke's foreign-key checks on it (GRA-341).
+   */
+  findAuthoredToolForNoKeyUpdate: typeof findAuthoredToolForNoKeyUpdate;
   /** The tool's versions by origin, which say whether a late answer carries (`answerCarriesTo`). */
   listToolVersionOrigins: typeof listToolVersionOrigins;
   findConnection: typeof findConnection;
@@ -106,6 +112,7 @@ export const defaultApprovalDeps: ApprovalDeps = {
   findAgent,
   findAuthoredToolById,
   findAuthoredToolForUpdate,
+  findAuthoredToolForNoKeyUpdate,
   listToolVersionOrigins,
   findConnection,
   findConnectionForNoKeyUpdate,

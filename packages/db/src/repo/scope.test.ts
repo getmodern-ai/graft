@@ -98,6 +98,7 @@ import {
 } from "./stock";
 import {
   countLiveToolsByVendor,
+  findAuthoredToolForNoKeyUpdate,
   findAuthoredToolForUpdate,
   findToolVersion,
   listAuthoredToolsForVendor,
@@ -1578,5 +1579,12 @@ describe("locked reads of a standing answer", () => {
     const vendor = only();
     expect(vendor.sql).toMatch(SCOPED_AGENT);
     expect(vendor.sql).toMatch(/ for update$/);
+  });
+
+  it("the tool row the switch and a withdraw queue on, under the person, for no key update", async () => {
+    await findAuthoredToolForNoKeyUpdate(db, "person_1", "tool_1");
+    const s = only();
+    expect(s.sql).toContain('"authored_tool"."person_id" = $');
+    expect(s.sql).toMatch(/ for no key update$/);
   });
 });

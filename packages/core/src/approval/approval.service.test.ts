@@ -130,6 +130,7 @@ function fakeDeps(overrides: Partial<ApprovalDeps> = {}): ApprovalDeps {
     findAgent: vi.fn(async () => agentRow),
     findAuthoredToolById: vi.fn(async () => writeTool),
     findAuthoredToolForUpdate: vi.fn(async () => writeTool),
+    findAuthoredToolForNoKeyUpdate: vi.fn(async () => writeTool),
     listToolVersionOrigins: vi.fn(async () => []),
     findConnection: vi.fn(async () => ({ id: "conn_1", vendor: "hubspot" }) as never),
     findConnectionForNoKeyUpdate: vi.fn(async () => ({ id: "conn_1", vendor: "hubspot" }) as never),
@@ -860,7 +861,7 @@ describe("approval events", () => {
   it("takes the tool row's lock before the approval's for the switch and the withdraw", async () => {
     const order: string[] = [];
     const deps = fakeDeps({
-      findAuthoredToolForUpdate: vi.fn(async () => {
+      findAuthoredToolForNoKeyUpdate: vi.fn(async () => {
         order.push("tool");
         return writeTool;
       }),

@@ -1403,6 +1403,7 @@ export function createFakeDeps(store: FakeStore): FakeDeps {
     findAgent: agent.findAgent,
     findAuthoredToolById: tool.findAuthoredToolById,
     findAuthoredToolForUpdate: tool.findAuthoredToolForUpdate,
+    findAuthoredToolForNoKeyUpdate: tool.findAuthoredToolForUpdate,
     listToolVersionOrigins: tool.listToolVersionOrigins,
     findConnection: connection.findConnection,
     findConnectionForNoKeyUpdate: connection.findConnectionForNoKeyUpdate,

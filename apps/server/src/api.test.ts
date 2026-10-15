@@ -471,6 +471,7 @@ function approvalDeps(): ApprovalDeps {
     findAgent: vi.fn(async () => agentRow),
     findAuthoredToolById: vi.fn(async () => destructiveTool),
     findAuthoredToolForUpdate: vi.fn(async () => destructiveTool),
+    findAuthoredToolForNoKeyUpdate: vi.fn(async () => destructiveTool),
     listToolVersionOrigins: vi.fn(async () => []),
     findConnection: vi.fn(async () => connectionRow),
     findConnectionForNoKeyUpdate: vi.fn(async () => connectionRow),
