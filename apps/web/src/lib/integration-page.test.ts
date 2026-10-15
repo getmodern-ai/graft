@@ -6,7 +6,9 @@ import {
   connectedThroughLabel,
   connectionAccountOf,
   headerAccountOf,
+  headerToolsLine,
   integrationPageOf,
+  isToolInUse,
   loginHolderLine,
   oauthScopesOf,
   readIntegrationSearch,
@@ -70,6 +72,7 @@ const row = (overrides: Partial<Integration> = {}): Integration => ({
     { id: "agent_2", name: "Hermes", harness: null },
   ],
   toolCount: 10,
+  inUseToolCount: 4,
   lastUsedAt: null,
   needsAttention: null,
   ...overrides,
@@ -88,7 +91,7 @@ describe("the page's tab in the URL", () => {
 
 describe("the page for a vendor", () => {
   it("is the integrations row while a connection is live, with the header's facts off it", () => {
-    const page = integrationPageOf("gmail", [row()], [base], []);
+    const page = integrationPageOf("gmail", [row()], [base], undefined);
     expect(page).toMatchObject({
       kind: "integration",
       displayName: "Gmail",
@@ -96,8 +99,19 @@ describe("the page for a vendor", () => {
       chip: { label: "Connected" },
       since: { verb: "connected", at: base.createdAt },
       toolCount: 10,
+      inUseToolCount: 4,
       agentCount: 2,
     });
+  });
+
+  it("counts the integration's tools read once it lands, the rows the Tools tab draws (GRA-345)", () => {
+    const page = integrationPageOf(
+      "gmail",
+      [row()],
+      [base],
+      [{ source: "toolbox" }, { source: "stock" }, { source: "stock" }],
+    );
+    expect(page).toMatchObject({ toolCount: 3, inUseToolCount: 1 });
   });
 
   it("lists every connection of the vendor, live ones first and revoked ones newest first", () => {
@@ -162,22 +176,14 @@ describe("the page for a vendor", () => {
 
   it("is read-only and drawn from the connections when every connection is revoked", () => {
     const revoked = { ...base, revokedAt: "2026-10-01T00:00:00.000Z" };
-    const page = integrationPageOf(
-      "gmail",
-      [],
-      [revoked],
-      [
-        { vendor: "gmail", currentVersionId: "v1" },
-        { vendor: "gmail", currentVersionId: null },
-        { vendor: "slack", currentVersionId: "v2" },
-      ],
-    );
+    const page = integrationPageOf("gmail", [], [revoked], [{ source: "toolbox" }]);
     expect(page).toMatchObject({
       kind: "integration",
       live: false,
       chip: { label: "Revoked" },
       since: { verb: "revoked", at: "2026-10-01T00:00:00.000Z" },
       toolCount: 1,
+      inUseToolCount: 1,
       agentCount: 0,
     });
   });
@@ -191,17 +197,14 @@ describe("the page for a vendor", () => {
   });
 
   it("draws the connections read's live rows when the integrations read dropped the row first", () => {
-    const page = integrationPageOf(
-      "gmail",
-      [],
-      [base],
-      [{ vendor: "gmail", currentVersionId: "v1" }],
-    );
+    const page = integrationPageOf("gmail", [], [base], undefined);
     expect(page).toMatchObject({
       kind: "integration",
       live: true,
       chip: { label: "Connected" },
-      toolCount: 1,
+      // Nothing has counted the tools yet, so the page draws no count rather than a guess.
+      toolCount: null,
+      inUseToolCount: null,
       agentCount: 0,
     });
     if (page.kind !== "integration") throw new Error("expected the page");
@@ -319,5 +322,19 @@ describe("the ways to sign a connection in again", () => {
     expect(reconnectActionsOf({ ...base, provider: "gateway", scheme: "gateway" })).toEqual([]);
     expect(reconnectActionsOf({ ...base, provider: "pipedream", scheme: "relay" })).toEqual([]);
     expect(reconnectActionsOf(base, "provider_unavailable")).toEqual([]);
+  });
+});
+
+describe("the header's tool facts (GRA-345)", () => {
+  it("counts every tool offered, then the ones in use, and nothing before a read counted them", () => {
+    expect(headerToolsLine({ toolCount: 12, inUseToolCount: 3 })).toBe("12 tools · 3 in use");
+    expect(headerToolsLine({ toolCount: 7, inUseToolCount: 0 })).toBe("7 tools");
+    expect(headerToolsLine({ toolCount: 0, inUseToolCount: 0 })).toBe("0 tools");
+    expect(headerToolsLine({ toolCount: null, inUseToolCount: null })).toBeNull();
+  });
+
+  it("calls a tool in use once it is in the toolbox, never a ready-made one not yet copied in", () => {
+    expect(isToolInUse({ source: "toolbox" })).toBe(true);
+    expect(isToolInUse({ source: "stock" })).toBe(false);
   });
 });

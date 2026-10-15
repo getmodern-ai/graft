@@ -34,8 +34,18 @@ export type IntegrationOutput = {
   connections: IntegrationConnectionOutput[];
   /** Every active agent whose scope reaches any of them, once each, oldest agent first. */
   agents: IntegrationAgentOutput[];
-  /** The person's tools of the vendor with a current version. */
+  /**
+   * Every tool the integration offers the person (GRA-345): their tools of the vendor with a
+   * current version, and the stock tools of it they hold no tool of the name of. The count of what
+   * the integration's tools read lists (GRA-293).
+   */
   toolCount: number;
+  /**
+   * Of those, the ones in the person's toolbox: every tool of theirs with a current version. A
+   * stock tool enters the toolbox when it is first reached for (ADR 0025), so this is the tools
+   * used at least once, plus the ones an agent wrote, which exist because an agent asked for them.
+   */
+  inUseToolCount: number;
   /** The last call by any of the person's agents, by `GET /connections/:id/usage`'s rule; null when never. */
   lastUsedAt: Date | null;
   /** Null when every connection is connected; otherwise the worst one's reason and id. */
@@ -72,8 +82,9 @@ export function worstAttention(
 
 /**
  * Four statements whatever the person holds: the connections, the agent reach, the tool counts and
- * the last call per vendor. Rows come in the order of each vendor's oldest connection; the console
- * sorts. `executeToolName` is `@graft/mcp`'s, passed in as the usage route passes it, since a
+ * the last call per vendor. Both tool counts come from one statement, so a stock tool copied in
+ * mid-read is counted once, as in use or as offered stock, never twice or not at all (GRA-345).
+ * Rows come in the order of each vendor's oldest connection; the console sorts. `executeToolName` is `@graft/mcp`'s, passed in as the usage route passes it, since a
  * connection's execute tool has no toolbox row and is matched by its wire name.
  */
 export async function listIntegrations(
@@ -88,7 +99,7 @@ export async function listIntegrations(
   const vendorOfToolName = new Map(rows.map((row) => [input.executeToolName(row.id), row.vendor]));
   const [reach, toolCounts, lastUsed] = await Promise.all([
     deps.listActiveAgentReach(ctx.db, principal.personId),
-    deps.countLiveToolsByVendor(ctx.db, principal.personId),
+    deps.countToolsByVendor(ctx.db, principal.personId),
     deps.lastUsedAtByVendor(ctx.db, principal.personId, {
       toolNames: [...vendorOfToolName.keys()],
     }),
@@ -121,7 +132,7 @@ export async function listIntegrations(
     agentsOf.set(vendor, agents);
   }
 
-  const toolCountOf = new Map(toolCounts.map((row) => [row.vendor, row.count]));
+  const toolCountOf = new Map(toolCounts.map((row) => [row.vendor, row]));
   const lastUsedOf = new Map<string, Date>();
   for (const row of lastUsed) {
     const vendor = row.vendor ?? (row.toolName ? vendorOfToolName.get(row.toolName) : undefined);
@@ -135,7 +146,8 @@ export async function listIntegrations(
     displayName: connections[0]?.displayName ?? vendor,
     connections,
     agents: [...(agentsOf.get(vendor)?.values() ?? [])],
-    toolCount: toolCountOf.get(vendor) ?? 0,
+    toolCount: toolCountOf.get(vendor)?.offered ?? 0,
+    inUseToolCount: toolCountOf.get(vendor)?.inUse ?? 0,
     lastUsedAt: lastUsedOf.get(vendor) ?? null,
     needsAttention: worstAttention(connections),
   }));

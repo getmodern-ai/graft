@@ -94,6 +94,35 @@ describe("integrationAccessClause", () => {
     ).toBe("every tool runs without asking");
   });
 
+  it("never says every tool runs while a ready-made one not yet used would ask first (GRA-345)", () => {
+    expect(integrationAccessClause([read, send], [allow("send")], null, 3)).toBe(
+      "reads and Send run without asking, other changes ask first",
+    );
+    expect(integrationAccessClause([], [], null, 7)).toBe(
+      "reads run without asking, changes ask first",
+    );
+    // A standing approval covers a tool on its first use, so it is unchanged.
+    expect(
+      integrationAccessClause([read, send], [], { vendor: "gmail", includesDestructive: true }, 3),
+    ).toBe("every tool runs without asking");
+    expect(integrationAccessClause([], [], { vendor: "gmail", includesDestructive: true }, 3)).toBe(
+      "every tool runs without asking",
+    );
+  });
+
+  it("says a ready-made tool that deletes asks first under an approval that leaves those out", () => {
+    const changes = { vendor: "gmail", includesDestructive: false };
+    expect(integrationAccessClause([read, send], [], changes, 3)).toBe(
+      "ready-made tools that delete ask first, the rest run without asking",
+    );
+    expect(integrationAccessClause([], [], changes, 7)).toBe(
+      "ready-made tools that delete ask first, the rest run without asking",
+    );
+    expect(integrationAccessClause([read, send, remove], [], changes, 2)).toBe(
+      "Delete message asks first, ready-made tools that delete ask first, the rest run without asking",
+    );
+  });
+
   it("under the standing approval names what it leaves out, ones that delete included", () => {
     expect(
       integrationAccessClause([read, send, remove], [], {
@@ -186,13 +215,37 @@ describe("agentIntegrationRows", () => {
         connection({ id: "conn_drive", vendor: "google_drive", displayName: "Drive" }),
       ],
       scope: all,
-      access: { tools: [read, send], approvals: [], vendorApprovals: [] },
+      access: { tools: [read, send], approvals: [], vendorApprovals: [], toolCounts: [] },
     });
     expect(rows.map((row) => [row.displayName, row.toolCount, row.line])).toEqual([
       ["Drive", 0, "No tools yet · Claude can build them"],
       ["Gmail", 2, "2 tools · reads run without asking, changes ask first"],
     ]);
     expect(rows.flatMap((row) => row.connections.map((entry) => entry.on))).toEqual([true, true]);
+  });
+
+  it("counts every tool the integration offers, ready-made ones not yet used included (GRA-345)", () => {
+    const rows = agentIntegrationRows({
+      agentName: "Claude",
+      connections: [
+        connection(),
+        connection({ id: "conn_notion", vendor: "notion", displayName: "Notion" }),
+      ],
+      scope: all,
+      access: {
+        tools: [read, send],
+        approvals: [],
+        vendorApprovals: [],
+        toolCounts: [
+          { vendor: "gmail", toolCount: 8 },
+          { vendor: "notion", toolCount: 7 },
+        ],
+      },
+    });
+    expect(rows.map((row) => [row.displayName, row.toolCount, row.line])).toEqual([
+      ["Gmail", 8, "8 tools · reads run without asking, changes ask first"],
+      ["Notion", 7, "7 tools · reads run without asking, changes ask first"],
+    ]);
   });
 
   it("groups an integration's connections under one row, named for the oldest", () => {
@@ -207,7 +260,7 @@ describe("agentIntegrationRows", () => {
         connection({ id: "conn_a", displayName: "Gmail", createdAt: "2026-10-01T00:00:00Z" }),
       ],
       scope: { mode: "listed", connectionIds: new Set(["conn_b"]) },
-      access: { tools: [], approvals: [], vendorApprovals: [] },
+      access: { tools: [], approvals: [], vendorApprovals: [], toolCounts: [] },
     });
     expect(row?.displayName).toBe("Gmail");
     expect(row?.connections.map((entry) => [entry.connection.id, entry.on])).toEqual([
@@ -231,7 +284,7 @@ describe("agentIntegrationRows", () => {
       agentName: "Claude",
       connections: [signedOut],
       scope: all,
-      access: { tools: [send], approvals: [], vendorApprovals: [] },
+      access: { tools: [send], approvals: [], vendorApprovals: [], toolCounts: [] },
     });
     expect(row?.needsReconnect).toBe(true);
     expect(row?.line).toBe("1 tool · can't run until you reconnect");

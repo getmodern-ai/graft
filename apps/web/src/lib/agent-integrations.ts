@@ -4,6 +4,7 @@ import { listTools, toolTitle } from "./agent-access";
 import type { Approval, VendorApproval } from "./approval-queries";
 import { type Connection, type ConnectionStatus, connectionStatus } from "./connection-queries";
 import { count } from "./format";
+import type { Integration } from "./integration-queries";
 import { connectionOn, type ScopeState } from "./scope-toggles";
 
 /**
@@ -26,6 +27,7 @@ type Tool = {
   currentVersionId: string | null;
 };
 
+type ToolCounts = Pick<Integration, "vendor" | "toolCount">;
 type ApprovalAnswer = Pick<Approval, "toolId" | "decision" | "askEveryCall" | "toolVersionId">;
 type VendorAnswer = Pick<VendorApproval, "vendor" | "includesDestructive">;
 
@@ -40,7 +42,10 @@ export type AgentIntegrationRow = {
   vendor: string;
   displayName: string;
   connections: AgentIntegrationConnection[];
-  /** The person's tools of the vendor with a current version; null until the toolbox is read. */
+  /**
+   * Every tool the integration offers the person, ready-made ones not yet used included (GRA-345);
+   * null until the toolbox, the answers and the integrations are read.
+   */
   toolCount: number | null;
   /** Some connection on the row needs the person before its tools run again. */
   needsReconnect: boolean;
@@ -55,11 +60,18 @@ const named = (titles: readonly string[], one: string, many: string) =>
 /**
  * What the agent may run of one integration's tools without asking, in the person's words. Reads
  * never ask; each tool that changes data is judged as the gate would judge its current version.
+ *
+ * `unusedTools` counts the ready-made tools not yet in the toolbox (GRA-345). No answer can name
+ * one before its first use copies it in, so the clause never says every tool runs without asking
+ * while one of them may ask: any change with no standing approval, one that deletes under an
+ * approval that leaves those out. Their annotations are not read here, so the clause says what
+ * such a tool would do rather than naming it.
  */
 export function integrationAccessClause(
   tools: readonly Tool[],
   approvals: readonly ApprovalAnswer[],
   vendorApproval: VendorAnswer | null,
+  unusedTools = 0,
 ): string {
   const byTool = new Map(approvals.map((approval) => [approval.toolId, approval]));
   const passes: string[] = [];
@@ -93,19 +105,24 @@ export function integrationAccessClause(
     exceptions.push(`${named(refused, "is", "are")} refused`);
   }
 
-  if (passes.length > 0 && exceptions.length === 0 && asksFirst.length === 0) {
-    return "every tool runs without asking";
-  }
-  if (vendorApproval && passes.length > 0) {
+  // An unused ready-made tool is judged with no answer of its own: the standing approval covers it
+  // unless it deletes and the approval leaves those out; with no standing approval, a change asks.
+  const unusedAsk = unusedTools > 0 && !vendorApproval?.includesDestructive;
+  if (vendorApproval && (passes.length > 0 || unusedTools > 0)) {
     // The standing approval covers the rest, so the exceptions are named and the rest summed up.
     if (asksFirst.length > 0) {
       exceptions.push(`${named(asksFirst, "asks", "ask")} first`);
     }
+    if (unusedAsk) exceptions.push("ready-made tools that delete ask first");
+    if (exceptions.length === 0) return "every tool runs without asking";
     return [...exceptions, "the rest run without asking"].join(", ");
+  }
+  if (passes.length > 0 && exceptions.length === 0 && asksFirst.length === 0 && !unusedAsk) {
+    return "every tool runs without asking";
   }
   const free = passes.length > 0 ? `reads and ${listTools(passes)}` : "reads";
   const clauses = [`${free} run without asking`, ...exceptions];
-  if (asksFirst.length > 0) {
+  if (asksFirst.length > 0 || unusedAsk) {
     clauses.push(passes.length > 0 ? "other changes ask first" : "changes ask first");
   }
   return clauses.join(", ");
@@ -146,11 +163,16 @@ export function agentIntegrationRows(input: {
   agentName: string;
   connections: readonly Connection[];
   scope: ScopeState;
-  /** The toolbox and the agent's answers, or null until all three are read. */
+  /**
+   * The toolbox, the agent's answers and the integrations read's tool counts, or null until all
+   * four are read. A vendor the integrations read has no row of (every connection revoked) counts
+   * its toolbox tools.
+   */
   access: {
     tools: readonly Tool[];
     approvals: readonly ApprovalAnswer[];
     vendorApprovals: readonly VendorAnswer[];
+    toolCounts: readonly ToolCounts[];
   } | null;
 }): AgentIntegrationRow[] {
   const byVendor = new Map<string, AgentIntegrationConnection[]>();
@@ -171,20 +193,27 @@ export function agentIntegrationRows(input: {
     );
     const reached = connections.filter((entry) => entry.on);
     const vendorApproval = access?.vendorApprovals.find((row) => row.vendor === vendor) ?? null;
+    const offered =
+      access?.toolCounts.find((row) => row.vendor === vendor)?.toolCount ?? tools.length;
     const [oldest] = connections;
     rows.push({
       vendor,
       displayName: oldest?.connection.displayName ?? vendor,
       connections,
-      toolCount: access ? tools.length : null,
+      toolCount: access ? offered : null,
       needsReconnect: connections.some((entry) => entry.status !== "connected"),
       line: integrationAccessLine({
         agentName: input.agentName,
         on: reached.length > 0,
         blocked: reached.length > 0 && reached.every((entry) => entry.status !== "connected"),
         access: access && {
-          toolCount: tools.length,
-          clause: integrationAccessClause(tools, access.approvals, vendorApproval),
+          toolCount: offered,
+          clause: integrationAccessClause(
+            tools,
+            access.approvals,
+            vendorApproval,
+            Math.max(0, offered - tools.length),
+          ),
         },
       }),
     });

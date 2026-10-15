@@ -1,25 +1,21 @@
 import { useQueries, useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import type * as React from "react";
-import { useState } from "react";
 
-import { InfoIcon, KeyboardArrowDownIcon, KeyboardArrowUpIcon } from "@/components/icons";
+import { InfoIcon } from "@/components/icons";
 import { RetryNotice } from "@/components/retry-notice";
 import { StatusChip } from "@/components/status-chip";
-import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { DataTable, DataTableRow } from "@/components/ui/data-table";
 import { Skeleton } from "@/components/ui/skeleton";
 import { TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { toolTitle } from "@/lib/agent-access";
 import { connectionAccessQuery, toolsQuery } from "@/lib/connection-queries";
-import { count } from "@/lib/format";
 import type { PageConnection } from "@/lib/integration-page";
 import { type IntegrationToolRow, integrationToolsQuery } from "@/lib/integration-queries";
 import {
   agentsWithAccess,
   openToolAsksByTool,
-  splitIntegrationTools,
   type ToolApprovalSummary,
   toolApprovalSummary,
   toolStatusLine,
@@ -77,9 +73,11 @@ const REVOKED_APPROVAL: ToolApprovalSummary = {
 };
 
 /**
- * The integration page's Tools tab (GRA-317; Figma 2044:7001): every tool of the vendor from the
- * integration's tools read (GRA-293), the person's first and the stock tools not yet copied in
- * behind "Show N more tools". A tool with no current version is never listed; the read leaves it
+ * The integration page's Tools tab (GRA-317; Figma 2044:7001): every tool the integration offers,
+ * from the integration's tools read (GRA-293), in one list in the read's order: the most recently
+ * run first, then the person's tools never run, then the ready-made ones not yet used, each by name,
+ * so the tools in use lead (GRA-345). A ready-made tool not yet used says so on its status line,
+ * the tab's one in-use marker. A tool with no current version is never listed; the read leaves it
  * out (GRA-77).
  *
  * The Approval column is a read-only summary across the agents that can use the integration (ADR
@@ -99,7 +97,6 @@ export function ToolsTab({
   integrationName: string;
   connections: PageConnection[];
 }) {
-  const [showStock, setShowStock] = useState(false);
   const { data, isPending, isError, error, isFetching, refetch } = useQuery(
     integrationToolsQuery(vendor),
   );
@@ -119,8 +116,7 @@ export function ToolsTab({
     }),
   });
 
-  const { toolbox, stock } = splitIntegrationTools(data?.tools ?? []);
-  const shown = showStock ? [...toolbox, ...stock] : toolbox;
+  const tools = data?.tools ?? [];
   const openAsks = openToolAsksByTool(pendingData?.pendingActions ?? []);
   const approvalOf = (tool: IntegrationToolRow): ApprovalCell => {
     if (live.length === 0) return { kind: "summary", value: REVOKED_APPROVAL };
@@ -154,49 +150,26 @@ export function ToolsTab({
                   retrying={isFetching}
                 />
               </StateNote>
-            ) : toolbox.length === 0 && stock.length === 0 ? (
+            ) : tools.length === 0 ? (
               <StateNote>
                 No {integrationName} tools yet. An agent builds one when it needs it.
               </StateNote>
             ) : (
-              <>
-                {toolbox.length === 0 && !showStock ? (
-                  <StateNote>
-                    Your agents have not built a {integrationName} tool yet. Ready-made ones are
-                    below.
-                  </StateNote>
-                ) : null}
-                {shown.map((tool) => (
-                  <ToolRow
-                    key={tool.tool}
-                    tool={tool}
-                    vendor={vendor}
-                    status={toolStatusLine(tool, {
-                      openAsks,
-                      toolbox: toolboxData?.tools ?? [],
-                    })}
-                    approval={approvalOf(tool)}
-                  />
-                ))}
-              </>
+              tools.map((tool) => (
+                <ToolRow
+                  key={tool.tool}
+                  tool={tool}
+                  vendor={vendor}
+                  status={toolStatusLine(tool, {
+                    openAsks,
+                    toolbox: toolboxData?.tools ?? [],
+                  })}
+                  approval={approvalOf(tool)}
+                />
+              ))
             )}
           </TableBody>
         </DataTable>
-        {/* Below the table rather than a row of it: a full-span row on every render would add a
-            column below `md`, where the Approval column steps out. */}
-        {stock.length > 0 && !isError ? (
-          <div className="border-border border-t px-2 py-1.5">
-            <Button
-              variant="ghost"
-              size="sm"
-              aria-expanded={showStock}
-              onClick={() => setShowStock((open) => !open)}
-            >
-              {showStock ? "Show fewer tools" : `Show ${count(stock.length, "more tool")}`}
-              {showStock ? <KeyboardArrowUpIcon /> : <KeyboardArrowDownIcon />}
-            </Button>
-          </div>
-        ) : null}
       </Card>
       <p className="flex gap-2 text-muted-foreground text-xs">
         <InfoIcon className="mt-px size-3.5 shrink-0" />

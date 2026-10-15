@@ -139,7 +139,12 @@ function IntegrationRow({ row }: { row: Integration }) {
           "text-sm",
         )}
       >
-        {tools.text}
+        <div className="flex flex-col gap-0.5">
+          <span>{tools.text}</span>
+          {tools.inUse ? (
+            <span className="text-muted-foreground text-xs">{tools.inUse}</span>
+          ) : null}
+        </div>
       </TableCell>
       <TableCell className="hidden truncate text-muted-foreground md:table-cell">
         {row.lastUsedAt ? <Time iso={row.lastUsedAt} /> : "Never"}

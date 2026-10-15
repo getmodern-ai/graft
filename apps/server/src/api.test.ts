@@ -391,7 +391,7 @@ function integrationDeps(): IntegrationDeps {
         connectionId: "conn_2",
       },
     ]),
-    countLiveToolsByVendor: vi.fn(async () => [{ vendor: "demo", count: 2 }]),
+    countToolsByVendor: vi.fn(async () => [{ vendor: "demo", inUse: 2, offered: 5 }]),
     lastUsedAtByVendor: vi.fn(async () => [
       { vendor: null, toolName: "execute__conn_1", lastUsedAt: NOW },
     ]),
@@ -1561,6 +1561,7 @@ describe("integrations (GRA-291)", () => {
         connections: { id: string; state: string }[];
         agents: { id: string }[];
         toolCount: number;
+        inUseToolCount: number;
         lastUsedAt: string | null;
         needsAttention: { reason: string; connectionId: string } | null;
       }[];
@@ -1569,7 +1570,9 @@ describe("integrations (GRA-291)", () => {
     const [demo] = body.integrations;
     expect(demo?.connections).toHaveLength(2);
     expect(demo?.agents.map((agent) => agent.id)).toEqual(["agent_1"]);
-    expect(demo?.toolCount).toBe(2);
+    // Two of the person's and three stock tools they hold none of (GRA-345).
+    expect(demo?.toolCount).toBe(5);
+    expect(demo?.inUseToolCount).toBe(2);
     expect(demo?.lastUsedAt).toBe(NOW.toISOString());
     // The fixture row has no credential entered, so the row needs the person.
     expect(demo?.needsAttention).toEqual({ reason: "awaiting_credential", connectionId: "conn_1" });
@@ -1577,7 +1580,7 @@ describe("integrations (GRA-291)", () => {
     for (const read of [
       deps.integration.listConnections,
       deps.integration.listActiveAgentReach,
-      deps.integration.countLiveToolsByVendor,
+      deps.integration.countToolsByVendor,
       deps.integration.lastUsedAtByVendor,
     ]) {
       expect(read).toHaveBeenCalledTimes(1);

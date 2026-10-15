@@ -5,7 +5,6 @@ import type { IntegrationToolRow } from "./integration-queries";
 import {
   agentsWithAccess,
   openToolAsksByTool,
-  splitIntegrationTools,
   type ToolAccessAgent,
   toolApprovalSummary,
   toolStatusLine,
@@ -79,14 +78,6 @@ function toolAsk(toolId: string, createdAt: string, overrides: Partial<PendingAc
   } as unknown as PendingAction;
 }
 
-describe("splitIntegrationTools", () => {
-  it("puts the person's tools first and keeps stock behind Show more", () => {
-    const stock = tool({ source: "stock", toolId: null, name: "list-labels" });
-    const own = tool();
-    expect(splitIntegrationTools([stock, own])).toEqual({ toolbox: [own], stock: [stock] });
-  });
-});
-
 describe("openToolAsksByTool", () => {
   it("keeps the newest open tool ask per tool and drops answered, expired and other kinds", () => {
     const asks = openToolAsksByTool(
@@ -134,9 +125,11 @@ describe("toolStatusLine", () => {
   });
 
   it("says where a tool that never ran came from", () => {
-    expect(toolStatusLine(tool({ source: "stock", toolId: null }), context).text).toBe(
-      "Ready-made",
-    );
+    // A ready-made tool not yet copied in is the one line that says it is not in use (GRA-345).
+    expect(toolStatusLine(tool({ source: "stock", toolId: null }), context)).toEqual({
+      kind: "unused",
+      text: "Ready-made, not used yet",
+    });
     const versions = [
       {
         id: "v1",

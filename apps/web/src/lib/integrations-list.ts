@@ -194,14 +194,39 @@ export function integrationSubline(row: Integration): string {
 }
 
 /**
- * The Tools cell: the count, or, when no connection of the row is connected, that its tools can't
- * run until the person reconnects (GRA-282: never "paused").
+ * "3 in use": how many of an integration's tools are in the person's toolbox (GRA-345), or null
+ * when none is, so a line about an integration nobody has used yet stays as short as it was.
  */
-export function toolsCell(row: Integration): { text: string; blocked: boolean } {
+export function inUsePhrase(row: Pick<Integration, "inUseToolCount">): string | null {
+  return row.inUseToolCount > 0 ? `${row.inUseToolCount} in use` : null;
+}
+
+/**
+ * "12 tools · 3 in use", "12 tools", "No tools yet": every tool the integration offers, ready-made
+ * ones not yet used included (GRA-345), then how many are in use. `separator` is the caller's.
+ */
+export function toolsPhrase(
+  row: Pick<Integration, "toolCount" | "inUseToolCount">,
+  separator = " · ",
+): string {
+  if (row.toolCount === 0) return "No tools yet";
+  return [count(row.toolCount, "tool"), inUsePhrase(row)].filter(Boolean).join(separator);
+}
+
+/**
+ * The Tools cell: every tool the integration offers and, under it, how many are in use; or, when
+ * no connection of the row is connected, that its tools can't run until the person reconnects
+ * (GRA-282: never "paused").
+ */
+export function toolsCell(row: Integration): {
+  text: string;
+  inUse: string | null;
+  blocked: boolean;
+} {
   if (row.toolCount > 0 && isIntegrationUnusable(row)) {
-    return { text: `${row.toolCount} can't run until you reconnect`, blocked: true };
+    return { text: `${row.toolCount} can't run until you reconnect`, inUse: null, blocked: true };
   }
-  return { text: String(row.toolCount), blocked: false };
+  return { text: String(row.toolCount), inUse: inUsePhrase(row), blocked: false };
 }
 
 /** The Used by cell's words: the one agent's name, or how many. */

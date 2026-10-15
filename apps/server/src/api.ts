@@ -336,7 +336,7 @@ export type ApiDeps = {
   /** The person's own model key (GRA-31, ADR 0014) — the vault's encrypt half rides inside. */
   modelKey: ModelKeyDeps;
   /**
-   * The integrations list's four reads (GRA-291). Optional, and the real reads under
+   * The integrations list's four reads (GRA-291, GRA-345). Optional, and the real reads under
    * `connection.providers` when absent; a suite that reaches `/integrations` passes fakes.
    */
   integration?: IntegrationDeps;
@@ -2270,9 +2270,10 @@ export function createApi(options: ApiOptions): Hono {
 
   /**
    * The integrations list (GRA-291): one row per vendor the person holds a live connection of, with
-   * its connections and their states, the active agents whose scope reaches any of them, the live
-   * tool count, the last call and the worst connection's reason for needing the person
-   * (`@graft/core`'s `IntegrationOutput`). Four statements whatever the person holds.
+   * its connections and their states, the active agents whose scope reaches any of them, how many
+   * tools it offers and how many of those are in use (GRA-345), the last call and the worst
+   * connection's reason for needing the person (`@graft/core`'s `IntegrationOutput`). Four
+   * statements whatever the person holds.
    */
   api.get("/integrations", async (c) => {
     const principal = await principalOf(c.req.raw.headers);

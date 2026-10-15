@@ -1,6 +1,6 @@
 import { listActiveAgentReach } from "@graft/db/repo/agent";
 import { listConnections } from "@graft/db/repo/connection";
-import { countLiveToolsByVendor } from "@graft/db/repo/tool";
+import { countToolsByVendor } from "@graft/db/repo/tool";
 import { lastUsedAtByVendor } from "@graft/db/repo/usage";
 
 import { DEFAULT_PROVIDERS, type ProviderDescription } from "../connection/provider";
@@ -12,7 +12,7 @@ import { DEFAULT_PROVIDERS, type ProviderDescription } from "../connection/provi
 export type IntegrationDeps = {
   listConnections: typeof listConnections;
   listActiveAgentReach: typeof listActiveAgentReach;
-  countLiveToolsByVendor: typeof countLiveToolsByVendor;
+  countToolsByVendor: typeof countToolsByVendor;
   lastUsedAtByVendor: typeof lastUsedAtByVendor;
   /** The deployment's providers (`ConnectionDeps.providers`): a row of one it no longer enables is not usable. */
   providers: readonly ProviderDescription[];
@@ -24,7 +24,7 @@ export function createIntegrationDeps(
   return {
     listConnections,
     listActiveAgentReach,
-    countLiveToolsByVendor,
+    countToolsByVendor,
     lastUsedAtByVendor,
     providers,
   };
