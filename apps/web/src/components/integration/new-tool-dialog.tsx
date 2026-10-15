@@ -13,6 +13,7 @@ import { CodeBlock } from "@/components/code-block";
 import {
   CheckCircleIcon,
   ErrorIcon,
+  InfoIcon,
   ScheduleIcon,
   StarsIcon,
   WarningIcon,
@@ -54,7 +55,8 @@ import {
   startNewTool,
 } from "@/lib/integration-queries";
 import {
-  defaultNewToolAgentId,
+  buildingAgentId,
+  buildingAgentLine,
   isNewToolJobWorking,
   newToolAgentChoices,
   newToolAttemptsLine,
@@ -67,6 +69,8 @@ import {
   newToolReadyLine,
   newToolStep,
   runningNewToolJob,
+  tryInAgents,
+  tryInHint,
 } from "@/lib/new-tool";
 import { jobPollInterval, MODEL_KEY_SETTINGS_PATH, progressCard } from "@/lib/setup-progress";
 import { acquireJobQuery } from "@/lib/setup-queries";
@@ -77,11 +81,13 @@ type Page = Extract<IntegrationPage, { kind: "integration" }>;
 
 /**
  * Get a new tool on an integration's page (GRA-320, Flow D; Figma 2110:14487, 2124:16104–19043;
- * ADR 0024 as amended 2026-10-14). The header's button and the dialog behind it, with four views:
- * describe it (the goal, the Try chips, the agent picked before Create), building (Setup's
- * progress card, `progressCard`), ready (the tool and a first request to copy) and failed
- * (`shortFailure`'s sentence, *Change description* and *Try again*). Create is the picked agent's
- * build approval for the connection and starts its job (`POST /connections/:id/acquire`, GRA-303).
+ * ADR 0024 as amended 2026-10-14 and 2026-10-15). The header's button and the dialog behind it,
+ * with four views: describe it (the goal and the Try chips, no agent picker), building (Setup's
+ * progress card, `progressCard`), ready (the tool, *Try it in* an agent chosen now, and that
+ * agent's prompt to copy) and failed (`shortFailure`'s sentence, *Change description* and *Try
+ * again*). The build runs as the agent the rule picks (GRA-346, `buildingAgentId`: the agent that
+ * last used the integration, else the first that can reach it); Create is that agent's build
+ * approval for the connection and starts its job (`POST /connections/:id/acquire`, GRA-303).
  *
  * **The job outlives the dialog.** This component, not the dialog, holds the job it follows and
  * polls it, so closing mid-build keeps it; a toast says how it ended when the dialog is closed
@@ -104,6 +110,7 @@ export function GetNewTool({ page }: { page: Page }) {
   const openRef = useRef(open);
   openRef.current = open;
 
+  const reach = useReach(page, open);
   const live = page.connections.filter((connection) => connection.state !== "revoked");
   const jobReads = useQueries({
     queries: live.map((connection) => newToolJobsQuery(connection.id)),
@@ -197,6 +204,7 @@ export function GetNewTool({ page }: { page: Page }) {
               open={open}
               goal={goal}
               onGoalChange={setGoal}
+              reach={reach}
               start={start}
               checkingJobs={checkingJobs}
               onCancel={close}
@@ -204,7 +212,7 @@ export function GetNewTool({ page }: { page: Page }) {
           ) : step === "building" ? (
             <BuildingView page={page} job={current} pollFailed={poll} onClose={close} />
           ) : step === "ready" ? (
-            <ReadyView page={page} job={current} onClose={close} />
+            <ReadyView page={page} job={current} reach={reach} onClose={close} />
           ) : (
             <FailedView
               page={page}
@@ -234,6 +242,32 @@ type StartArgs = {
 };
 type Start = UseMutationResult<NewToolJob, Error, StartArgs>;
 
+/**
+ * Which agents can reach the integration, from one access read per connected connection
+ * (GRA-296), read while the dialog is open: the describe view picks the building agent from it and
+ * the ready view offers it under *Try it in*.
+ */
+function useReach(page: Page, open: boolean) {
+  const connected = page.connections.filter((connection) => connection.state === "connected");
+  const reads = useQueries({
+    queries: connected.map((connection) => ({
+      ...connectionAccessQuery(connection.id),
+      enabled: open,
+    })),
+  });
+  return {
+    connected,
+    reads,
+    choices: newToolAgentChoices(
+      connected.map((connection) => connection.id),
+      reads.map((read) => read.data?.access),
+    ),
+    pending: reads.some((read) => read.isPending),
+    failed: reads.find((read) => read.isError),
+  };
+}
+type Reach = ReturnType<typeof useReach>;
+
 /** "Gmail, connected 3 days ago": a connection told apart from the vendor's others. */
 function connectionLabel(connection: PageConnection): string {
   return `${connection.displayName}, connected ${formatRelative(connection.createdAt)}`;
@@ -244,6 +278,7 @@ function DescribeView({
   open,
   goal,
   onGoalChange,
+  reach,
   start,
   checkingJobs,
   onCancel,
@@ -252,30 +287,18 @@ function DescribeView({
   open: boolean;
   goal: string;
   onGoalChange: (goal: string) => void;
+  reach: Reach;
   start: Start;
   /** Set while the jobs are read again on open: Create waits, so a running job is followed. */
   checkingJobs: boolean;
   onCancel: () => void;
 }) {
-  const connected = page.connections.filter((connection) => connection.state === "connected");
-  const accessReads = useQueries({
-    queries: connected.map((connection) => ({
-      ...connectionAccessQuery(connection.id),
-      enabled: open,
-    })),
-  });
-  const choices = newToolAgentChoices(
-    connected.map((connection) => connection.id),
-    accessReads.map((read) => read.data?.access),
-  );
-  const [pickedAgent, setPickedAgent] = useState<string | null>(null);
+  const { connected, reads: accessReads, choices } = reach;
   const [pickedConnection, setPickedConnection] = useState<string | null>(null);
-  const agentId = choices.some((choice) => choice.agent.id === pickedAgent)
-    ? pickedAgent
-    : defaultNewToolAgentId(choices);
+  // No picker (GRA-346): the build runs as the agent the rule names, and the line says which.
+  const agentId = buildingAgentId(choices);
   const choice = choices.find((entry) => entry.agent.id === agentId);
   const connectionId = newToolConnectionId(choice, pickedConnection);
-  const agentItems = choices.map((entry) => ({ value: entry.agent.id, label: entry.agent.name }));
   const connectionItems = (choice?.connectionIds ?? []).flatMap((id) => {
     const connection = connected.find((entry) => entry.id === id);
     return connection ? [{ value: id, label: connectionLabel(connection) }] : [];
@@ -290,11 +313,11 @@ function DescribeView({
   const unavailable =
     suggestions.data && !suggestions.data.build.available ? suggestions.data.build : null;
 
-  const accessPending = accessReads.some((read) => read.isPending);
-  const accessFailed = accessReads.find((read) => read.isError);
+  const accessPending = reach.pending;
+  const accessFailed = reach.failed;
   const nobody = !accessPending && !accessFailed && choices.length === 0;
-  // Every access read answered: the picker shows the agent Create approves, never a default
-  // drawn from part of them behind a skeleton or a retry.
+  // Every access read answered: the agent Create approves is the rule's over all of them, never
+  // one drawn from part of them behind a skeleton or a retry.
   const canCreate =
     !start.isPending &&
     !checkingJobs &&
@@ -350,50 +373,6 @@ function DescribeView({
             </div>
           ) : null}
         </Field>
-        <Field>
-          <FieldLabel htmlFor="new-tool-agent">For agent</FieldLabel>
-          {accessPending && open ? (
-            <Skeleton className="h-8 w-full" />
-          ) : accessFailed ? (
-            <p className="text-muted-foreground text-sm">
-              <RetryNotice
-                error={accessFailed.error}
-                message="Could not read your agents."
-                onRetry={() => {
-                  for (const read of accessReads) if (read.isError) void read.refetch();
-                }}
-                retrying={accessReads.some((read) => read.isFetching)}
-              />
-            </p>
-          ) : nobody ? (
-            <p className="text-muted-foreground text-sm">
-              No agent can use {page.displayName} yet. Add it to an agent's connections first.
-            </p>
-          ) : (
-            <Select
-              value={agentId}
-              items={agentItems}
-              onValueChange={(next) => setPickedAgent(typeof next === "string" ? next : null)}
-            >
-              <SelectTrigger id="new-tool-agent" className="w-full">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {agentItems.map((item) => (
-                  <SelectItem key={item.value} value={item.value}>
-                    {item.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          )}
-          {!nobody && !accessFailed ? (
-            <FieldDescription>
-              Creating the tool lets this agent build {page.displayName} tools, and the tool joins
-              its working set.
-            </FieldDescription>
-          ) : null}
-        </Field>
         {connectionItems.length > 1 ? (
           <Field>
             <FieldLabel htmlFor="new-tool-connection">Connection</FieldLabel>
@@ -414,10 +393,39 @@ function DescribeView({
               </SelectContent>
             </Select>
             <FieldDescription>
-              The account Graft tries the tool against while it builds. This agent reaches more than
-              one.
+              The account Graft tries the tool against while it builds. {choice?.agent.name} reaches
+              more than one.
             </FieldDescription>
           </Field>
+        ) : null}
+        {accessPending && open ? (
+          <Skeleton className="h-4 w-3/4" />
+        ) : accessFailed ? (
+          <p className="text-muted-foreground text-sm">
+            <RetryNotice
+              error={accessFailed.error}
+              message="Could not read your agents."
+              onRetry={() => {
+                for (const read of accessReads) if (read.isError) void read.refetch();
+              }}
+              retrying={accessReads.some((read) => read.isFetching)}
+            />
+          </p>
+        ) : nobody ? (
+          <Alert>
+            <InfoIcon />
+            <AlertDescription>
+              No agent can use {page.displayName} yet.{" "}
+              <Link to="/agents" onClick={onCancel} className="underline">
+                Connect an agent
+              </Link>{" "}
+              with {page.displayName} in its connections, then come back.
+            </AlertDescription>
+          </Alert>
+        ) : choice ? (
+          <p className="text-muted-foreground text-xs">
+            {buildingAgentLine(choice, page.displayName)}
+          </p>
         ) : null}
         {unavailable ? (
           <Alert variant="destructive">
@@ -538,9 +546,24 @@ function BuildingView({
   );
 }
 
-function ReadyView({ page, job, onClose }: { page: Page; job: NewToolJob; onClose: () => void }) {
+function ReadyView({
+  page,
+  job,
+  reach,
+  onClose,
+}: {
+  page: Page;
+  job: NewToolJob;
+  reach: Reach;
+  onClose: () => void;
+}) {
+  // Chosen after the build (GRA-346): any agent that can reach the integration finds the tool.
+  const agents = tryInAgents(reach.choices, job.agent);
+  const [tryInId, setTryInId] = useState(job.agent.id);
+  const tryIn = agents.find((agent) => agent.id === tryInId) ?? job.agent;
   const tool = newToolOf(job);
   if (!tool) return null;
+  const items = agents.map((agent) => ({ value: agent.id, label: agent.name }));
   return (
     <>
       <DialogHeader>
@@ -557,12 +580,33 @@ function ReadyView({ page, job, onClose }: { page: Page; job: NewToolJob; onClos
         </div>
         <p className="font-mono text-muted-foreground text-xs">{tool.tool}</p>
       </div>
+      <Field>
+        <FieldLabel htmlFor="new-tool-try-in">Try it in</FieldLabel>
+        <Select
+          value={tryIn.id}
+          items={items}
+          onValueChange={(next) => {
+            if (typeof next === "string") setTryInId(next);
+          }}
+        >
+          <SelectTrigger id="new-tool-try-in" className="w-full">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {items.map((item) => (
+              <SelectItem key={item.value} value={item.value}>
+                {item.label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </Field>
       <CodeBlock
-        label={`Try it in ${job.agent.name}`}
+        label={`Prompt for ${tryIn.name}`}
         code={newToolPrompt(job.goal, tool.tool)}
         copyLabel="Copy prompt"
         wrap
-        hint="Paste it into your agent's chat."
+        hint={tryInHint(tryIn, job.agent, page.displayName)}
       />
       <DialogFooter>
         <Button

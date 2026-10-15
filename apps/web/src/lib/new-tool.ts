@@ -11,13 +11,15 @@ import {
 } from "./setup-progress";
 
 /**
- * Get a new tool on an integration's page (GRA-320, Flow D; ADR 0024 as amended 2026-10-14): the
- * agent is picked before Create, and Create is that agent's build approval for the connection the
- * job builds against. These are the dialog's decisions as pure functions over the access reads
- * (GRA-296) and the jobs read (GRA-303); `components/integration/new-tool-dialog.tsx` draws them.
+ * Get a new tool on an integration's page (GRA-320, Flow D; GRA-346; ADR 0024 as amended
+ * 2026-10-14 and 2026-10-15): the building agent is chosen by rule (`buildingAgentId`), Create is
+ * that agent's build approval for the connection the job builds against, and the agent the person
+ * tries the tool in is chosen after the build (`tryInAgents`). These are the dialog's decisions as
+ * pure functions over the access reads (GRA-296) and the jobs read (GRA-303);
+ * `components/integration/new-tool-dialog.tsx` draws them.
  */
 
-/** An agent the dialog may build for, and the live connections of the integration it reaches. */
+/** An agent that can reach the integration, and the live connections of it that it reaches. */
 export type NewToolAgentChoice = {
   agent: { id: string; name: string };
   /** The connected connections in the agent's scope, in the page's order (oldest first). */
@@ -77,10 +79,11 @@ function newest(a: string | null, b: string | null): string | null {
 }
 
 /**
- * The picker's default: the agent that last used the integration, else the first offered (the
- * oldest active agent with the connection in scope). Null when nobody can build.
+ * The agent the build runs as (GRA-346): the agent that last used the integration, else the first
+ * that can reach it (the oldest active agent with a connected connection in scope). Null when
+ * nobody can, and Create is disabled.
  */
-export function defaultNewToolAgentId(choices: readonly NewToolAgentChoice[]): string | null {
+export function buildingAgentId(choices: readonly NewToolAgentChoice[]): string | null {
   let pick: NewToolAgentChoice | null = null;
   for (const choice of choices) {
     if (choice.lastUsedAt === null) continue;
@@ -90,7 +93,52 @@ export function defaultNewToolAgentId(choices: readonly NewToolAgentChoice[]): s
 }
 
 /**
- * The connection the job builds against, for the picked agent: the one the person chose when it
+ * The sentence that names who the build runs as, since Create records that agent's build
+ * approval: by last use when it has one, else as the first that can use the integration.
+ */
+export function buildingAgentLine(
+  choice: Pick<NewToolAgentChoice, "agent" | "lastUsedAt">,
+  integrationName: string,
+): string {
+  const why =
+    choice.lastUsedAt !== null
+      ? `the agent that last used ${integrationName}`
+      : `the first agent that can use ${integrationName}`;
+  return `Graft builds it as ${choice.agent.name}, ${why}. Creating it lets ${choice.agent.name} build ${integrationName} tools.`;
+}
+
+/**
+ * The *Try it in* select once the tool is ready: every agent that can reach the integration (any
+ * of them finds the tool through Graft, within its scope), with the build's agent first and always
+ * present, even when its read has not answered or it no longer reaches a connection.
+ */
+export function tryInAgents(
+  choices: readonly Pick<NewToolAgentChoice, "agent">[],
+  built: { id: string; name: string },
+): { id: string; name: string }[] {
+  return [
+    { id: built.id, name: built.name },
+    ...choices.filter((choice) => choice.agent.id !== built.id).map((choice) => choice.agent),
+  ];
+}
+
+/**
+ * The line under the *Try it in* prompt: the build's agent has the tool in its working set; any
+ * other finds it by searching Graft's tools, since the integration is in its scope.
+ */
+export function tryInHint(
+  agent: { id: string; name: string },
+  builtFor: { id: string },
+  integrationName: string,
+): string {
+  if (agent.id === builtFor.id) {
+    return `The tool is in ${agent.name}'s working set. Paste this into its chat.`;
+  }
+  return `${agent.name} finds the tool through Graft, since ${integrationName} is in its connections. Paste this into its chat.`;
+}
+
+/**
+ * The connection the job builds against, for the building agent: the one the person chose when it
  * is in the agent's scope, else the agent's oldest connected one. The tool is bound to the
  * vendor and follows a reconnection (ADR 0007), so with several the choice decides only which
  * account the proof reads and the dry run reach.
