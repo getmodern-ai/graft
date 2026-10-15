@@ -239,4 +239,28 @@ describe("homeActivityCopy", () => {
     ).toBe("You connected Apollo for Codex");
     expect(homeActivityCopy(answer({}), names).detail).toBe("Your answer");
   });
+
+  // GRA-341: a withdraw and a revoke are the person's acts, kept beside the answer they changed.
+  it("says a withdraw and a revoke as the person's change, a revoke naming no agent", () => {
+    const withdrew = homeActivityCopy(
+      answer({ source: "event", event: { kind: "tool", action: "withdrew", via: "console" } }),
+      names,
+    );
+    expect(withdrew).toEqual({
+      title: "You withdrew your answer on whether Codex can find leads in Apollo",
+      detail: "Your change",
+      tone: "muted",
+    });
+    expect(
+      homeActivityCopy(
+        answer({
+          source: "event",
+          agent: null,
+          tool: null,
+          event: { kind: "connection", action: "revoked", via: "console" },
+        }),
+        names,
+      ).title,
+    ).toBe("You revoked Apollo");
+  });
 });

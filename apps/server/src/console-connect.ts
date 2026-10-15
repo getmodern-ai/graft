@@ -449,8 +449,10 @@ export async function recordFullAccess(
   for (const agent of agents) {
     const scope = { personId: principal.personId, agentId: agent.id };
     if (!(await getAgentScope(ctx, scope, deps.agent)).includes(connection.id)) continue;
-    await grantBuildApproval(ctx, scope, connection.id, deps.approval);
-    await allowVendorWhenConnecting(ctx, scope, connection.vendor, deps.approval);
+    await grantBuildApproval(ctx, scope, connection.id, deps.approval, { via: "console" });
+    await allowVendorWhenConnecting(ctx, scope, connection.vendor, deps.approval, {
+      via: "console",
+    });
     approved.push(agent.id);
   }
   return approved;

@@ -1,6 +1,7 @@
 import { queryOptions } from "@tanstack/react-query";
 
 import {
+  type ActivityAnswerOutcome,
   type ActivityRow,
   activityAnswerCopy,
   activityIntegrationName,
@@ -152,6 +153,9 @@ export function failureSentence(reason: string | null): string {
   return (reason ? FAILURE_SENTENCES[reason] : undefined) ?? "It could not finish";
 }
 
+/** The outcomes that are an answer the person gave, which Home's sub-line calls one. */
+const ANSWERS = new Set<ActivityAnswerOutcome>(["allowed", "connected", "denied", "declined"]);
+
 /**
  * A row as one sentence and a sub-line: "Codex ran Find invoices in Gmail", "Ran without asking".
  * A run is said here from the Activity table's own pieces (`activityToolLabel`,
@@ -160,9 +164,11 @@ export function failureSentence(reason: string | null): string {
 export function homeActivityCopy(row: ActivityRow, names: IntegrationNames): HomeActivityCopy {
   const integration = activityIntegrationName(row, names);
   if (row.kind === "approval") {
+    const copy = activityAnswerCopy(row, integration);
     return {
-      title: activityAnswerCopy(row, integration).sentence,
-      detail: "Your answer",
+      title: copy.sentence,
+      // A withdraw, a change or a revoke is something the person did, not an answer they gave.
+      detail: ANSWERS.has(copy.outcome) ? "Your answer" : "Your change",
       tone: "muted",
     };
   }

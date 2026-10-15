@@ -113,7 +113,7 @@ describe("activityIntegrationName", () => {
 
 type Answer = Pick<
   ActivityApproval,
-  "source" | "agent" | "tool" | "decision" | "includesDestructive" | "askKind" | "answer"
+  "source" | "agent" | "tool" | "decision" | "includesDestructive" | "askKind" | "answer" | "event"
 >;
 
 const answer = (over: Partial<Answer>): Answer => ({
@@ -124,8 +124,16 @@ const answer = (over: Partial<Answer>): Answer => ({
   includesDestructive: null,
   askKind: null,
   answer: null,
+  event: null,
   ...over,
 });
+
+/** An approval event (GRA-341), as the read answers one. */
+const event = (
+  kind: NonNullable<Answer["event"]>["kind"],
+  action: NonNullable<Answer["event"]>["action"],
+  over: Partial<Answer> = {},
+): Answer => answer({ source: "event", event: { kind, action, via: "console" }, ...over });
 
 const tool = { id: "tool_1", wireName: "gmail__draft_replies", description: null };
 
@@ -208,6 +216,78 @@ describe("activityAnswerCopy", () => {
     expect(activityAnswerCopy(answer({ askKind: "connection", answer: null }), null).sentence).toBe(
       "You declined Codex's request to connect an integration",
     );
+  });
+});
+
+describe("activityAnswerCopy over approval events (GRA-341)", () => {
+  const say = (row: Answer, name: string | null = "Gmail") => activityAnswerCopy(row, name);
+
+  it("words a tool's answer, its withdraw beside it, and the ask-every-call switch without saying always", () => {
+    expect(say(event("tool", "allowed", { tool }))).toEqual({
+      sentence: "You allowed Codex to draft replies in Gmail",
+      outcome: "allowed",
+    });
+    expect(say(event("tool", "denied", { tool })).outcome).toBe("denied");
+    expect(say(event("tool", "withdrew", { tool }))).toEqual({
+      sentence: "You withdrew your answer on whether Codex can draft replies in Gmail",
+      outcome: "withdrawn",
+    });
+    expect(say(event("tool", "ask_every_call_on", { tool }))).toEqual({
+      sentence: "Codex now asks before every call to draft replies in Gmail",
+      outcome: "changed",
+    });
+    expect(say(event("tool", "ask_every_call_off", { tool })).sentence).toBe(
+      "Codex no longer asks before every call to draft replies in Gmail",
+    );
+    for (const action of ["allowed", "denied", "withdrew", "ask_every_call_on"] as const) {
+      expect(say(event("tool", action, { tool })).sentence).not.toMatch(/always/i);
+    }
+  });
+
+  it("words an integration's approval as it was given, widened, narrowed and withdrawn", () => {
+    expect(say(event("vendor", "allowed", { includesDestructive: false }))).toEqual({
+      sentence: "You allowed Codex every Gmail tool that cannot delete",
+      outcome: "allowed",
+    });
+    expect(say(event("vendor", "widened", { includesDestructive: true }))).toEqual({
+      sentence: "You allowed Codex every Gmail tool, including ones that can delete",
+      outcome: "changed",
+    });
+    expect(say(event("vendor", "narrowed", { includesDestructive: false })).sentence).toBe(
+      "You narrowed Codex's Gmail approval to tools that cannot delete",
+    );
+    expect(say(event("vendor", "withdrew"))).toEqual({
+      sentence: "You withdrew Codex's approval for every Gmail tool",
+      outcome: "withdrawn",
+    });
+  });
+
+  it("words a build approval given, declined and withdrawn", () => {
+    expect(say(event("build", "allowed")).sentence).toBe("You let Codex build its own Gmail tools");
+    expect(say(event("build", "denied")).outcome).toBe("declined");
+    expect(say(event("build", "withdrew")).sentence).toBe(
+      "You withdrew Codex's permission to build its own Gmail tools",
+    );
+  });
+
+  it("words a connection's revoke with no agent, and an agent's revoke", () => {
+    expect(say(event("connection", "revoked", { agent: null }), "Notion")).toEqual({
+      sentence: "You revoked Notion",
+      outcome: "revoked",
+    });
+    expect(say(event("agent", "revoked"), null)).toEqual({
+      sentence: "You revoked Codex",
+      outcome: "revoked",
+    });
+  });
+
+  it("words a connection and a scope ask answered", () => {
+    expect(say(event("connection", "allowed")).sentence).toBe("You connected Gmail for Codex");
+    expect(say(event("connection", "denied")).sentence).toBe(
+      "You declined Codex's request to connect Gmail",
+    );
+    expect(say(event("scope", "allowed")).sentence).toBe("You let Codex use Gmail");
+    expect(say(event("scope", "denied")).outcome).toBe("declined");
   });
 });
 

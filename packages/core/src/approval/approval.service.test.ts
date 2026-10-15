@@ -83,6 +83,9 @@ const vendorApproval: VendorApprovalRow = {
 const db = { transaction: async <T>(fn: (tx: unknown) => Promise<T>) => fn(db) };
 const ctx = { db } as unknown as ServiceContext;
 
+/** An answer given on a chat's ask card, for its approval event (GRA-341). */
+const CARD = { via: "card", pendingActionId: "pa_1" } as const;
+
 /** The asked-about version as the ask showed it: `ver_1`, a write. */
 const ASKED_V1 = { versionId: "ver_1", annotations: { readOnly: false, destructive: false } };
 
@@ -127,8 +130,11 @@ function fakeDeps(overrides: Partial<ApprovalDeps> = {}): ApprovalDeps {
     findAgent: vi.fn(async () => agentRow),
     findAuthoredToolById: vi.fn(async () => writeTool),
     findAuthoredToolForUpdate: vi.fn(async () => writeTool),
+    findAuthoredToolForNoKeyUpdate: vi.fn(async () => writeTool),
     listToolVersionOrigins: vi.fn(async () => []),
-    findConnection: vi.fn(async () => ({ id: "conn_1" }) as never),
+    findConnection: vi.fn(async () => ({ id: "conn_1", vendor: "hubspot" }) as never),
+    findConnectionForNoKeyUpdate: vi.fn(async () => ({ id: "conn_1", vendor: "hubspot" }) as never),
+    insertApprovalEvent: vi.fn(async (_db, input) => ({ id: "event_1", ...input }) as never),
     now: () => NOW,
     ...overrides,
   };
@@ -137,7 +143,7 @@ function fakeDeps(overrides: Partial<ApprovalDeps> = {}): ApprovalDeps {
 describe("setApproval", () => {
   it("records the person's answer for the agent's tool at the clock's moment, leaving the setting as it stands", async () => {
     const deps = fakeDeps();
-    await setApproval(ctx, SCOPE, "tool_1", "allow", deps, { asked: ASKED_V1 });
+    await setApproval(ctx, SCOPE, "tool_1", "allow", deps, { asked: ASKED_V1, event: CARD });
     expect(deps.upsertApproval).toHaveBeenCalledWith(ctx.db, {
       agentId: "agent_1",
       toolId: "tool_1",
@@ -152,6 +158,7 @@ describe("setApproval", () => {
   it("writes the setting with the answer when the answer carried one", async () => {
     const deps = fakeDeps();
     const row = await setApproval(ctx, SCOPE, "tool_1", "allow", deps, {
+      event: CARD,
       asked: ASKED_V1,
       askEveryCall: true,
     });
@@ -169,14 +176,14 @@ describe("setApproval", () => {
   it("refuses a tool that is not the person's", async () => {
     const deps = fakeDeps({ findAuthoredToolForUpdate: vi.fn(async () => null) });
     await expect(
-      setApproval(ctx, SCOPE, "tool_x", "allow", deps, { asked: ASKED_V1 }),
+      setApproval(ctx, SCOPE, "tool_x", "allow", deps, { asked: ASKED_V1, event: CARD }),
     ).rejects.toMatchObject({ code: "NOT_FOUND" });
     expect(deps.upsertApproval).not.toHaveBeenCalled();
   });
 
   it("reads the tool under its row lock, the one a stock advance takes (Greptile on #190)", async () => {
     const deps = fakeDeps();
-    await setApproval(ctx, SCOPE, "tool_1", "allow", deps, { asked: ASKED_V1 });
+    await setApproval(ctx, SCOPE, "tool_1", "allow", deps, { asked: ASKED_V1, event: CARD });
     expect(deps.findAuthoredToolForUpdate).toHaveBeenCalledWith(ctx.db, "person_1", "tool_1");
     expect(deps.findAuthoredToolById).not.toHaveBeenCalled();
   });
@@ -194,7 +201,7 @@ describe("setApproval for the version asked about", () => {
         origin("ver_1", 1, false),
       ]),
     });
-    await setApproval(ctx, SCOPE, "tool_1", "allow", deps, { asked: ASKED_V1 });
+    await setApproval(ctx, SCOPE, "tool_1", "allow", deps, { asked: ASKED_V1, event: CARD });
     expect(deps.upsertApproval).toHaveBeenCalledWith(
       ctx.db,
       expect.objectContaining({ toolVersionId: "ver_1" }),
@@ -203,7 +210,7 @@ describe("setApproval for the version asked about", () => {
 
   it("records a no for the version asked about", async () => {
     const deps = fakeDeps({ findAuthoredToolForUpdate: vi.fn(async () => movedOn) });
-    await setApproval(ctx, SCOPE, "tool_1", "deny", deps, { asked: ASKED_V1 });
+    await setApproval(ctx, SCOPE, "tool_1", "deny", deps, { asked: ASKED_V1, event: CARD });
     expect(deps.upsertApproval).toHaveBeenCalledWith(
       ctx.db,
       expect.objectContaining({ decision: "deny", toolVersionId: "ver_1" }),
@@ -217,7 +224,7 @@ describe("setApproval for the version asked about", () => {
       findApproval: vi.fn(async () => current),
     });
     await expect(
-      setApproval(ctx, SCOPE, "tool_1", "allow", deps, { asked: ASKED_V1 }),
+      setApproval(ctx, SCOPE, "tool_1", "allow", deps, { asked: ASKED_V1, event: CARD }),
     ).resolves.toEqual(current);
     expect(deps.upsertApproval).not.toHaveBeenCalled();
   });
@@ -229,6 +236,7 @@ describe("setApproval for the version asked about", () => {
       findApproval: vi.fn(async () => current),
     });
     await setApproval(ctx, SCOPE, "tool_1", "allow", deps, {
+      event: CARD,
       asked: ASKED_V1,
       askEveryCall: true,
     });
@@ -246,7 +254,7 @@ describe("setApproval for the version asked about", () => {
         origin("ver_1", 1, true),
       ]),
     });
-    await setApproval(ctx, SCOPE, "tool_1", "allow", deps, { asked: ASKED_V1 });
+    await setApproval(ctx, SCOPE, "tool_1", "allow", deps, { asked: ASKED_V1, event: CARD });
     expect(deps.upsertApproval).toHaveBeenCalledWith(
       ctx.db,
       expect.objectContaining({ toolVersionId: "ver_2" }),
@@ -262,7 +270,7 @@ describe("setApproval for the version asked about", () => {
         origin("ver_1", 1, true),
       ]),
     });
-    await setApproval(ctx, SCOPE, "tool_1", "allow", deps, { asked: ASKED_V1 });
+    await setApproval(ctx, SCOPE, "tool_1", "allow", deps, { asked: ASKED_V1, event: CARD });
     expect(deps.upsertApproval).toHaveBeenCalledWith(
       ctx.db,
       expect.objectContaining({ toolVersionId: "ver_1" }),
@@ -277,7 +285,7 @@ describe("setApproval for the version asked about", () => {
         origin("ver_1", 1, true),
       ]),
     });
-    await setApproval(ctx, SCOPE, "tool_1", "allow", deps, { asked: ASKED_V1 });
+    await setApproval(ctx, SCOPE, "tool_1", "allow", deps, { asked: ASKED_V1, event: CARD });
     expect(deps.upsertApproval).toHaveBeenCalledWith(
       ctx.db,
       expect.objectContaining({ toolVersionId: "ver_1" }),
@@ -287,6 +295,7 @@ describe("setApproval for the version asked about", () => {
   it("records an ask that named no version for none, so the tool asks once more", async () => {
     const deps = fakeDeps();
     await setApproval(ctx, SCOPE, "tool_1", "allow", deps, {
+      event: CARD,
       asked: { ...ASKED_V1, versionId: null },
     });
     expect(deps.upsertApproval).toHaveBeenCalledWith(
@@ -610,7 +619,7 @@ describe("decideToolCall", () => {
 describe("grantBuildApproval", () => {
   it("grants once and answers the standing row on a repeat", async () => {
     const first = fakeDeps();
-    await expect(grantBuildApproval(ctx, SCOPE, "conn_1", first)).resolves.toEqual(build);
+    await expect(grantBuildApproval(ctx, SCOPE, "conn_1", first, CARD)).resolves.toEqual(build);
     expect(first.insertBuildApproval).toHaveBeenCalledWith(ctx.db, {
       agentId: "agent_1",
       connectionId: "conn_1",
@@ -621,12 +630,12 @@ describe("grantBuildApproval", () => {
       insertBuildApproval: vi.fn(async () => null),
       findBuildApproval: vi.fn(async () => build),
     });
-    await expect(grantBuildApproval(ctx, SCOPE, "conn_1", repeat)).resolves.toEqual(build);
+    await expect(grantBuildApproval(ctx, SCOPE, "conn_1", repeat, CARD)).resolves.toEqual(build);
   });
 
   it("refuses a connection that is not the person's", async () => {
     const deps = fakeDeps({ findConnection: vi.fn(async () => null) });
-    await expect(grantBuildApproval(ctx, SCOPE, "conn_x", deps)).rejects.toMatchObject({
+    await expect(grantBuildApproval(ctx, SCOPE, "conn_x", deps, CARD)).rejects.toMatchObject({
       code: "NOT_FOUND",
     });
     expect(deps.insertBuildApproval).not.toHaveBeenCalled();
@@ -702,7 +711,7 @@ describe("allowVendorWhenConnecting", () => {
         .mockResolvedValueOnce(answeredMeanwhile),
       upsertVendorApproval: vi.fn(async () => null),
     });
-    await expect(allowVendorWhenConnecting(ctx, SCOPE, "hubspot", deps)).resolves.toEqual(
+    await expect(allowVendorWhenConnecting(ctx, SCOPE, "hubspot", deps, CARD)).resolves.toEqual(
       answeredMeanwhile,
     );
     expect(deps.upsertVendorApproval).toHaveBeenCalledWith(
@@ -718,7 +727,7 @@ describe("allowVendor", () => {
   it("records the agent's standing approval for the vendor at the clock's moment", async () => {
     const deps = fakeDeps();
     await expect(
-      allowVendor(ctx, SCOPE, "hubspot", { includesDestructive: false }, deps),
+      allowVendor(ctx, SCOPE, "hubspot", { includesDestructive: false, event: CARD }, deps),
     ).resolves.toEqual(vendorApproval);
     expect(deps.upsertVendorApproval).toHaveBeenCalledWith(ctx.db, SCOPE, {
       vendor: "hubspot",
@@ -730,7 +739,7 @@ describe("allowVendor", () => {
   it("refuses an agent that is not the person's, which the write's own predicate found", async () => {
     const deps = fakeDeps({ upsertVendorApproval: vi.fn(async () => null) });
     await expect(
-      allowVendor(ctx, SCOPE, "hubspot", { includesDestructive: true }, deps),
+      allowVendor(ctx, SCOPE, "hubspot", { includesDestructive: true, event: CARD }, deps),
     ).rejects.toMatchObject({ code: "NOT_FOUND" });
   });
 });
@@ -762,8 +771,9 @@ describe("build approvals on the agent's page", () => {
 });
 
 describe("setVendorApprovalDestructive", () => {
-  it("widens or narrows the row that stands, at the clock's moment, and answers null when none does", async () => {
+  it("widens or narrows the row that stands, read under its lock, at the clock's moment, and answers null when none does", async () => {
     const deps = fakeDeps({
+      findVendorApproval: vi.fn(async () => vendorApproval),
       updateVendorApprovalDestructive: vi.fn(async (_db, _scope, _vendor, input) => ({
         ...vendorApproval,
         ...input,
@@ -772,6 +782,9 @@ describe("setVendorApprovalDestructive", () => {
     await expect(
       setVendorApprovalDestructive(ctx, SCOPE, "hubspot", true, deps),
     ).resolves.toMatchObject({ vendor: "hubspot", includesDestructive: true });
+    expect(deps.findVendorApproval).toHaveBeenCalledWith(ctx.db, SCOPE, "hubspot", {
+      forUpdate: true,
+    });
     expect(deps.updateVendorApprovalDestructive).toHaveBeenCalledWith(ctx.db, SCOPE, "hubspot", {
       includesDestructive: true,
       grantedAt: NOW,
@@ -779,5 +792,207 @@ describe("setVendorApprovalDestructive", () => {
     await expect(
       setVendorApprovalDestructive(ctx, SCOPE, "hubspot", false, fakeDeps()),
     ).resolves.toBeNull();
+  });
+
+  /** Greptile on #276: a repeat that moved the moment showed the approval as a second answer. */
+  it("leaves a row already as asked untouched, its moment kept and nothing recorded", async () => {
+    const deps = fakeDeps({ findVendorApproval: vi.fn(async () => vendorApproval) });
+    await expect(setVendorApprovalDestructive(ctx, SCOPE, "hubspot", false, deps)).resolves.toBe(
+      vendorApproval,
+    );
+    expect(deps.updateVendorApprovalDestructive).not.toHaveBeenCalled();
+    expect(deps.insertApprovalEvent).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * GRA-341: every answer, withdraw and change appends an approval event in its own transaction, so
+ * the console's Activity keeps a withdrawn answer and shows the withdraw beside it.
+ */
+describe("approval events", () => {
+  const events = (deps: ApprovalDeps) =>
+    vi.mocked(deps.insertApprovalEvent).mock.calls.map(([, input]) => input);
+
+  it("records an answer with its door and its ask, then a withdraw beside it", async () => {
+    const deps = fakeDeps();
+    await setApproval(ctx, SCOPE, "tool_1", "allow", deps, { asked: ASKED_V1, event: CARD });
+    await revokeApproval(ctx, SCOPE, "tool_1", deps);
+    expect(events(deps)).toEqual([
+      {
+        personId: "person_1",
+        agentId: "agent_1",
+        kind: "tool",
+        action: "allowed",
+        via: "card",
+        toolId: "tool_1",
+        vendor: writeTool.vendor,
+        pendingActionId: "pa_1",
+        at: NOW,
+      },
+      {
+        personId: "person_1",
+        agentId: "agent_1",
+        kind: "tool",
+        action: "withdrew",
+        via: "console",
+        toolId: "tool_1",
+        vendor: writeTool.vendor,
+        at: NOW,
+      },
+    ]);
+  });
+
+  it("records nothing for an answer the agent took off an ask, or a withdraw of nothing", async () => {
+    const deps = fakeDeps({ deleteApproval: vi.fn(async () => null) });
+    await setApproval(ctx, SCOPE, "tool_1", "deny", deps, { asked: ASKED_V1, event: null });
+    await revokeApproval(ctx, SCOPE, "tool_1", deps);
+    expect(deps.insertApprovalEvent).not.toHaveBeenCalled();
+  });
+
+  it("records the ask-every-call switch only when it moves, judged on the row read under its lock", async () => {
+    const deps = fakeDeps({ findApproval: vi.fn(async () => approval) });
+    await setAskEveryCall(ctx, SCOPE, "tool_1", true, deps);
+    await setAskEveryCall(ctx, SCOPE, "tool_1", false, deps);
+    expect(events(deps).map((event) => event.action)).toEqual(["ask_every_call_on"]);
+    expect(deps.findApproval).toHaveBeenCalledWith(ctx.db, SCOPE, "tool_1", { forUpdate: true });
+  });
+
+  /** Greptile on #276: the tool row's lock first, the order an answer takes, so neither deadlocks. */
+  it("takes the tool row's lock before the approval's for the switch and the withdraw", async () => {
+    const order: string[] = [];
+    const deps = fakeDeps({
+      findAuthoredToolForNoKeyUpdate: vi.fn(async () => {
+        order.push("tool");
+        return writeTool;
+      }),
+      findApproval: vi.fn(async () => {
+        order.push("approval");
+        return approval;
+      }),
+      deleteApproval: vi.fn(async () => {
+        order.push("delete");
+        return approval;
+      }),
+    });
+    await setAskEveryCall(ctx, SCOPE, "tool_1", true, deps);
+    await revokeApproval(ctx, SCOPE, "tool_1", deps);
+    expect(order).toEqual(["tool", "approval", "tool", "delete"]);
+  });
+
+  it("locks the connection before a build approval's withdraw, as a revoke does", async () => {
+    const order: string[] = [];
+    const deps = fakeDeps({
+      findConnectionForNoKeyUpdate: vi.fn(async () => {
+        order.push("connection");
+        return { id: "conn_1", vendor: "hubspot" } as never;
+      }),
+      deleteBuildApproval: vi.fn(async () => {
+        order.push("delete");
+        return build;
+      }),
+    });
+    await withdrawBuildApproval(ctx, SCOPE, "conn_1", deps);
+    expect(order).toEqual(["connection", "delete"]);
+    expect(events(deps)).toMatchObject([{ kind: "build", action: "withdrew", vendor: "hubspot" }]);
+  });
+
+  it("keeps the moment the person answered when an answer is written again with no event", async () => {
+    const answered = new Date("2026-09-09T09:59:00Z");
+    const deps = fakeDeps();
+    await setApproval(ctx, SCOPE, "tool_1", "allow", deps, {
+      asked: ASKED_V1,
+      event: null,
+      decidedAt: answered,
+    });
+    expect(deps.upsertApproval).toHaveBeenCalledWith(
+      ctx.db,
+      expect.objectContaining({ decidedAt: answered }),
+    );
+    expect(deps.insertApprovalEvent).not.toHaveBeenCalled();
+  });
+
+  it("records an answer set from the console as the console's", async () => {
+    const deps = fakeDeps();
+    await setApprovalFromConsole(ctx, SCOPE, "tool_1", "deny", deps);
+    expect(events(deps)).toMatchObject([{ kind: "tool", action: "denied", via: "console" }]);
+  });
+
+  it("records an integration's allow, its widening and its withdraw, with the destructive choice", async () => {
+    const deps = fakeDeps({
+      findVendorApproval: vi.fn(async () => vendorApproval),
+      updateVendorApprovalDestructive: vi.fn(async (_db, _scope, _vendor, input) => ({
+        ...vendorApproval,
+        ...input,
+      })),
+      deleteVendorApproval: vi.fn(async () => ({ ...vendorApproval, includesDestructive: true })),
+    });
+    await allowVendor(ctx, SCOPE, "hubspot", { includesDestructive: false, event: CARD }, deps);
+    await setVendorApprovalDestructive(ctx, SCOPE, "hubspot", true, deps);
+    await setVendorApprovalDestructive(ctx, SCOPE, "hubspot", false, deps);
+    await withdrawVendorApproval(ctx, SCOPE, "hubspot", deps);
+    expect(
+      events(deps).map(({ kind, action, via, includesDestructive, pendingActionId }) => ({
+        kind,
+        action,
+        via,
+        includesDestructive,
+        pendingActionId,
+      })),
+    ).toEqual([
+      {
+        kind: "vendor",
+        action: "allowed",
+        via: "card",
+        includesDestructive: false,
+        pendingActionId: "pa_1",
+      },
+      {
+        kind: "vendor",
+        action: "widened",
+        via: "console",
+        includesDestructive: true,
+        pendingActionId: null,
+      },
+      {
+        kind: "vendor",
+        action: "withdrew",
+        via: "console",
+        includesDestructive: true,
+        pendingActionId: null,
+      },
+    ]);
+  });
+
+  it("records the connection's line only when it inserted, never over one that stood", async () => {
+    const standing = fakeDeps({ findVendorApproval: vi.fn(async () => vendorApproval) });
+    await allowVendorWhenConnecting(ctx, SCOPE, "hubspot", standing, CARD);
+    expect(standing.insertApprovalEvent).not.toHaveBeenCalled();
+    const fresh = fakeDeps();
+    await allowVendorWhenConnecting(ctx, SCOPE, "hubspot", fresh, { via: "console" });
+    expect(events(fresh)).toMatchObject([
+      { kind: "vendor", action: "allowed", via: "console", includesDestructive: false },
+    ]);
+  });
+
+  it("records a build grant once, and its withdraw, against the connection's integration", async () => {
+    const deps = fakeDeps({ deleteBuildApproval: vi.fn(async () => build) });
+    await grantBuildApproval(ctx, SCOPE, "conn_1", deps, { via: "setup" });
+    await withdrawBuildApproval(ctx, SCOPE, "conn_1", deps);
+    const repeat = fakeDeps({
+      insertBuildApproval: vi.fn(async () => null),
+      findBuildApproval: vi.fn(async () => build),
+    });
+    await grantBuildApproval(ctx, SCOPE, "conn_1", repeat, CARD);
+    expect(events(deps)).toEqual([
+      expect.objectContaining({
+        kind: "build",
+        action: "allowed",
+        via: "setup",
+        connectionId: "conn_1",
+        vendor: "hubspot",
+      }),
+      expect.objectContaining({ kind: "build", action: "withdrew", via: "console" }),
+    ]);
+    expect(repeat.insertApprovalEvent).not.toHaveBeenCalled();
   });
 });

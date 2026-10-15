@@ -505,6 +505,14 @@ export async function revokeAgent(
     const scope = { personId: principal.personId, agentId: revoked.id };
     await deps.revokeMcpTokensForAgent(tx, scope, now);
     await deps.closePendingActionsForAgent(tx, scope, now);
+    await deps.insertApprovalEvent(tx, {
+      personId: principal.personId,
+      agentId: revoked.id,
+      kind: "agent",
+      action: "revoked",
+      via: "console",
+      at: now,
+    });
     return revoked;
   });
   return row ? toAgentOutput(row) : null;

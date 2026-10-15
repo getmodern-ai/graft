@@ -73,6 +73,7 @@ function fakeDeps(overrides: Partial<AgentDeps> = {}): AgentDeps {
     revokeAgent: vi.fn(async () => ({ ...row, revokedAt: NOW })),
     revokeMcpTokensForAgent: vi.fn(async () => 0),
     closePendingActionsForAgent: vi.fn(async () => []),
+    insertApprovalEvent: vi.fn(async (_db, input) => ({ id: "event_1", ...input }) as never),
     issueAgentToken: vi.fn(async (_db, _p, _a, token) => ({ ...awaitingRow, ...token })),
     setAgentConnectedVia: vi.fn(async (_db, _p, _a, via) => ({
       ...row,
@@ -344,11 +345,26 @@ describe("revokeAgent", () => {
     );
   });
 
+  /** GRA-341: the person's Activity keeps the revoke. */
+  it("appends the revoke to the person's record of answers, in the same transaction", async () => {
+    const deps = fakeDeps();
+    await revokeAgent(ctx, PRINCIPAL, "agent_1", deps);
+    expect(deps.insertApprovalEvent).toHaveBeenCalledWith(fakeDb, {
+      personId: "person_1",
+      agentId: "agent_1",
+      kind: "agent",
+      action: "revoked",
+      via: "console",
+      at: NOW,
+    });
+  });
+
   it("touches no token when there is no such agent, or it is revoked already", async () => {
     const deps = fakeDeps({ revokeAgent: vi.fn(async () => null) });
     await expect(revokeAgent(ctx, PRINCIPAL, "missing", deps)).resolves.toBeNull();
     expect(deps.revokeMcpTokensForAgent).not.toHaveBeenCalled();
     expect(deps.closePendingActionsForAgent).not.toHaveBeenCalled();
+    expect(deps.insertApprovalEvent).not.toHaveBeenCalled();
   });
 });
 

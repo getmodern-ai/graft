@@ -15,6 +15,7 @@ import {
   setAgentConnectedVia,
   updateAgent,
 } from "@graft/db/repo/agent";
+import { insertApprovalEvent } from "@graft/db/repo/approval-event";
 import { findConnectionsByIds } from "@graft/db/repo/connection";
 import { findAgentByMcpAccessTokenHash, revokeMcpTokensForAgent } from "@graft/db/repo/mcp-oauth";
 import { closePendingActionsForAgent } from "@graft/db/repo/pending-action";
@@ -41,6 +42,8 @@ export type AgentDeps = {
   revokeMcpTokensForAgent: typeof revokeMcpTokensForAgent;
   /** And closes every ask it left open, recording the revoke as why (GRA-292). */
   closePendingActionsForAgent: typeof closePendingActionsForAgent;
+  /** And appends the revoke to the person's record of answers (GRA-341). */
+  insertApprovalEvent: typeof insertApprovalEvent;
   /** The consent naming an existing agent records which client it was connected from (ADR 0018). */
   setAgentConnectedVia: typeof setAgentConnectedVia;
   replaceAgentConnections: typeof replaceAgentConnections;
@@ -74,6 +77,7 @@ export const defaultAgentDeps: AgentDeps = {
   revokeAgent,
   revokeMcpTokensForAgent,
   closePendingActionsForAgent,
+  insertApprovalEvent,
   setAgentConnectedVia,
   replaceAgentConnections,
   addAgentConnection,

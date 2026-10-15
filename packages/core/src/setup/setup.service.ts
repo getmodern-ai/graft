@@ -532,7 +532,7 @@ export async function startSetupBuild(
         );
       }
     }
-    await grantBuildApproval(scoped, scope, connectionId, deps.approval);
+    await grantBuildApproval(scoped, scope, connectionId, deps.approval, { via: "setup" });
     const created = await createAcquireJob(
       scoped,
       scope,
