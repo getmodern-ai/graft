@@ -6,6 +6,7 @@
 export * from "./acquire-job";
 export * from "./agent";
 export * from "./approval";
+export * from "./approval-event";
 export * from "./auth";
 export * from "./blob";
 export * from "./columns";

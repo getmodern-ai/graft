@@ -148,6 +148,7 @@ function fakeDeps(overrides: Partial<ConnectionDeps> = {}): ConnectionDeps {
     deleteWorkingSetEntriesForConnection: vi.fn(async () => []),
     insertWorkingSetChange: vi.fn(async (_db, input) => input as never),
     listAgentIdsForConnection: vi.fn(async () => []),
+    insertApprovalEvent: vi.fn(async (_db, input) => ({ id: "event_1", ...input }) as never),
     vault: fakeVault(),
     providers: DEFAULT_PROVIDERS,
     newId: () => "conn_new",
@@ -1154,6 +1155,17 @@ describe("revokeConnection", () => {
       { agentId: "agent_1", toolId: "tool_2" },
     ]);
     expect(result?.affectedAgentIds).toEqual(["agent_1", "agent_2", "agent_3"]);
+    // GRA-341: the person's act on every agent, recorded once with no agent.
+    expect(deps.insertApprovalEvent).toHaveBeenCalledWith(fakeDb, {
+      personId: "person_1",
+      agentId: null,
+      kind: "connection",
+      action: "revoked",
+      via: "console",
+      connectionId: "conn_1",
+      vendor: row.vendor,
+      at: NOW,
+    });
   });
 
   /**
@@ -1173,6 +1185,7 @@ describe("revokeConnection", () => {
     expect(deps.findConnectionForUpdate).toHaveBeenCalledWith(fakeDb, "person_1", "conn_1");
     expect(deps.findConnection).not.toHaveBeenCalled();
     expect(deps.listAgentIdsForConnection).not.toHaveBeenCalled();
+    expect(deps.insertApprovalEvent).not.toHaveBeenCalled();
     expect(result?.affectedAgentIds).toEqual(["agent_2"]);
   });
 

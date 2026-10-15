@@ -109,12 +109,16 @@ describe("status chips", () => {
   });
 
   // GRA-330: an answer is a moment too, in a run's tones.
-  it("draws an activity answer as Allowed, Connected, Denied or Declined", () => {
+  // GRA-341: and what the person did to one afterwards, or a revoke.
+  it("draws an activity answer as Allowed, Connected, Denied or Declined, then Withdrawn, Changed or Revoked", () => {
     expect(ACTIVITY_ANSWER_CHIP).toEqual({
       allowed: { variant: "secondary", label: "Allowed" },
       connected: { variant: "secondary", label: "Connected" },
       denied: { variant: "outline", label: "Denied" },
       declined: { variant: "outline", label: "Declined" },
+      withdrawn: { variant: "outline", label: "Withdrawn" },
+      changed: { variant: "secondary", label: "Changed" },
+      revoked: { variant: "outline", label: "Revoked" },
     });
   });
 

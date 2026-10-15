@@ -1096,6 +1096,19 @@ export async function revokeConnection(
     const scoped = wasLive
       ? await deps.listAgentIdsForConnection(tx, principal.personId, row.id)
       : [];
+    // The person's act on every agent at once, so no agent; a retry of the release is no revoke.
+    if (wasLive) {
+      await deps.insertApprovalEvent(tx, {
+        personId: principal.personId,
+        agentId: null,
+        kind: "connection",
+        action: "revoked",
+        via: "console",
+        connectionId: row.id,
+        vendor: row.vendor,
+        at,
+      });
+    }
     const affectedAgentIds = [
       ...new Set([...scoped, ...entries.map((entry) => entry.agentId)]),
     ].sort();

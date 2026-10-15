@@ -264,7 +264,7 @@ export function ActivityTable({
                 <ActivityTableRow
                   key={row.key}
                   row={row}
-                  agent={agentsById.get(row.agent.id)}
+                  agent={row.agent ? agentsById.get(row.agent.id) : undefined}
                   integrationName={activityIntegrationName(row, names)}
                 />
               ))
@@ -318,14 +318,19 @@ function ActivityTableRow({
         <Time iso={row.at} />
       </TableCell>
       <TableCell className="hidden md:table-cell">
-        <span className="flex min-w-0 items-center gap-2">
-          <HarnessMark
-            mark={agent ? agentMark(agent, undefined) : "generic"}
-            tile="none"
-            className="size-4"
-          />
-          <span className="truncate">{row.agent.name}</span>
-        </span>
+        {row.agent ? (
+          <span className="flex min-w-0 items-center gap-2">
+            <HarnessMark
+              mark={agent ? agentMark(agent, undefined) : "generic"}
+              tile="none"
+              className="size-4"
+            />
+            <span className="truncate">{row.agent.name}</span>
+          </span>
+        ) : (
+          // A connection's revoke (GRA-341): the person's act on every agent at once.
+          <span className="text-muted-foreground">Every agent</span>
+        )}
       </TableCell>
       <TableCell className="hidden md:table-cell">
         {row.vendor ? (
@@ -342,7 +347,8 @@ function ActivityTableRow({
             />
             <span className="truncate">{integrationName}</span>
           </Link>
-        ) : (
+        ) : row.kind === "approval" && row.event?.kind === "agent" ? null : (
+          // An agent's revoke is about no integration; anything else without one predates GRA-301.
           <span className="text-muted-foreground">Not recorded</span>
         )}
       </TableCell>

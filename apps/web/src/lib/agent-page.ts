@@ -124,7 +124,15 @@ export function runsSplitLine(stats: Pick<AgentStats, "runs" | "ranWithoutAsking
 }
 
 /** What a row's status icon shows, one per way a row can end. */
-export type ActivityIcon = "ran" | "failed" | "asked" | "blocked" | "allowed" | "denied";
+export type ActivityIcon =
+  | "ran"
+  | "failed"
+  | "asked"
+  | "blocked"
+  | "allowed"
+  | "denied"
+  | "withdrawn"
+  | "changed";
 
 export type ActivityRowView = {
   icon: ActivityIcon;
@@ -181,6 +189,8 @@ export function activityRowView(row: ActivityRow, integration: string | null): A
   }
 
   const subject = integration ?? "an integration";
+  if (row.source === "event" && row.event)
+    return eventRowView(row, row.event, subject, integration);
   if (row.source === "tool") {
     const tool = row.tool ? activityToolLabel(row.tool.wireName) : "a tool";
     return row.decision === "deny"
@@ -211,6 +221,66 @@ export function activityRowView(row: ActivityRow, integration: string | null): A
     integration,
     sentence: declined ? "you said no" : null,
   };
+}
+
+/**
+ * An approval event (GRA-341) on the agent's page, where the agent is implied: what the person
+ * did, short. Never "always": only the ask-every-call switch's own events speak of every call.
+ */
+function eventRowView(
+  row: Extract<ActivityRow, { kind: "approval" }>,
+  event: NonNullable<Extract<ActivityRow, { kind: "approval" }>["event"]>,
+  subject: string,
+  integration: string | null,
+): ActivityRowView {
+  const tool = row.tool ? activityToolLabel(row.tool.wireName) : "a tool";
+  const view = (icon: ActivityIcon, title: string, sentence: string | null = null) => ({
+    icon,
+    title,
+    integration,
+    sentence,
+  });
+  switch (`${event.kind}:${event.action}`) {
+    case "tool:allowed":
+      return view("allowed", `Allowed ${tool}`, "you allowed it");
+    case "tool:denied":
+      return view("denied", `Said no to ${tool}`, "you denied it");
+    case "tool:withdrew":
+      return view("withdrawn", `Withdrew your answer on ${tool}`);
+    case "tool:ask_every_call_on":
+      return view("changed", `Asks before every call to ${tool}`);
+    case "tool:ask_every_call_off":
+      return view("changed", `No longer asks before every call to ${tool}`);
+    case "vendor:allowed":
+    case "vendor:widened":
+      return row.includesDestructive === true
+        ? view("allowed", `Allowed every ${subject} tool`, "including ones that can delete")
+        : view("allowed", `Allowed every ${subject} tool except ones that delete`);
+    case "vendor:narrowed":
+      return view("changed", `Allowed every ${subject} tool except ones that delete`, "narrowed");
+    case "vendor:withdrew":
+      return view("withdrawn", `Withdrew the approval for every ${subject} tool`);
+    case "build:allowed":
+      return view("allowed", `Allowed building tools for ${subject}`);
+    case "build:denied":
+      return view("denied", `Said no to building tools for ${subject}`, "you said no");
+    case "build:withdrew":
+      return view("withdrawn", `Withdrew building tools for ${subject}`);
+    case "connection:allowed":
+      return view("allowed", `Connected ${subject}`);
+    case "connection:denied":
+      return view("denied", `Said no to connecting ${subject}`, "you said no");
+    case "connection:revoked":
+      return view("denied", `Revoked ${subject}`);
+    case "scope:allowed":
+      return view("allowed", `Gave it ${subject}`);
+    case "scope:denied":
+      return view("denied", `Said no to giving it ${subject}`, "you said no");
+    case "agent:revoked":
+      return view("denied", "Revoked");
+    default:
+      return view("changed", "Changed an answer");
+  }
 }
 
 function askTitle(kind: string | null, subject: string, declined: boolean): string {

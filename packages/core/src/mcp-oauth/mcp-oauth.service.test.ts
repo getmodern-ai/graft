@@ -253,6 +253,7 @@ function harness(overrides: { clock?: Date } = {}) {
     revokeAgent: vi.fn(async () => null),
     revokeMcpTokensForAgent: vi.fn(async () => 0),
     closePendingActionsForAgent: vi.fn(async () => []),
+    insertApprovalEvent: vi.fn(async (_db, input) => ({ id: "event_1", ...input }) as never),
     issueAgentToken: vi.fn(async () => null),
     setAgentConnectedVia: vi.fn(async (_db, _personId, agentId, via) => {
       const row = store.agents.get(agentId);

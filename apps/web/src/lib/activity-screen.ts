@@ -151,8 +151,19 @@ export function activityIntegrationName(
   return integrationNameFor(row.vendor, known ?? row.vendor);
 }
 
-/** How an answer ended, for its chip (`ACTIVITY_ANSWER_CHIP`). */
-export type ActivityAnswerOutcome = "allowed" | "connected" | "denied" | "declined";
+/**
+ * How an answer ended, for its chip (`ACTIVITY_ANSWER_CHIP`): the four answers, and since GRA-341
+ * what the person did to one afterwards: withdrew it, changed how it holds (widened, narrowed, the
+ * ask-every-call switch), or revoked a connection or an agent.
+ */
+export type ActivityAnswerOutcome =
+  | "allowed"
+  | "connected"
+  | "denied"
+  | "declined"
+  | "withdrawn"
+  | "changed"
+  | "revoked";
 
 export type ActivityAnswerCopy = { sentence: string; outcome: ActivityAnswerOutcome };
 
@@ -160,10 +171,17 @@ function possessive(name: string): string {
   return `${name}'s`;
 }
 
+/** What a tool's row lets a sentence say it does: "draft replies in Gmail". */
+function toolAction(tool: ActivityApproval["tool"], integration: string): string {
+  const words = tool ? toolActionWords(tool.wireName) : null;
+  return words ? `${words} in ${integration}` : `use a ${integration} tool`;
+}
+
 /**
- * An answer row's sentence, the person's own words for what they said: "You allowed Codex to
- * draft replies in Gmail", "You denied Codex permission to delete email in Gmail". The three
- * sources read differently (`repo/activity.ts`): a tool's standing answer, an integration's
+ * An answer row's sentence, the person's own words for what they did: "You allowed Codex to
+ * draft replies in Gmail", "You withdrew your answer on whether Codex can draft replies in Gmail",
+ * "You revoked Notion". An approval event (GRA-341) reads off what it recorded; the three older
+ * sources (`repo/activity.ts`) read as before: a tool's standing answer, an integration's
  * standing approval, and an answered ask of another kind, read off its kind and answer alone,
  * since the row carries no payload. A kind this does not know still reads as an answer.
  */
@@ -171,15 +189,20 @@ export function activityAnswerCopy(
   row: Pick<
     ActivityApproval,
     "source" | "agent" | "tool" | "decision" | "includesDestructive" | "askKind" | "answer"
-  >,
+  > &
+    Partial<Pick<ActivityApproval, "event">>,
   integrationName: string | null,
 ): ActivityAnswerCopy {
-  const agent = row.agent.name;
+  // Only a connection's revoke names no agent; it was the person's act on every agent.
+  const agent = row.agent?.name ?? "every agent";
   const integration = integrationName ?? "an integration";
   switch (row.source) {
+    case "event":
+      return row.event
+        ? eventCopy(row.event, row, agent, integrationName)
+        : { sentence: "You changed an answer", outcome: "changed" };
     case "tool": {
-      const words = row.tool ? toolActionWords(row.tool.wireName) : null;
-      const action = words ? `${words} in ${integration}` : `use a ${integration} tool`;
+      const action = toolAction(row.tool, integration);
       // Not "always": an allow may ask on every call (`askEveryCall`, ADR 0008), which the
       // read does not carry, so the sentence claims no more than that the person said yes.
       return row.decision === "deny"
@@ -196,6 +219,116 @@ export function activityAnswerCopy(
       };
     case "ask":
       return askAnswerCopy(row.askKind, row.answer ?? {}, agent, integrationName);
+  }
+}
+
+/**
+ * An approval event's sentence. A yes never says "always": a tool's allow may ask on every call,
+ * so only the switch's own events speak of every call, and an integration's allow says which of
+ * its tools it covers.
+ */
+function eventCopy(
+  event: NonNullable<ActivityApproval["event"]>,
+  row: Pick<ActivityApproval, "tool" | "includesDestructive">,
+  agent: string,
+  integrationName: string | null,
+): ActivityAnswerCopy {
+  const integration = integrationName ?? "an integration";
+  const tools = integrationName ? `its own ${integrationName} tools` : "its own tools";
+  const fallback: ActivityAnswerCopy = { sentence: "You changed an answer", outcome: "changed" };
+  switch (event.kind) {
+    case "tool": {
+      const action = toolAction(row.tool, integration);
+      switch (event.action) {
+        case "allowed":
+          return { sentence: `You allowed ${agent} to ${action}`, outcome: "allowed" };
+        case "denied":
+          return { sentence: `You denied ${agent} permission to ${action}`, outcome: "denied" };
+        case "withdrew":
+          return {
+            sentence: `You withdrew your answer on whether ${agent} can ${action}`,
+            outcome: "withdrawn",
+          };
+        case "ask_every_call_on":
+          return {
+            sentence: `${agent} now asks before every call to ${action}`,
+            outcome: "changed",
+          };
+        case "ask_every_call_off":
+          return {
+            sentence: `${agent} no longer asks before every call to ${action}`,
+            outcome: "changed",
+          };
+        default:
+          return fallback;
+      }
+    }
+    case "vendor":
+      switch (event.action) {
+        case "allowed":
+        case "widened":
+          return {
+            sentence:
+              row.includesDestructive === true
+                ? `You allowed ${agent} every ${integration} tool, including ones that can delete`
+                : `You allowed ${agent} every ${integration} tool that cannot delete`,
+            outcome: event.action === "allowed" ? "allowed" : "changed",
+          };
+        case "narrowed":
+          return {
+            sentence: `You narrowed ${possessive(agent)} ${integration} approval to tools that cannot delete`,
+            outcome: "changed",
+          };
+        case "withdrew":
+          return {
+            sentence: `You withdrew ${possessive(agent)} approval for every ${integration} tool`,
+            outcome: "withdrawn",
+          };
+        default:
+          return fallback;
+      }
+    case "build":
+      switch (event.action) {
+        case "allowed":
+          return { sentence: `You let ${agent} build ${tools}`, outcome: "allowed" };
+        case "denied":
+          return {
+            sentence: `You declined ${possessive(agent)} request to build ${tools}`,
+            outcome: "declined",
+          };
+        case "withdrew":
+          return {
+            sentence: `You withdrew ${possessive(agent)} permission to build ${tools}`,
+            outcome: "withdrawn",
+          };
+        default:
+          return fallback;
+      }
+    case "connection":
+      switch (event.action) {
+        case "allowed":
+          return { sentence: `You connected ${integration} for ${agent}`, outcome: "connected" };
+        case "denied":
+          return {
+            sentence: `You declined ${possessive(agent)} request to connect ${integration}`,
+            outcome: "declined",
+          };
+        case "revoked":
+          return { sentence: `You revoked ${integration}`, outcome: "revoked" };
+        default:
+          return fallback;
+      }
+    case "scope":
+      return event.action === "denied"
+        ? {
+            sentence: `You declined ${possessive(agent)} request to use ${integration}`,
+            outcome: "declined",
+          }
+        : { sentence: `You let ${agent} use ${integration}`, outcome: "allowed" };
+    case "agent":
+      return event.action === "revoked"
+        ? { sentence: `You revoked ${agent}`, outcome: "revoked" }
+        : fallback;
   }
 }
 
