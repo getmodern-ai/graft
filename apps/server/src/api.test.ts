@@ -203,6 +203,7 @@ function agentDeps(): AgentDeps {
     revokeAgent: vi.fn(async () => ({ ...agentRow, revokedAt: NOW })),
     revokeMcpTokensForAgent: vi.fn(async () => 0),
     closePendingActionsForAgent: vi.fn(async () => []),
+    insertApprovalEvent: vi.fn(async (_db, input) => ({ id: "event_1", ...input }) as never),
     issueAgentToken: vi.fn(async () => null),
     setAgentConnectedVia: vi.fn(async () => agentRow),
     replaceAgentConnections: vi.fn(async () => {}),
@@ -262,6 +263,7 @@ function connectionDeps(): ConnectionDeps {
     insertWorkingSetChange: vi.fn(async (_db, input) => input as never),
     // The person's `listed` agent holding the row, and an agent on `all` (ADR 0007 as amended 2026-09-19).
     listAgentIdsForConnection: vi.fn(async () => ["agent_1", "agent_open"]),
+    insertApprovalEvent: vi.fn(async (_db, input) => ({ id: "event_1", ...input }) as never),
     vault: { encrypt: vi.fn(async () => Buffer.from("ciphertext")) },
     providers: DEFAULT_PROVIDERS,
     newId: () => "conn_new",
@@ -471,6 +473,7 @@ function approvalDeps(): ApprovalDeps {
     findAuthoredToolForUpdate: vi.fn(async () => destructiveTool),
     listToolVersionOrigins: vi.fn(async () => []),
     findConnection: vi.fn(async () => connectionRow),
+    insertApprovalEvent: vi.fn(async (_db, input) => ({ id: "event_1", ...input }) as never),
     now: () => NOW,
   };
 }
@@ -512,6 +515,7 @@ const activityRows: ActivityRow[] = [
     includesDestructive: null,
     askKind: "connection",
     answer: { connectionId: "conn_1" },
+    event: null,
   },
   {
     kind: "approval",
@@ -528,8 +532,28 @@ const activityRows: ActivityRow[] = [
     includesDestructive: null,
     askKind: null,
     answer: null,
+    event: null,
   },
 ];
+
+/** GRA-341: a connection's revoke, recorded with no agent. */
+const revokeEvent: ActivityRow = {
+  kind: "approval",
+  position: { at: "2026-09-09 06:00:00", key: "event:event_1" },
+  at: new Date("2026-09-09T06:00:00.000Z"),
+  agentId: null,
+  agentName: null,
+  vendor: "demo",
+  connectionId: "conn_1",
+  source: "event",
+  pendingActionId: null,
+  tool: null,
+  decision: null,
+  includesDestructive: null,
+  askKind: null,
+  answer: null,
+  event: { kind: "connection", action: "revoked", via: "console" },
+};
 
 function activityDeps(): ActivityDeps {
   return {
@@ -3478,6 +3502,33 @@ describe("the console's activity (GRA-308)", () => {
     });
     expect(vi.mocked(deps.activity.listActivity).mock.calls[1]?.[2]).toMatchObject({
       after: { at: "2026-09-09 08:00:00", key: "ask:pa_1" },
+    });
+  });
+
+  it("answers an approval event as what it recorded, and a revoke that names no agent with none (GRA-341)", async () => {
+    const { app, deps } = harness({ user: { id: "person_1" } });
+    vi.mocked(deps.activity.listActivity).mockResolvedValueOnce([revokeEvent]);
+    const res = await app.request("/api/activity?kind=approval");
+    expect(await res.json()).toEqual({
+      rows: [
+        {
+          key: "event:event_1",
+          at: "2026-09-09T06:00:00.000Z",
+          vendor: "demo",
+          connectionId: "conn_1",
+          kind: "approval",
+          agent: null,
+          source: "event",
+          pendingActionId: null,
+          tool: null,
+          decision: null,
+          includesDestructive: null,
+          askKind: null,
+          answer: null,
+          event: { kind: "connection", action: "revoked", via: "console" },
+        },
+      ],
+      nextCursor: null,
     });
   });
 

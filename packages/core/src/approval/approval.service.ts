@@ -5,6 +5,7 @@ import type {
   VendorApprovalRow,
 } from "@graft/db/repo/approval";
 import type { ApprovalDecision } from "@graft/db/schema/approval";
+import type { ApprovalEventVia } from "@graft/db/schema/approval-event";
 
 import type { ServiceContext } from "../context";
 import { orNotFound, ServiceError } from "../errors";
@@ -23,6 +24,17 @@ import type { ApprovalDeps } from "./approval.deps";
  * approval, and decide a call. The rule itself is `approvalDecision`, pure; this file reads the
  * rows it needs and applies it.
  */
+
+/**
+ * The door an answer came through, for its approval event (GRA-341), and the ask it answered when
+ * it answered one. Null where the event was already written by the door the person answered at: an
+ * agent taking an answer off a pending action writes the row again but answers nothing new. Every
+ * write that records an answer takes one, so a new caller has to say which.
+ */
+export type ApprovalEventOrigin = { via: ApprovalEventVia; pendingActionId?: string | null };
+
+/** The console's own acts (withdraw, widen, narrow, the ask-every-call switch) come through it alone. */
+const CONSOLE: ApprovalEventOrigin = { via: "console" };
 
 export async function getApproval(
   ctx: ServiceContext,
@@ -77,13 +89,29 @@ export async function setApproval(
   toolId: string,
   decision: ApprovalDecision,
   deps: ApprovalDeps,
-  options: { asked: AskedVersion; askEveryCall?: boolean },
+  options: { asked: AskedVersion; askEveryCall?: boolean; event: ApprovalEventOrigin | null },
 ): Promise<ApprovalRow> {
   return ctx.db.transaction(async (tx) => {
     const tool = orNotFound(
       await deps.findAuthoredToolForUpdate(tx, scope.personId, toolId),
       "Tool not found",
     );
+    const now = deps.now();
+    // The answer is the person's whether or not it moves the row (a late yes beside a standing
+    // one), so it is recorded either way.
+    if (options.event) {
+      await deps.insertApprovalEvent(tx, {
+        personId: scope.personId,
+        agentId: scope.agentId,
+        kind: "tool",
+        action: decision === "allow" ? "allowed" : "denied",
+        via: options.event.via,
+        toolId,
+        vendor: tool.vendor,
+        pendingActionId: options.event.pendingActionId ?? null,
+        at: now,
+      });
+    }
     const asked = options.asked.versionId;
     let toolVersionId = asked;
     if (decision === "allow" && asked !== tool.currentVersionId) {
@@ -119,7 +147,7 @@ export async function setApproval(
       agentId: scope.agentId,
       toolId,
       decision,
-      decidedAt: deps.now(),
+      decidedAt: now,
       toolVersionId,
       ...(options.askEveryCall === undefined ? {} : { askEveryCall: options.askEveryCall }),
     });
@@ -156,12 +184,29 @@ export async function setAskEveryCall(
       "A read-only tool never asks, so it cannot ask every call",
     );
   }
-  const row = orNotFound(
-    await deps.updateAskEveryCall(ctx.db, scope, toolId, on),
-    "No approval stands for this tool yet — answer its first ask before changing how it asks",
-  );
-  await deps.settleAnsweredToolActions(ctx.db, scope, toolId, deps.now());
-  return row;
+  return ctx.db.transaction(async (tx) => {
+    const before = await deps.findApproval(tx, scope, toolId);
+    const row = orNotFound(
+      await deps.updateAskEveryCall(tx, scope, toolId, on),
+      "No approval stands for this tool yet — answer its first ask before changing how it asks",
+    );
+    const now = deps.now();
+    await deps.settleAnsweredToolActions(tx, scope, toolId, now);
+    // A repeat of the setting as it stood changes nothing, so it records nothing.
+    if (before?.askEveryCall !== on) {
+      await deps.insertApprovalEvent(tx, {
+        personId: scope.personId,
+        agentId: scope.agentId,
+        kind: "tool",
+        action: on ? "ask_every_call_on" : "ask_every_call_off",
+        via: CONSOLE.via,
+        toolId,
+        vendor: tool.vendor,
+        at: now,
+      });
+    }
+    return row;
+  });
 }
 
 /**
@@ -177,10 +222,28 @@ export async function revokeApproval(
   toolId: string,
   deps: ApprovalDeps,
 ): Promise<ApprovalRow | null> {
-  orNotFound(await deps.findAuthoredToolById(ctx.db, scope.personId, toolId), "Tool not found");
-  const row = await deps.deleteApproval(ctx.db, scope, toolId);
-  await deps.settleAnsweredToolActions(ctx.db, scope, toolId, deps.now());
-  return row;
+  const tool = orNotFound(
+    await deps.findAuthoredToolById(ctx.db, scope.personId, toolId),
+    "Tool not found",
+  );
+  return ctx.db.transaction(async (tx) => {
+    const row = await deps.deleteApproval(tx, scope, toolId);
+    const now = deps.now();
+    await deps.settleAnsweredToolActions(tx, scope, toolId, now);
+    if (row) {
+      await deps.insertApprovalEvent(tx, {
+        personId: scope.personId,
+        agentId: scope.agentId,
+        kind: "tool",
+        action: "withdrew",
+        via: CONSOLE.via,
+        toolId,
+        vendor: tool.vendor,
+        at: now,
+      });
+    }
+    return row;
+  });
 }
 
 /** How an ask answered by an answer set outright says so on its `answer` (`setApprovalFromConsole`). */
@@ -293,6 +356,7 @@ export async function setApprovalFromConsole(
     }
     const approval = await setApproval({ db: tx }, scope, toolId, decision, deps, {
       asked: { versionId, annotations: { readOnly: tool.readOnly, destructive: tool.destructive } },
+      event: CONSOLE,
     });
     await deps.settleAnsweredToolActions(tx, scope, toolId, now);
     const closing =
@@ -394,17 +458,46 @@ export async function allowVendor(
   ctx: ServiceContext,
   scope: AgentScope,
   vendor: string,
-  options: { includesDestructive: boolean },
+  options: { includesDestructive: boolean; event: ApprovalEventOrigin | null },
   deps: ApprovalDeps,
 ): Promise<VendorApprovalRow> {
-  return orNotFound(
-    await deps.upsertVendorApproval(ctx.db, scope, {
-      vendor,
-      includesDestructive: options.includesDestructive,
-      grantedAt: deps.now(),
-    }),
-    "Agent not found",
-  );
+  return ctx.db.transaction(async (tx) => {
+    const now = deps.now();
+    const row = orNotFound(
+      await deps.upsertVendorApproval(tx, scope, {
+        vendor,
+        includesDestructive: options.includesDestructive,
+        grantedAt: now,
+      }),
+      "Agent not found",
+    );
+    await recordVendorEvent(tx, scope, row, "allowed", options.event, now, deps);
+    return row;
+  });
+}
+
+/** A `vendor` event for the approval as it now stands, or as it stood when withdrawn. */
+async function recordVendorEvent(
+  db: ServiceContext["db"],
+  scope: AgentScope,
+  row: Pick<VendorApprovalRow, "vendor" | "includesDestructive">,
+  action: "allowed" | "withdrew" | "widened" | "narrowed",
+  event: ApprovalEventOrigin | null,
+  at: Date,
+  deps: ApprovalDeps,
+): Promise<void> {
+  if (!event) return;
+  await deps.insertApprovalEvent(db, {
+    personId: scope.personId,
+    agentId: scope.agentId,
+    kind: "vendor",
+    action,
+    via: event.via,
+    vendor: row.vendor,
+    includesDestructive: row.includesDestructive,
+    pendingActionId: event.pendingActionId ?? null,
+    at,
+  });
 }
 
 /**
@@ -419,19 +512,27 @@ export async function allowVendorWhenConnecting(
   scope: AgentScope,
   vendor: string,
   deps: ApprovalDeps,
+  event: ApprovalEventOrigin | null,
 ): Promise<VendorApprovalRow> {
-  const standing = await deps.findVendorApproval(ctx.db, scope, vendor);
-  if (standing) return standing;
-  // Inserted only where none stands, in the statement: a tool's ask answered meanwhile, with
-  // destructive tools in, is never written over by this line's narrower yes (Greptile on #182).
-  const inserted = await deps.upsertVendorApproval(
-    ctx.db,
-    scope,
-    { vendor, includesDestructive: false, grantedAt: deps.now() },
-    { keep: true },
-  );
-  if (inserted) return inserted;
-  return orNotFound(await deps.findVendorApproval(ctx.db, scope, vendor), "Agent not found");
+  return ctx.db.transaction(async (tx) => {
+    const standing = await deps.findVendorApproval(tx, scope, vendor);
+    if (standing) return standing;
+    // Inserted only where none stands, in the statement: a tool's ask answered meanwhile, with
+    // destructive tools in, is never written over by this line's narrower yes (Greptile on #182).
+    // Recorded only when it inserted, since an approval that already stood was not this answer's.
+    const now = deps.now();
+    const inserted = await deps.upsertVendorApproval(
+      tx,
+      scope,
+      { vendor, includesDestructive: false, grantedAt: now },
+      { keep: true },
+    );
+    if (inserted) {
+      await recordVendorEvent(tx, scope, inserted, "allowed", event, now, deps);
+      return inserted;
+    }
+    return orNotFound(await deps.findVendorApproval(tx, scope, vendor), "Agent not found");
+  });
 }
 
 /**
@@ -444,7 +545,11 @@ export async function withdrawVendorApproval(
   vendor: string,
   deps: ApprovalDeps,
 ): Promise<VendorApprovalRow | null> {
-  return deps.deleteVendorApproval(ctx.db, scope, vendor);
+  return ctx.db.transaction(async (tx) => {
+    const row = await deps.deleteVendorApproval(tx, scope, vendor);
+    if (row) await recordVendorEvent(tx, scope, row, "withdrew", CONSOLE, deps.now(), deps);
+    return row;
+  });
 }
 
 /**
@@ -460,9 +565,19 @@ export async function setVendorApprovalDestructive(
   includesDestructive: boolean,
   deps: ApprovalDeps,
 ): Promise<VendorApprovalRow | null> {
-  return deps.updateVendorApprovalDestructive(ctx.db, scope, vendor, {
-    includesDestructive,
-    grantedAt: deps.now(),
+  return ctx.db.transaction(async (tx) => {
+    const before = await deps.findVendorApproval(tx, scope, vendor);
+    const now = deps.now();
+    const row = await deps.updateVendorApprovalDestructive(tx, scope, vendor, {
+      includesDestructive,
+      grantedAt: now,
+    });
+    // A widen of one already wide, or a narrow of one already narrow, changes nothing to record.
+    if (row && before?.includesDestructive !== includesDestructive) {
+      const action = includesDestructive ? "widened" : "narrowed";
+      await recordVendorEvent(tx, scope, row, action, CONSOLE, now, deps);
+    }
+    return row;
   });
 }
 
@@ -498,7 +613,22 @@ export async function withdrawBuildApproval(
   connectionId: string,
   deps: ApprovalDeps,
 ): Promise<BuildApprovalRow | null> {
-  return deps.deleteBuildApproval(ctx.db, scope, connectionId);
+  const connection = await deps.findConnection(ctx.db, scope.personId, connectionId);
+  return ctx.db.transaction(async (tx) => {
+    const row = await deps.deleteBuildApproval(tx, scope, connectionId);
+    if (row) {
+      await recordBuildEvent(
+        tx,
+        scope,
+        { id: connectionId, vendor: connection?.vendor ?? null },
+        "withdrew",
+        CONSOLE,
+        deps.now(),
+        deps,
+      );
+    }
+    return row;
+  });
 }
 
 /**
@@ -511,19 +641,54 @@ export async function grantBuildApproval(
   scope: AgentScope,
   connectionId: string,
   deps: ApprovalDeps,
+  event: ApprovalEventOrigin | null,
 ): Promise<BuildApprovalRow> {
-  orNotFound(
+  const connection = orNotFound(
     await deps.findConnection(ctx.db, scope.personId, connectionId),
     "Connection not found",
   );
-  const inserted = await deps.insertBuildApproval(ctx.db, {
-    agentId: scope.agentId,
-    connectionId,
-    grantedAt: deps.now(),
+  return ctx.db.transaction(async (tx) => {
+    const now = deps.now();
+    const inserted = await deps.insertBuildApproval(tx, {
+      agentId: scope.agentId,
+      connectionId,
+      grantedAt: now,
+    });
+    if (inserted) {
+      // Only a grant that inserted is recorded: a repeat answers the standing row unchanged.
+      await recordBuildEvent(tx, scope, connection, "allowed", event, now, deps);
+      return inserted;
+    }
+    return orNotFound(
+      await deps.findBuildApproval(tx, scope, connectionId),
+      "Connection not found",
+    );
   });
-  if (inserted) return inserted;
-  return orNotFound(
-    await deps.findBuildApproval(ctx.db, scope, connectionId),
-    "Connection not found",
-  );
+}
+
+/**
+ * A `build` event: a grant, a withdraw, or a declined build ask, which leaves no row of its own
+ * (ADR 0008) but is still the person's answer.
+ */
+export async function recordBuildEvent(
+  db: ServiceContext["db"],
+  scope: AgentScope,
+  connection: { id: string; vendor: string | null },
+  action: "allowed" | "denied" | "withdrew",
+  event: ApprovalEventOrigin | null,
+  at: Date,
+  deps: Pick<ApprovalDeps, "insertApprovalEvent">,
+): Promise<void> {
+  if (!event) return;
+  await deps.insertApprovalEvent(db, {
+    personId: scope.personId,
+    agentId: scope.agentId,
+    kind: "build",
+    action,
+    via: event.via,
+    connectionId: connection.id,
+    vendor: connection.vendor,
+    pendingActionId: event.pendingActionId ?? null,
+    at,
+  });
 }

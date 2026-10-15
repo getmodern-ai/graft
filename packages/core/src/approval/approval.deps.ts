@@ -15,6 +15,7 @@ import {
   upsertApproval,
   upsertVendorApproval,
 } from "@graft/db/repo/approval";
+import { insertApprovalEvent } from "@graft/db/repo/approval-event";
 import { findConnection, findVendorConnectionsForUpdate } from "@graft/db/repo/connection";
 import {
   answerOpenToolActions,
@@ -72,6 +73,8 @@ export type ApprovalDeps = {
   /** The tool's versions by origin, which say whether a late answer carries (`answerCarriesTo`). */
   listToolVersionOrigins: typeof listToolVersionOrigins;
   findConnection: typeof findConnection;
+  /** Every answer, withdraw and change is appended to the record in its own transaction (GRA-341). */
+  insertApprovalEvent: typeof insertApprovalEvent;
   now: () => Date;
 };
 
@@ -99,5 +102,6 @@ export const defaultApprovalDeps: ApprovalDeps = {
   findAuthoredToolForUpdate,
   listToolVersionOrigins,
   findConnection,
+  insertApprovalEvent,
   now: () => new Date(),
 };

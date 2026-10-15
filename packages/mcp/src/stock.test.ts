@@ -997,6 +997,7 @@ describe("a stock tool's approval across its updates", () => {
     const tool = placeOf(entry.person);
     if (!tool) throw new Error("no copy to approve");
     await setApproval({ db: deps.db }, scopeOf(entry), tool.id, "allow", deps.approval, {
+      event: { via: "console" },
       asked: {
         versionId: tool.currentVersionId,
         annotations: { readOnly: tool.readOnly, destructive: tool.destructive },

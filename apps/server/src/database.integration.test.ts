@@ -50,11 +50,13 @@ import {
   registerConnection,
   requireAgent,
   revokeAgent,
+  revokeApproval,
   revokeConnection,
   rotateAgentToken,
   type ServiceContext,
   setAgentScope,
   setApproval,
+  setAskEveryCall,
   setConnectionCredential,
   setPersonModelKey,
   skipSetup,
@@ -218,6 +220,7 @@ describe.skipIf(!adminUrl)("the schema, the account and the services over a real
       "agent",
       "agent_connection",
       "approval",
+      "approval_event",
       "authored_tool",
       "blob",
       "build_approval",
@@ -850,6 +853,7 @@ describe.skipIf(!adminUrl)("the schema, the account and the services over a real
         versionId: tool.currentVersionId,
         annotations: { readOnly: false, destructive: false },
       },
+      event: { via: "console" },
     });
     // A second connection and a tool bound to it, promoted beside the first: the sweep's predicate
     // (`repo/working-set.ts`, pinned as SQL in `@graft/db`) has to leave it (GRA-69).
@@ -883,7 +887,13 @@ describe.skipIf(!adminUrl)("the schema, the account and the services over a real
 
     // GRA-237: the agent's standing approval for Acme, written through the `insert … select` that
     // inserts only for the person's own agent, and read by the decision for a tool never answered.
-    await allowVendor(ctx, scope, "acme", { includesDestructive: false }, defaultApprovalDeps);
+    await allowVendor(
+      ctx,
+      scope,
+      "acme",
+      { includesDestructive: false, event: { via: "card" } },
+      defaultApprovalDeps,
+    );
     const second = await createTool(
       ctx,
       principal,
@@ -908,7 +918,7 @@ describe.skipIf(!adminUrl)("the schema, the account and the services over a real
       ctx,
       scope,
       "acme",
-      { includesDestructive: true },
+      { includesDestructive: true, event: { via: "card" } },
       defaultApprovalDeps,
     );
     expect(rewritten).toMatchObject({ vendor: "acme", includesDestructive: true });
@@ -1280,6 +1290,145 @@ describe.skipIf(!adminUrl)("the schema, the account and the services over a real
     });
   });
 
+  it("keeps an answer the person withdrew beside the withdraw, records a revoke, and shows an older standing answer once", async () => {
+    const alice = await signUp("events-alice@example.com");
+    const bob = await signUp("events-bob@example.com");
+    const ctx: ServiceContext = { db };
+    const at = (minutes: number) => new Date(Date.UTC(2026, 9, 15, 9, minutes));
+    const clock = (minutes: number) => ({ ...defaultApprovalDeps, now: () => at(minutes) });
+    const conn = await registerConnection(
+      ctx,
+      { personId: alice },
+      {
+        vendor: "notion",
+        displayName: "Notion",
+        scheme: "none",
+        primaryHost: "https://notion.example",
+      },
+      connectionDeps,
+    );
+    // Another integration to revoke: a revoke sweeps its own vendor's standing answers.
+    const slack = await registerConnection(
+      ctx,
+      { personId: alice },
+      {
+        vendor: "slack",
+        displayName: "Slack",
+        scheme: "none",
+        primaryHost: "https://slack.example",
+      },
+      connectionDeps,
+    );
+    const codex = await createAgent(ctx, { personId: alice }, { name: "Codex" }, defaultAgentDeps);
+    const bobs = await createAgent(ctx, { personId: bob }, { name: "b" }, defaultAgentDeps);
+    const scope = { personId: alice, agentId: codex.agent.id };
+    const tool = (name: string) =>
+      createTool(
+        ctx,
+        { personId: alice },
+        {
+          vendor: "notion",
+          name,
+          description: name,
+          inputSchema: { type: "object" },
+          annotations: { readOnly: false, destructive: false },
+          defaultConnectionId: conn.id,
+        },
+        defaultToolDeps,
+      );
+    const draft = await tool("draft-page");
+    const older = await tool("archive-page");
+    const asked = (row: Awaited<ReturnType<typeof tool>>) => ({
+      versionId: row.currentVersionId,
+      annotations: { readOnly: false, destructive: false },
+    });
+
+    // Before the events existed: a standing answer with no event, which the read still shows.
+    await upsertApproval(db, {
+      agentId: codex.agent.id,
+      toolId: older.id,
+      decision: "allow",
+      decidedAt: at(0),
+      toolVersionId: older.currentVersionId,
+    });
+    // Allowed on the card, then withdrawn on the console: two rows, the first kept.
+    await setApproval(ctx, scope, draft.id, "allow", clock(1), {
+      asked: asked(draft),
+      event: { via: "card" },
+    });
+    // Answered again after the event, the older standing answer gives way to its event.
+    await setApproval(ctx, scope, draft.id, "allow", clock(2), {
+      asked: asked(draft),
+      event: { via: "console" },
+    });
+    await setAskEveryCall(ctx, scope, draft.id, true, clock(3));
+    await revokeApproval(ctx, scope, draft.id, clock(4));
+    await allowVendor(
+      ctx,
+      { personId: bob, agentId: bobs.agent.id },
+      "notion",
+      {
+        includesDestructive: false,
+        event: { via: "console" },
+      },
+      defaultApprovalDeps,
+    );
+    await revokeConnection(ctx, { personId: alice }, slack.id, {
+      ...connectionDeps,
+      now: () => at(5),
+    });
+
+    const read = await listActivity(
+      ctx,
+      { personId: alice },
+      { kind: "approval" },
+      defaultActivityDeps,
+    );
+    const said = read.rows.map((row) =>
+      row.kind === "approval"
+        ? row.event
+          ? `${row.event.kind} ${row.event.action} ${row.event.via} ${row.agentName ?? "none"}`
+          : `${row.source} ${row.agentName}`
+        : "run",
+    );
+    expect(said).toEqual([
+      "connection revoked console none",
+      "tool withdrew console Codex",
+      "tool ask_every_call_on console Codex",
+      "tool allowed console Codex",
+      "tool allowed card Codex",
+      "tool Codex",
+    ]);
+    expect(read.rows[0]).toMatchObject({ vendor: "slack", connectionId: slack.id, agentId: null });
+    expect(read.rows[1]).toMatchObject({ tool: { id: draft.id, name: "draft-page" } });
+    expect(read.rows.at(-1)).toMatchObject({ source: "tool", tool: { id: older.id } });
+
+    // Filters are predicates: by agent leaves the revoke out; by connection keeps it.
+    const byAgent = await listActivity(
+      ctx,
+      { personId: alice },
+      { kind: "approval", agentId: codex.agent.id },
+      defaultActivityDeps,
+    );
+    expect(byAgent.rows).toHaveLength(5);
+    const byConnection = await listActivity(
+      ctx,
+      { personId: alice },
+      { kind: "approval", connectionId: slack.id },
+      defaultActivityDeps,
+    );
+    expect(byConnection.rows.map((row) => row.position.key)).toEqual([read.rows[0]?.position.key]);
+    // Bob's event is Bob's alone.
+    const bobsRead = await listActivity(
+      ctx,
+      { personId: bob },
+      { kind: "approval" },
+      defaultActivityDeps,
+    );
+    expect(bobsRead.rows).toHaveLength(1);
+    expect(bobsRead.rows[0]).toMatchObject({ agentId: bobs.agent.id, event: { kind: "vendor" } });
+  });
+
   it("suggests the integrations the person's own agents asked for and the person has not connected", async () => {
     const personId = await signUp("suggested-owner@example.com");
     const other = await signUp("suggested-other@example.com");
@@ -1607,7 +1756,10 @@ describe.skipIf(!adminUrl)("the schema, the account and the services over a real
       versionId: copied.currentVersionId,
       annotations: { readOnly: copied.readOnly, destructive: copied.destructive },
     };
-    await setApproval(ctx, scope, copied.id, "allow", defaultApprovalDeps, { asked: askedV1 });
+    await setApproval(ctx, scope, copied.id, "allow", defaultApprovalDeps, {
+      asked: askedV1,
+      event: { via: "console" },
+    });
     expect((await getApproval(ctx, scope, copied.id, defaultApprovalDeps))?.toolVersionId).toBe(
       version?.id,
     );
@@ -1657,7 +1809,10 @@ describe.skipIf(!adminUrl)("the schema, the account and the services over a real
       defaultAgentDeps,
     );
     const lateScope = { personId, agentId: late.id };
-    await setApproval(ctx, lateScope, copied.id, "allow", defaultApprovalDeps, { asked: askedV1 });
+    await setApproval(ctx, lateScope, copied.id, "allow", defaultApprovalDeps, {
+      asked: askedV1,
+      event: { via: "console" },
+    });
     expect((await getApproval(ctx, lateScope, copied.id, defaultApprovalDeps))?.toolVersionId).toBe(
       origins[0]?.versionId,
     );

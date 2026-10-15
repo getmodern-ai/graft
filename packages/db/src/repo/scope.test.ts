@@ -44,6 +44,7 @@ import {
   updateVendorApprovalDestructive,
   upsertVendorApproval,
 } from "./approval";
+import { insertApprovalEvent } from "./approval-event";
 import {
   findBlob,
   findBlobs,
@@ -1516,5 +1517,51 @@ describe("a version is reached through its tool", () => {
     expect(s.sql).toMatch(/^update "authored_tool" set "current_version_id" = \$1/);
     expect(s.sql).toContain('"authored_tool"."person_id" = $');
     expect(s.sql).toContain('select "tool_id" from "tool_version" where "tool_version"."id" = $');
+  });
+});
+
+/** GRA-341: the record of answers, appended under the person and the person's own agent. */
+describe("approval events", () => {
+  const AT = new Date("2026-10-15T09:00:00Z");
+
+  it("an agent's event is inserted only from the person's own agent row", async () => {
+    await insertApprovalEvent(db, {
+      personId: "person_1",
+      agentId: "agent_1",
+      kind: "tool",
+      action: "withdrew",
+      via: "console",
+      toolId: "tool_1",
+      vendor: "gmail",
+      at: AT,
+    });
+    const s = only();
+    expect(s.sql).toMatch(
+      /^insert into "approval_event" \("id", "person_id", "agent_id", "kind", "action", "tool_id", "vendor", "connection_id", "includes_destructive", "via", "pending_action_id", "at", "owner", "created_at"\) select /,
+    );
+    expect(s.sql).toContain(
+      'from "agent" where ("agent"."id" = $11 and "agent"."person_id" = $12) returning',
+    );
+    expect(s.params.slice(-2)).toEqual(["agent_1", "person_1"]);
+    expect(s.params).toContain("withdrew");
+    expect(s.params).toContain("2026-10-15T09:00:00.000Z");
+  });
+
+  it("a connection's revoke names no agent and is the person's own row", async () => {
+    await insertApprovalEvent(db, {
+      personId: "person_1",
+      agentId: null,
+      kind: "connection",
+      action: "revoked",
+      via: "console",
+      connectionId: "conn_1",
+      vendor: "notion",
+      at: AT,
+    });
+    const s = only();
+    expect(s.sql).toMatch(/^insert into "approval_event" .* values \(/);
+    expect(s.params).toContain("person_1");
+    expect(s.params).toContain("revoked");
+    expect(s.params).not.toContain("agent_1");
   });
 });

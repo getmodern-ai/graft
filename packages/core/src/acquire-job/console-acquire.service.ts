@@ -102,7 +102,7 @@ export async function startConsoleAcquire(
         { details: { reason: "connection_not_in_scope", connectionId: connection.id } },
       );
     }
-    await grantBuildApproval(scoped, scope, connection.id, deps.approval);
+    await grantBuildApproval(scoped, scope, connection.id, deps.approval, { via: "console" });
     const job = await createAcquireJob(
       scoped,
       scope,

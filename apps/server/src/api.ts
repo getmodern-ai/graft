@@ -102,7 +102,7 @@ import {
   withdrawVendorApproval,
 } from "@graft/core";
 import type { DbOrTx } from "@graft/db";
-import type { ActivityApprovalSource, ActivityTool } from "@graft/db/repo/activity";
+import type { ActivityApprovalSource, ActivityEvent, ActivityTool } from "@graft/db/repo/activity";
 import type { PendingActionRow } from "@graft/db/repo/pending-action";
 import type { AuthoredToolRow } from "@graft/db/repo/tool";
 import { agentScopeMode } from "@graft/db/schema/agent";
@@ -958,7 +958,6 @@ type ActivityRowOutputBase = {
   /** Unique across the stream's kinds; stable for a row, so a list keys on it. */
   key: string;
   at: Date;
-  agent: { id: string; name: string };
   /** The integration's slug; null where nothing recorded it (a line before GRA-301). */
   vendor: string | null;
   connectionId: string | null;
@@ -970,6 +969,7 @@ type ActivityRowOutputBase = {
  */
 export type ActivityRunOutput = ActivityRowOutputBase & {
   kind: "run";
+  agent: { id: string; name: string };
   id: string;
   tool: ActivityToolOutput;
   outcome: UsageOutcome;
@@ -980,12 +980,16 @@ export type ActivityRunOutput = ActivityRowOutputBase & {
 };
 
 /**
- * One answer in the person's activity (GRA-308): a tool's standing answer (`source: "tool"`), an
- * integration's standing approval (`vendor`), or an answered ask of any kind but a tool's (`ask`),
- * whose answer is its standing row (`@graft/db`'s `repo/activity.ts` says why).
+ * One answer in the person's activity (GRA-308): since GRA-341 an approval event (`source:
+ * "event"`, with `event` saying what was done: an answer, a withdraw, a widen or narrow, the
+ * ask-every-call switch, a revoke), and before the events existed a tool's standing answer
+ * (`tool`), an integration's standing approval (`vendor`), or an answered ask of any kind but a
+ * tool's (`ask`). `@graft/db`'s `repo/activity.ts` says which shows when.
  */
 export type ActivityApprovalOutput = ActivityRowOutputBase & {
   kind: "approval";
+  /** Null on a connection's revoke, the person's act on every agent at once. */
+  agent: { id: string; name: string } | null;
   source: ActivityApprovalSource;
   pendingActionId: string | null;
   tool: ActivityToolOutput | null;
@@ -993,6 +997,8 @@ export type ActivityApprovalOutput = ActivityRowOutputBase & {
   includesDestructive: boolean | null;
   askKind: string | null;
   answer: Record<string, unknown> | null;
+  /** What an approval event recorded; null for the three older sources. */
+  event: ActivityEvent | null;
 };
 
 export type ActivityRowOutput = ActivityRunOutput | ActivityApprovalOutput;
@@ -2699,7 +2705,6 @@ export function createApi(options: ApiOptions): Hono {
         const base = {
           key: row.position.key,
           at: row.at,
-          agent: { id: row.agentId, name: row.agentName },
           vendor: row.vendor,
           connectionId: row.connectionId,
         };
@@ -2707,6 +2712,7 @@ export function createApi(options: ApiOptions): Hono {
           return {
             ...base,
             kind: "run",
+            agent: { id: row.agentId, name: row.agentName },
             id: row.id,
             tool: activityToolOutput(row.toolName, row.tool),
             outcome: row.outcome,
@@ -2719,6 +2725,10 @@ export function createApi(options: ApiOptions): Hono {
         return {
           ...base,
           kind: "approval",
+          agent:
+            row.agentId !== null && row.agentName !== null
+              ? { id: row.agentId, name: row.agentName }
+              : null,
           source: row.source,
           pendingActionId: row.pendingActionId,
           tool: row.tool ? activityToolOutput(null, row.tool) : null,
@@ -2726,6 +2736,7 @@ export function createApi(options: ApiOptions): Hono {
           includesDestructive: row.includesDestructive,
           askKind: row.askKind,
           answer: row.answer,
+          event: row.event,
         };
       }),
       nextCursor: page.nextCursor,

@@ -155,6 +155,13 @@
       "when": 1792024535627,
       "tag": "0021_ask_count_connection_account",
       "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1792035340422,
+      "tag": "0022_approval_event",
+      "breakpoints": true
     }
   ]
 }

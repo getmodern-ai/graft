@@ -1,6 +1,7 @@
 import type { AskCard } from "@graft/ask-card/shape";
 import {
   type AgentScope,
+  type ApprovalEventOrigin,
   type AskedVersion,
   allowVendor,
   allowVendorOffer,
@@ -16,6 +17,7 @@ import {
   grantBuildApproval,
   isForVersion,
   listToolVersionOrigins,
+  recordBuildEvent,
   type ServiceContext,
   ServiceError,
   type StockLineage,
@@ -624,10 +626,10 @@ async function askByElicitation(
   if (revoked) return revoked;
   if (said.allow) {
     // Answered in the form, now: the integration-wide yes is the person's at this moment.
-    await recordAllow(ctx, scope, subject, said, deps, { recordVendor: true });
+    await recordAllow(ctx, scope, subject, said, deps, { recordVendor: true, event: ELICITED });
     return PASS;
   }
-  await recordDeny(ctx, scope, subject, deps);
+  await recordDeny(ctx, scope, subject, deps, ELICITED);
   return refuse(
     "approval_declined",
     subject.kind === "tool"
@@ -801,10 +803,11 @@ async function applyAnswer(
   if (answer.allow) {
     // The console or the card recorded the integration-wide yes when the person answered
     // (`ask-answer.ts`); taking the answer later must not record it again (Greptile on #181).
-    await recordAllow(ctx, scope, subject, answer, deps, { recordVendor: false });
+    // Nor its event, which that door wrote when the person answered (GRA-341).
+    await recordAllow(ctx, scope, subject, answer, deps, { recordVendor: false, event: null });
     return PASS;
   }
-  await recordDeny(ctx, scope, subject, deps);
+  await recordDeny(ctx, scope, subject, deps, null);
   return refuse(
     "approval_declined",
     subject.kind === "tool"
@@ -832,10 +835,10 @@ async function recordAllow(
   subject: AskSubject,
   said: ApprovalAnswer,
   deps: McpDeps,
-  options: { recordVendor: boolean },
+  options: { recordVendor: boolean; event: ApprovalEventOrigin | null },
 ): Promise<void> {
   if (subject.kind === "build") {
-    await grantBuildApproval(ctx, scope, subject.connection.id, deps.approval);
+    await grantBuildApproval(ctx, scope, subject.connection.id, deps.approval, options.event);
     return;
   }
   const { askEveryCall } = said;
@@ -850,13 +853,32 @@ async function recordAllow(
     await setApproval(ctx, scope, subject.tool.id, "allow", deps.approval, {
       asked: askedVersionOf(subject),
       askEveryCall,
+      event: options.event,
+    });
+  } else if (options.event) {
+    // A yes to one call of a tool that asks every call moves no row, and is still an answer.
+    await deps.approval.insertApprovalEvent(ctx.db, {
+      personId: scope.personId,
+      agentId: scope.agentId,
+      kind: "tool",
+      action: "allowed",
+      via: options.event.via,
+      toolId: subject.tool.id,
+      vendor: subject.tool.vendor,
+      at: deps.approval.now(),
     });
   }
   if (options.recordVendor && said.allowVendor) {
     const includesDestructive = said.includesDestructive === true;
     const vendor = await getVendorApproval(ctx, scope, subject.tool.vendor, deps.approval);
     if (vendor?.includesDestructive !== includesDestructive) {
-      await allowVendor(ctx, scope, subject.tool.vendor, { includesDestructive }, deps.approval);
+      await allowVendor(
+        ctx,
+        scope,
+        subject.tool.vendor,
+        { includesDestructive, event: options.event },
+        deps.approval,
+      );
     }
   }
 }
@@ -869,18 +891,37 @@ function askedVersionOf(subject: Extract<AskSubject, { kind: "tool" }>): AskedVe
   };
 }
 
-/** The no, recorded for a tool (a build ask has no deny row — see the header). */
+/** An answer given in the client's form, for its approval event (GRA-341). */
+const ELICITED: ApprovalEventOrigin = { via: "elicitation" };
+
+/**
+ * The no, recorded for a tool. A build ask has no deny row (the header), but a no given in the form
+ * is still the person's answer, so it is appended to their record (GRA-341).
+ */
 async function recordDeny(
   ctx: ServiceContext,
   scope: AgentScope,
   subject: AskSubject,
   deps: McpDeps,
+  event: ApprovalEventOrigin | null,
 ): Promise<void> {
-  if (subject.kind !== "tool") return;
+  if (subject.kind !== "tool") {
+    await recordBuildEvent(
+      ctx.db,
+      scope,
+      subject.connection,
+      "denied",
+      event,
+      deps.approval.now(),
+      deps.approval,
+    );
+    return;
+  }
   const standing = await getApproval(ctx, scope, subject.tool.id, deps.approval);
   if (!standing || standing.decision !== "deny") {
     await setApproval(ctx, scope, subject.tool.id, "deny", deps.approval, {
       asked: askedVersionOf(subject),
+      event,
     });
   }
 }

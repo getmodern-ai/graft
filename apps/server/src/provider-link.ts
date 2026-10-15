@@ -1,6 +1,7 @@
 import {
   type AgentDeps,
   type ApprovalDeps,
+  type ApprovalEventOrigin,
   addConnectionToAgentScope,
   allowVendorWhenConnecting,
   answerPendingAction,
@@ -97,6 +98,12 @@ export type ProviderLinkRouteOptions = {
 
 export type { ProviderLinkChoices, ProviderLinkStartResult, StartedProviderLink };
 export { isProviderLinkFallback };
+
+/**
+ * The grants a link's return records, as the person ticked them before the popup (GRA-341). No ask
+ * named: the ask is answered with the connection, and the activity read shows it as that answer.
+ */
+const LINK_RETURN: ApprovalEventOrigin = { via: "handoff" };
 
 /** The ask a link is for: the person's, a connection ask, still open — the submit routes' own rules. */
 function openConnectionAsk(
@@ -320,6 +327,7 @@ export function createProviderLinkRoutes(options: ProviderLinkRouteOptions): Hon
             { personId, agentId: row.agentId },
             connection.id,
             options.approval,
+            LINK_RETURN,
           );
         }
         // The line for the integration's tools, ticked on the same card (GRA-239; ADR 0008 as
@@ -331,6 +339,7 @@ export function createProviderLinkRoutes(options: ProviderLinkRouteOptions): Hon
             { personId, agentId: row.agentId },
             connection.vendor,
             options.approval,
+            LINK_RETURN,
           );
         }
         // The waiting `request_connection` takes `{ connectionId }` as the answer (GRA-28). An ask

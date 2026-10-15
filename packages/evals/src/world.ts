@@ -524,6 +524,7 @@ export async function openWorld(options: WorldOptions): Promise<World> {
       );
       await setApproval(ctx, scope, toolId, "allow", deps.approval, {
         asked: askedVersionOfPayload(answered.payload),
+        event: { via: "console", pendingActionId },
       });
       await consumePendingAction(ctx, scope, pendingActionId, deps.pendingAction).catch(
         () => undefined,

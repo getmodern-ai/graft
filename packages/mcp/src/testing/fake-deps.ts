@@ -30,6 +30,7 @@ import type { AuthoredToolRow, ToolVersionRow } from "@graft/db/repo/tool";
 import type { UsageLedgerRow } from "@graft/db/repo/usage";
 import type { WorkingSetChangeRow, WorkingSetRow } from "@graft/db/repo/working-set";
 import type { AgentScopeMode } from "@graft/db/schema/agent";
+import type { ApprovalEventRow } from "@graft/db/schema/approval-event";
 import type { ConnectionScheme } from "@graft/db/schema/connection";
 
 /**
@@ -64,6 +65,8 @@ export type FakeStore = {
   buildApprovals: Map<string, BuildApprovalRow>;
   /** `<agentId> <vendor>` -> row: an integration allowed at once (ADR 0008 as amended 2026-10-09). */
   vendorApprovals: Map<string, VendorApprovalRow>;
+  /** Every answer, withdraw and revoke, in write order (GRA-341). */
+  approvalEvents: ApprovalEventRow[];
   pendingActions: Map<string, PendingActionRow>;
   /** The OAuth clients a consent may have minted an agent from (ADR 0018) — what the ask card's gate reads (GRA-84). */
   mcpClients: Map<string, McpClientRow>;
@@ -144,6 +147,7 @@ export function createFakeStore(options: { now?: () => Date } = {}): FakeStore {
     approvals: new Map(),
     buildApprovals: new Map(),
     vendorApprovals: new Map(),
+    approvalEvents: [],
     pendingActions: new Map(),
     mcpClients: new Map(),
     acquireJobs: new Map(),
@@ -401,7 +405,30 @@ export function createFakeDeps(store: FakeStore): FakeDeps {
     return row;
   };
 
+  /** Append-only, as the repo's: the event as written, with an id. */
+  const insertApprovalEvent: ApprovalDeps["insertApprovalEvent"] = async (_db, input) => {
+    const row: ApprovalEventRow = {
+      id: `event_${store.approvalEvents.length + 1}`,
+      personId: input.personId,
+      agentId: input.agentId,
+      kind: input.kind,
+      action: input.action,
+      via: input.via,
+      toolId: input.toolId ?? null,
+      vendor: input.vendor ?? null,
+      connectionId: input.connectionId ?? null,
+      includesDestructive: input.includesDestructive ?? null,
+      pendingActionId: input.pendingActionId ?? null,
+      at: input.at,
+      owner: "person",
+      createdAt: input.at,
+    };
+    store.approvalEvents.push(row);
+    return row;
+  };
+
   const agent: AgentDeps = {
+    insertApprovalEvent,
     insertAgent: async (_db, input) => {
       const at = store.now();
       const row: AgentRow = {
@@ -578,6 +605,7 @@ export function createFakeDeps(store: FakeStore): FakeDeps {
   };
 
   const connection: ConnectionDeps = {
+    insertApprovalEvent,
     insertConnection: async (_db, input) => {
       refuseDuplicateRef(input.provider ?? "keyring", input.providerRef, input.id);
       if (input.id && store.connections.has(input.id)) {
@@ -1191,6 +1219,7 @@ export function createFakeDeps(store: FakeStore): FakeDeps {
 
   /** The approval rows, with the repo's predicates: the scope on every read and write, the upsert's kept ask-every-call setting. */
   const approval: ApprovalDeps = {
+    insertApprovalEvent,
     findApproval: async (_db, scope, toolId) =>
       ownsAgent(scope) ? (store.approvals.get(key(scope.agentId, toolId)) ?? null) : null,
     listApprovals: async (_db, scope) =>
