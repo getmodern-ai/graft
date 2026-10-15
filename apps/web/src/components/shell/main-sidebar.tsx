@@ -53,10 +53,10 @@ export function MainSidebar() {
 
   return (
     /* Off canvas, not the icon rail: collapsed, the sidebar leaves the layout and the way back in
-       is the page strip's `PageNavCollapsedSidebar`, plus ⌘B — Cando's CAN-335. */
+       is the floating `CollapsedSidebarToggle` in `app-shell.tsx`, plus ⌘B — Cando's CAN-335. */
     <Sidebar collapsible="offcanvas">
-      {/* py-1.5 over the primitive's p-2: 8px sides but 6px above and below the 36px row, which is
-          what brings the header to the strip's 48. */}
+      {/* py-1.5 over the primitive's p-2: 8px sides but 6px above and below the 36px row, which
+          brings the header to 48px, the mobile top bar's height. */}
       <SidebarHeader className="py-1.5">
         <div className="flex h-9 items-center justify-between rounded-md px-2">
           <Link
@@ -78,7 +78,7 @@ export function MainSidebar() {
       <SidebarContent>
         <SidebarGroup>
           {/* A landmark with a name, so a screen-reader user can jump to it — and past it — by
-              name; the strip in `app-shell.tsx` is the other `nav`. */}
+              name; a detail screen's breadcrumb is the other `nav`. */}
           <nav aria-label="Console">
             <SidebarMenu>
               <SidebarNavigation items={NAV_ITEMS} />

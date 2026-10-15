@@ -1689,17 +1689,21 @@ main group and the footer group (Docs & help, out to `DOCS_URL`, then Settings) 
 from too; GRA-309) with the open-ask count as a `SidebarMenuBadge` on Requests and the count in the
 link's own name, and `account-menu.tsx` at the foot: name and email, the Theme radio group (label *inside* the
 group — Base UI's `Menu.GroupLabel` throws outside one), Sign out through `src/lib/sign-out.ts`,
-which removes the session entry and clears the cache before anyone navigates. The screen's title is
-written once, with `useScreenTitle` (`shell/screen-title.tsx`), and shown by two bars — the 48px
-`PageNav` strip at `md` and up, which also carries `PageNavCollapsedSidebar`, and `MobileTopBar`
-below it; the strip is mounted once in the shell rather than per screen as in Cando, for the
-reason that file gives. **⌘K (Ctrl+K) opens the command palette** (GRA-289), mounted once in
+which removes the session entry and clears the cache before anyone navigates. **There is no page
+strip at `md` and up** (GRA-344): App v2 opens every screen on its own `PageHeader`, so Cando's
+48px `PageNav` and the title it repeated are gone. Below `md`, `MobileTopBar` is the one band, its
+hamburger opening the drawer and its title the string a screen passes `useScreenTitle`
+(`shell/screen-title.tsx`), which feeds nothing else and does not set `document.title`. The toggle
+by the wordmark collapses the sidebar; collapsed, `shell/collapsed-sidebar-toggle.tsx` floats the
+same toggle in the content column's top-left corner, and the shell pads the column below 1200px
+so a page never runs under it. **⌘K (Ctrl+K) opens the command palette** (GRA-289), mounted once in
 the shell beside a Search row under the wordmark (`shell/command-palette.tsx`, over the ported
 `command` primitive and `cmdk`): its rows, their filter and their groups are
 `src/lib/command-palette.ts` (`PaletteItem`, `PALETTE_GROUPS`, `filterPalette`), so a new kind of
 result is rows and a group name there, never a filter in the component. Every screen is a `PageContainer` (`large` for the agents table and the
 agent detail, `medium` for the card stacks and settings) opening with `PageHeader`; a detail screen
-titles the bars with `PageNavBreadcrumb`. The doors share `AuthHeader` and `AuthCard` (`max-w-md`,
+draws `PageBreadcrumb` (`page/page-breadcrumb.tsx`, "Integrations / Gmail") 12px above its header,
+the parent a link back to the list. The doors share `AuthHeader` and `AuthCard` (`max-w-md`,
 the `xs` container inside); `route-not-found.tsx`, `route-error.tsx` and `loader.tsx` are Cando's.
 Not here, because Graft has none of it (ADR 0017): the agent rail and its faces, the New Thread
 button, the Automations and Recents groups, and the settings shell with its own sidebar.

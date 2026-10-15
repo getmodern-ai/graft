@@ -1,12 +1,11 @@
 import type * as React from "react";
 import { useState } from "react";
 
-import { PageNav } from "@/components/page/page-nav";
-import { PageNavCollapsedSidebar } from "@/components/page/page-nav-collapsed-sidebar";
+import { CollapsedSidebarToggle } from "@/components/shell/collapsed-sidebar-toggle";
 import { CommandPalette, CommandPaletteProvider } from "@/components/shell/command-palette";
 import { MainSidebar } from "@/components/shell/main-sidebar";
 import { MobileTopBar } from "@/components/shell/mobile-top-bar";
-import { ScreenTitle, ScreenTitleProvider } from "@/components/shell/screen-title";
+import { ScreenTitleProvider } from "@/components/shell/screen-title";
 import { MAIN_CONTENT_ID, SkipNav } from "@/components/skip-nav";
 import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar";
 import { sidebarOpenFromCookie } from "@/lib/sidebar-state";
@@ -18,12 +17,12 @@ import { sidebarOpenFromCookie } from "@/lib/sidebar-state";
  * Cando's `apps/web/src/components/shell/app-shell.tsx` without the agent rail and without the
  * `--sidebar-width` override that existed to fit beside it (ADR 0017) — so the sidebar sits at
  * the left edge at the primitive's own 16rem. The column is a flex stack rather than Cando's
- * grid: the top bar and the strip are `shrink-0` rows, and the screen scrolls in the row that is
- * left, which keeps the strip — and the collapsed-sidebar toggle it carries — on screen however
- * long the page.
+ * grid: the mobile top bar is a `shrink-0` row, and the screen scrolls in the row that is left.
  *
- * The strip is mounted here, once, rather than per screen as Cando mounts it; `screen-title.tsx`
- * says why, and what it feeds.
+ * No page strip at `md` and up, unlike Cando's: App v2 opens each screen on its own `PageHeader`,
+ * a detail screen with its breadcrumb above it (`page/page-breadcrumb.tsx`), so the strip and the
+ * title it repeated are gone (GRA-344). What the strip also carried, the way back to a collapsed
+ * sidebar, is `CollapsedSidebarToggle`, floating in the column's corner.
  */
 export function AppShell({ children }: { children: React.ReactNode }) {
   // Read once, at mount: `SidebarProvider` writes the cookie on every toggle and reads it never
@@ -50,18 +49,13 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             // Not in the normal tab order — a keyboard user reaches it only via `SkipNav`'s href,
             // which needs the target to be programmatically focusable at all.
             tabIndex={-1}
-            className="h-svh min-h-0 min-w-0"
+            // While the sidebar is collapsed the floating toggle holds the top-left corner, and
+            // below 1200px a `large` page's 24px gutter would run under it; 48px of padding
+            // clears it. Wider, the centred page starts past it and nothing moves.
+            className="h-svh min-h-0 min-w-0 md:max-[1200px]:peer-data-[state=collapsed]:pl-12"
           >
             <MobileTopBar />
-            {/* `hidden … md:flex`: below `md` the top bar above stands in for this strip. The
-                collapsed-sidebar control leads the title whenever the sidebar is off canvas, by
-                its own rule (`page-nav-collapsed-sidebar.tsx`). */}
-            <PageNav aria-label="Page" className="hidden shrink-0 md:flex">
-              <div className="flex min-w-0 items-center">
-                <PageNavCollapsedSidebar />
-                <ScreenTitle />
-              </div>
-            </PageNav>
+            <CollapsedSidebarToggle />
             <div className="min-h-0 flex-1 overflow-y-auto">{children}</div>
           </SidebarInset>
           <CommandPalette />

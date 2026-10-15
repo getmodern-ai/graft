@@ -4,13 +4,13 @@ import { SidebarTrigger } from "@/components/ui/sidebar";
 
 /**
  * The one 48px band a screen wears below `md`: a hamburger at the leading edge that opens the
- * sidebar's drawer, then the mounted screen's title. At `md` and up it is gone, and the page strip
- * in `app-shell.tsx` carries the same title beside the collapsed-sidebar toggle.
+ * sidebar's drawer, then the mounted screen's title. At `md` and up it is gone: the sidebar is
+ * beside the page, and the page's own header carries its title (GRA-344).
  *
  * Cando's `apps/web/src/components/shell/mobile-top-bar.tsx` (its CAN-352) without the agent
  * face and the actions slot — Graft has no agent faces, and its screens' actions live in
- * `PageHeaderActions` at every width. The title comes from `screen-title.tsx` rather than a slot
- * of this component's own; that file says why the two bars share one.
+ * `PageHeaderActions` at every width. The title comes from `screen-title.tsx`, which a screen
+ * sets once.
  *
  * Two deviations Cando records against its frame, carried over: the frame's 16px glyph gets a
  * 36px button, because 16px falls short of the 24px WCAG 2.2 minimum (SC 2.5.8); and there is no
