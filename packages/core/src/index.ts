@@ -448,7 +448,12 @@ export {
   validateAuthorizationRequest,
   validateClientRegistration,
 } from "./mcp-oauth/mcp-oauth.service";
-export { createModelKeyDeps, type ModelKeyDeps } from "./model-key/model-key.deps";
+export {
+  createModelKeyDeps,
+  type ModelKeyCheck,
+  type ModelKeyCheckInput,
+  type ModelKeyDeps,
+} from "./model-key/model-key.deps";
 export {
   deletePersonModelKey,
   findPersonModelKeyRow,
@@ -458,8 +463,10 @@ export {
   MODEL_KEY_MAX_LENGTH,
   MODEL_KEY_SCOPE,
   type ModelKeyOutput,
+  modelKeyProviderName,
   modelKeyScope,
   type SetModelKeyInput,
+  type SetModelKeyResult,
   setPersonModelKey,
   toModelKeyOutput,
 } from "./model-key/model-key.service";

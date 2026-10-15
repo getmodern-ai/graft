@@ -3244,6 +3244,7 @@ describe("the person's model key", () => {
         baseUrl: null,
         setAt: NOW.toISOString(),
       },
+      warning: null,
     });
     expect(JSON.stringify(body)).not.toContain("sk-ant");
     // The row holds the vault's ciphertext, not the key.
@@ -3258,6 +3259,32 @@ describe("the person's model key", () => {
     expect(await gone.json()).toEqual({ deleted: true });
     const again = await app.request("/api/me/model-key", from("DELETE"));
     expect(await again.json()).toEqual({ deleted: false });
+  });
+
+  it("refuses a key the provider refused with 400, and saves an unchecked one with a warning (GRA-340)", async () => {
+    const { app, deps } = harness(session);
+    deps.modelKey.checkKey = async () => ({ outcome: "refused", status: 401 });
+    const refused = await app.request(
+      "/api/me/model-key",
+      json({ provider: "anthropic", apiKey: "not-a-key" }, "PUT"),
+    );
+    expect(refused.status).toBe(400);
+    expect(await refused.json()).toMatchObject({
+      message: "apiKey was refused by Anthropic (status 401). Check the key and enter it again.",
+    });
+    expect(deps.modelKey.rows.size).toBe(0);
+
+    deps.modelKey.checkKey = async () => ({ outcome: "unchecked", reason: "unreachable" });
+    const saved = await app.request(
+      "/api/me/model-key",
+      json({ provider: "anthropic", apiKey: "sk-ant-maybe" }, "PUT"),
+    );
+    expect(saved.status).toBe(200);
+    expect(await saved.json()).toMatchObject({
+      modelKey: { provider: "anthropic" },
+      warning: expect.stringMatching(/^The key is saved, but Anthropic could not be reached/),
+    });
+    expect(deps.modelKey.rows.size).toBe(1);
   });
 
   it("answers the deployment's model with whether the person has a key, and no key or model id", async () => {

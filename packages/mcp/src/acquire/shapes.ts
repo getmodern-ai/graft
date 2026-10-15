@@ -53,6 +53,8 @@ export function acquireNextStep(vendor: string, name: string): string {
  * loop finding it cannot go on, `remix_unavailable` among them: the tool `from` named has gone or has
  * no current version since the job was queued, and `remix_superseded`: the tool moved off the version
  * the remix started from before its pass, so the pass is not made current (GRA-243).
+ * `model_key_refused` is the person's own model key refused by their provider mid-job (GRA-340):
+ * theirs to fix in Settings, so the console points there instead of at the goal.
  */
 export const ACQUIRE_FAILURES = [
   "attempt_budget",
@@ -60,6 +62,7 @@ export const ACQUIRE_FAILURES = [
   "turn_budget",
   "model_gave_up",
   "model_failed",
+  "model_key_refused",
   "connection_unavailable",
   "build_approval_missing",
   "remix_unavailable",

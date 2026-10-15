@@ -60,7 +60,7 @@ import {
   layerConnections,
   seedConnections,
 } from "./connections";
-import { createModel } from "./model";
+import { createModel, createModelKeyCheck } from "./model";
 import { describeObservability, flushObservability } from "./observability";
 import { toolCalledProperties } from "./tool-called";
 
@@ -244,7 +244,7 @@ const connectionDeps = createConnectionDeps({ encrypt: vault.encrypt }, provider
  */
 const modelKeyDeps = createModelKeyDeps(
   { encrypt: vault.encrypt },
-  { requireHttps: env.NODE_ENV === "production" },
+  { requireHttps: env.NODE_ENV === "production", checkKey: createModelKeyCheck() },
 );
 
 /**

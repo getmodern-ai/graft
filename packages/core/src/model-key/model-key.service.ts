@@ -7,7 +7,7 @@ import { HOST_NOT_PUBLIC } from "../connection/connection.rules";
 import type { ServiceContext } from "../context";
 import { ServiceError } from "../errors";
 import type { Principal } from "../tenancy";
-import type { ModelKeyDeps } from "./model-key.deps";
+import type { ModelKeyCheck, ModelKeyDeps } from "./model-key.deps";
 
 /**
  * A person's own model key (ADR 0014): entered in the console, encrypted here through the vault's
@@ -51,6 +51,62 @@ export type SetModelKeyInput = {
   triageModel?: string | null;
   baseUrl?: string | null;
 };
+
+/** What a save answers: the key's public shape, and a sentence when the provider could not check it. */
+export type SetModelKeyResult = { modelKey: ModelKeyOutput; warning: string | null };
+
+const PROVIDER_NAMES: Record<ModelKeyProvider, string> = {
+  anthropic: "Anthropic",
+  openai: "OpenAI",
+};
+
+/**
+ * The provider as a person's sentences name it: the provider's name, or the base URL's host when
+ * the key goes to one, since a gateway is not OpenAI. A refusal at save and a refusal mid-job
+ * (`apps/server/src/model.ts`) both read it.
+ */
+export function modelKeyProviderName(provider: ModelKeyProvider, baseUrl: string | null): string {
+  if (baseUrl) {
+    try {
+      return new URL(baseUrl).host;
+    } catch {
+      // A stored base URL always parses; the provider's name is the fallback all the same.
+    }
+  }
+  return PROVIDER_NAMES[provider];
+}
+
+/**
+ * The provider's answer as the save acts on it (GRA-340): a refused key is a 400 naming the field,
+ * a base URL that resolved privately is the address rule's 400, and a provider that said nothing
+ * either way saves the key with a warning, since a key is not refused on a guess.
+ */
+function judgeKeyCheck(check: ModelKeyCheck, providerName: string): string | null {
+  switch (check.outcome) {
+    case "accepted":
+      return null;
+    case "refused":
+      throw new ServiceError(
+        "BAD_REQUEST",
+        `apiKey was refused by ${providerName} (status ${check.status}). Check the key and enter it again.`,
+        { details: { field: "apiKey", reason: "key_refused" } },
+      );
+    case "not_public":
+      throw badBaseUrl(
+        "baseUrl must be on a public host: its name resolves to a private, loopback, link-local, metadata or internal address",
+        HOST_NOT_PUBLIC,
+      );
+    case "unchecked": {
+      const why =
+        check.reason === "timeout"
+          ? "did not answer in time"
+          : check.reason === "unreachable"
+            ? "could not be reached"
+            : `answered status ${check.status ?? "unknown"}`;
+      return `The key is saved, but ${providerName} ${why}, so Graft could not check it. A build will say so if the key is refused.`;
+    }
+  }
+}
 
 /** The row's public shape: no ciphertext, no key. */
 export function toModelKeyOutput(row: PersonModelKeyRow): ModelKeyOutput {
@@ -128,15 +184,16 @@ export async function getPersonModelKey(
 }
 
 /**
- * Enter or replace the person's key. The key is checked for shape, encrypted under the person's
- * model-key scope, and written in one statement; the answer is the public shape.
+ * Enter or replace the person's key. The key is checked for shape, then with the provider when
+ * `checkKey` is bound, encrypted under the person's model-key scope, and written in one statement;
+ * the answer is the public shape and the check's warning, if any.
  */
 export async function setPersonModelKey(
   ctx: ServiceContext,
   principal: Principal,
   input: SetModelKeyInput,
   deps: ModelKeyDeps,
-): Promise<ModelKeyOutput> {
+): Promise<SetModelKeyResult> {
   if (!isProvider(input.provider)) {
     throw new ServiceError(
       "BAD_REQUEST",
@@ -155,6 +212,12 @@ export async function setPersonModelKey(
   const authoringModel = optionalId(input.authoringModel, "authoringModel");
   const triageModel = optionalId(input.triageModel, "triageModel");
   const baseUrl = optionalBaseUrl(input.baseUrl, deps.requireHttps ?? true);
+  const warning = deps.checkKey
+    ? judgeKeyCheck(
+        await deps.checkKey({ provider: input.provider, apiKey, baseUrl }),
+        modelKeyProviderName(input.provider, baseUrl),
+      )
+    : null;
 
   const keyCiphertext = await deps.vault.encrypt(
     { [MODEL_KEY_FIELD]: apiKey },
@@ -169,7 +232,7 @@ export async function setPersonModelKey(
     keyCiphertext,
     keySetAt: deps.now(),
   });
-  return toModelKeyOutput(row);
+  return { modelKey: toModelKeyOutput(row), warning };
 }
 
 /** Remove the person's key; true when one was there. */

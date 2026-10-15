@@ -10,6 +10,7 @@ import {
   type ModelSituation,
   type ModelSituationKind,
   type ModuleDraft,
+  OwnModelKeyRefusedError,
   type ScriptedStep,
 } from "@graft/model";
 import { CREDENTIAL_REDACTED } from "@graft/proxy";
@@ -1838,6 +1839,34 @@ describe("a job that fails and tries again", () => {
       expect(JSON.stringify(status)).not.toContain("i-0abc123");
       const { traces } = rowsOf(jobId);
       expect(traces.some((row) => JSON.stringify(row.data).includes("i-0abc123"))).toBe(true);
+    } finally {
+      await a.close();
+    }
+  }, 30_000);
+
+  it("ends model_key_refused with the Settings sentence when the person's own key is refused (GRA-340)", async () => {
+    deps.model = {
+      name: "own-key",
+      open: () => ({
+        turn: async () => {
+          // What `withOwnKeyRefusal` throws for a 401 from the person's provider.
+          throw new OwnModelKeyRefusedError("Anthropic");
+        },
+      }),
+    };
+    const a = await connect(TOKEN_A);
+    try {
+      const { status } = await acquireAndFinish(a, {
+        connectionId: CONN_DEMO,
+        goal: "List the items, with a refused key",
+      });
+      expect(status.status).toBe("failed");
+      const failure = status.result as AcquireFailure;
+      expect(failure.failure).toBe("model_key_refused");
+      expect(failure.message).toBe(
+        "Your own model key was refused by Anthropic. Update it in Settings.",
+      );
+      expect(failure.lastDiagnostics).toMatchObject({ provider: "Anthropic" });
     } finally {
       await a.close();
     }

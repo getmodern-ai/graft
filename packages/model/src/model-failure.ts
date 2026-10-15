@@ -3,6 +3,53 @@ import { APICallError, RetryError } from "ai";
 import { ModelAnswerInvalidError } from "./answer";
 import { ModelUnavailableError } from "./routed";
 import { ScriptExhaustedError, ScriptMismatchError } from "./scripted";
+import type { ModelAdapter } from "./types";
+
+/**
+ * A person's own key refused by their provider mid-job (GRA-340): what `withOwnKeyRefusal` throws
+ * in place of the provider's 401 or 403, so the job can end on a kind of its own and the console
+ * can send the person to Settings rather than suggest the task be worded again. `provider` is the
+ * name the person reads, the server's to choose (`@graft/core`'s `modelKeyProviderName`).
+ */
+export class OwnModelKeyRefusedError extends Error {
+  constructor(
+    readonly provider: string,
+    options?: { cause?: unknown },
+  ) {
+    super(`Your own model key was refused by ${provider}. Update it in Settings.`, options);
+    this.name = "OwnModelKeyRefusedError";
+  }
+}
+
+/** Whether the provider refused the key itself: a 401 or 403, through the SDK's retry wrapper. */
+export function isKeyRefusal(error: unknown): boolean {
+  const status = apiCallErrorIn(error)?.statusCode;
+  return status === 401 || status === 403;
+}
+
+/**
+ * The adapter a person's own key builds, with its key refusals named as theirs. Only the job's
+ * turns are wrapped: Setup's proposals answer an outcome rather than throw, and say nothing a
+ * person acts on.
+ */
+export function withOwnKeyRefusal(adapter: ModelAdapter, provider: string): ModelAdapter {
+  return {
+    ...adapter,
+    open(context) {
+      const conversation = adapter.open(context);
+      return {
+        async turn(situation) {
+          try {
+            return await conversation.turn(situation);
+          } catch (error) {
+            if (isKeyRefusal(error)) throw new OwnModelKeyRefusedError(provider, { cause: error });
+            throw error;
+          }
+        },
+      };
+    },
+  };
+}
 
 /**
  * A failed model call as the sentence a person reads in a job's failure (GRA-338). What the
@@ -17,7 +64,8 @@ export function modelFailureSentence(error: unknown): string {
     error instanceof ModelAnswerInvalidError ||
     error instanceof ModelUnavailableError ||
     error instanceof ScriptExhaustedError ||
-    error instanceof ScriptMismatchError
+    error instanceof ScriptMismatchError ||
+    error instanceof OwnModelKeyRefusedError
   ) {
     return error.message;
   }

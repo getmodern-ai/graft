@@ -68,7 +68,7 @@ import {
   newToolStep,
   runningNewToolJob,
 } from "@/lib/new-tool";
-import { jobPollInterval, progressCard } from "@/lib/setup-progress";
+import { jobPollInterval, MODEL_KEY_SETTINGS_PATH, progressCard } from "@/lib/setup-progress";
 import { acquireJobQuery } from "@/lib/setup-queries";
 import { toolAccessChip } from "@/lib/status-chips";
 import { cn } from "@/lib/utils";
@@ -606,10 +606,24 @@ function FailedView({
         </DialogDescription>
       </DialogHeader>
       <JobRow job={job} />
-      <p className="text-muted-foreground text-sm">
-        Try describing it a different way, for example naming what to look for in {page.displayName}
-        . Nothing was added to your tools.
-      </p>
+      {card.keyRefused ? (
+        // The person's own model key is what failed, not the description (GRA-340).
+        <Alert variant="destructive">
+          <ErrorIcon />
+          <AlertDescription>
+            Nothing was added to your tools.{" "}
+            <Link to={MODEL_KEY_SETTINGS_PATH} onClick={onClose} className="underline">
+              Update your model key in Settings
+            </Link>
+            , then try again.
+          </AlertDescription>
+        </Alert>
+      ) : (
+        <p className="text-muted-foreground text-sm">
+          Try describing it a different way, for example naming what to look for in{" "}
+          {page.displayName}. Nothing was added to your tools.
+        </p>
+      )}
       {card.failureDetails ? (
         <SetupDisclosure label="Details">
           <CodeBlock
@@ -630,9 +644,11 @@ function FailedView({
         <Button variant="ghost" onClick={onClose} disabled={retry.isPending}>
           Close
         </Button>
-        <Button variant="outline" onClick={onChangeDescription} disabled={retry.isPending}>
-          Change description
-        </Button>
+        {card.keyRefused ? null : (
+          <Button variant="outline" onClick={onChangeDescription} disabled={retry.isPending}>
+            Change description
+          </Button>
+        )}
         <Button
           onClick={() =>
             retry.mutate({

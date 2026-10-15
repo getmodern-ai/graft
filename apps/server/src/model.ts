@@ -3,7 +3,10 @@ import { readFile } from "node:fs/promises";
 import {
   findPersonModelKeyRow,
   MODEL_KEY_FIELD,
+  type ModelKeyCheck,
+  type ModelKeyCheckInput,
   type ModelKeyDeps,
+  modelKeyProviderName,
   modelKeyScope,
   type ServiceContext,
 } from "@graft/core";
@@ -11,6 +14,7 @@ import type { DbOrTx } from "@graft/db";
 import type { ModelKeyProvider } from "@graft/db/schema/person-model-key";
 import type { ServerEnv } from "@graft/env/server";
 import {
+  checkModelKey,
   createProviderModel,
   createRoutedModel,
   createScriptedModel,
@@ -22,6 +26,7 @@ import {
   type ProviderModelDeps,
   parseScript,
   readScriptConnectionProposal,
+  withOwnKeyRefusal,
 } from "@graft/model";
 import type { ModelTelemetryBacking } from "@graft/observability";
 import { createGuardedFetch } from "@graft/proxy";
@@ -134,7 +139,7 @@ async function ownModelFor(
       `person ${personId}'s model key decrypted to a record without ${MODEL_KEY_FIELD}`,
     );
   }
-  return providerFactory(
+  const adapter = providerFactory(
     {
       provider: row.provider,
       apiKey,
@@ -147,6 +152,19 @@ async function ownModelFor(
     // save is `@graft/core`'s). The provider's own host needs no guard and keeps the platform's.
     row.baseUrl ? { telemetry, fetch: personFetch } : { telemetry },
   );
+  // A 401 or 403 from here is the person's key, and the job ends saying so (GRA-340).
+  return withOwnKeyRefusal(adapter, modelKeyProviderName(row.provider, row.baseUrl));
+}
+
+/**
+ * The save's check of a person's key (GRA-340; `ModelKeyDeps.checkKey`): the provider's models
+ * list, through the proxy's address-guarded fetch, since the base URL is the person's choice as at
+ * call time (GRA-338). `fetch` is a test's seam.
+ */
+export function createModelKeyCheck(
+  fetch: typeof globalThis.fetch = createGuardedFetch(),
+): (input: ModelKeyCheckInput) => Promise<ModelKeyCheck> {
+  return (input) => checkModelKey(input, { fetch });
 }
 
 export async function createModel(input: CreateModelInput): Promise<ModelSetup> {

@@ -92,7 +92,21 @@ export type ExplainedProgressLine = {
 export type BuildingView =
   | { kind: "working" }
   | { kind: "passed" }
-  | { kind: "failed"; message: string };
+  | {
+      kind: "failed";
+      message: string;
+      /**
+       * The person's own model key was refused by their provider (`model_key_refused`, GRA-340):
+       * the fix is in Settings, not in the task, and the step says so with a link there.
+       */
+      keyRefused: boolean;
+    };
+
+/** The failure kind `acquire_status` names when the person's own model key was refused. */
+export const MODEL_KEY_REFUSED = "model_key_refused";
+
+/** Where a refused key is put right: the console's Settings screen. */
+export const MODEL_KEY_SETTINGS_PATH = "/settings";
 
 export function buildingView(job: { status: string; result?: unknown } | undefined): BuildingView {
   if (job?.status === "succeeded") return { kind: "passed" };
@@ -102,7 +116,12 @@ export function buildingView(job: { status: string; result?: unknown } | undefin
     typeof result === "object" && result !== null && "message" in result
       ? String(result.message)
       : "The job failed.";
-  return { kind: "failed", message };
+  const keyRefused =
+    typeof result === "object" &&
+    result !== null &&
+    "failure" in result &&
+    result.failure === MODEL_KEY_REFUSED;
+  return { kind: "failed", message, keyRefused };
 }
 
 /** Every line with its stage, and each stage's sentence on the first line of it. */
@@ -156,6 +175,8 @@ export type ProgressCard = {
   /** The attempt the job is on, only once past the first. */
   attempt: number | null;
   lines: ExplainedProgressLine[];
+  /** The failure is the person's own model key, refused: point at Settings, not at the task. */
+  keyRefused: boolean;
 };
 
 function sentenceCase(line: string): string {
@@ -181,8 +202,15 @@ export function progressCard(
   }
   const newest = lines.at(-1)?.line;
   const attempts = job?.attempts ?? 0;
+  const keyRefused = view.kind === "failed" && view.keyRefused;
+  // A refused key's sentence is the server's own, whole (`modelFailureSentence`), with nothing
+  // behind it worth a *Details*; any other failure is made short.
   const failure =
-    view.kind === "failed" ? shortFailure(view.message, { fallback: "The job failed." }) : null;
+    view.kind !== "failed"
+      ? null
+      : keyRefused
+        ? { sentence: view.message, details: null }
+        : shortFailure(view.message, { fallback: "The job failed." });
   return {
     kind: view.kind,
     label:
@@ -203,6 +231,7 @@ export function progressCard(
       view.kind === "failed" && job?.progress?.at(-1) === `Stopped: ${view.message}`
         ? lines.slice(0, -1)
         : lines,
+    keyRefused,
   };
 }
 

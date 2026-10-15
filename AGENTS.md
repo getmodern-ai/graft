@@ -1833,6 +1833,19 @@ through, redirects never followed, so a rebound name or a row saved before the r
 operator's `GRAFT_MODEL_BASE_URL` and a key with no base URL get the platform's `fetch`. A failed
 model turn ends the job with `@graft/model`'s `modelFailureSentence` (the status and what to check,
 never the endpoint's message or body); the raw error goes to the job's trace alone.
+**A key is checked with its provider when it is saved, and a refused one mid-job is named as the
+person's** (GRA-340): `ModelKeyDeps.checkKey`, which `index.ts` binds to `model.ts`'s
+`createModelKeyCheck` (`@graft/model`'s `checkModelKey`: the provider's models list through the
+guarded fetch, bounded by `MODEL_KEY_CHECK_TIMEOUT_MS`), refuses a key the provider answers 401
+with a 400 on `apiKey` (`details.reason: "key_refused"`), and saves one it could not ask, or that
+was denied the list (a 403: a restricted key may still generate), with `warning` beside `modelKey`
+in the `PUT` answer. `model.ts` wraps a person's adapter in
+`withOwnKeyRefusal`, so a 401 or 403 mid-job is `OwnModelKeyRefusedError` and the job ends
+`model_key_refused` with "Your own model key was refused by <provider>. Update it in Settings.";
+the console's `progressCard` reads it as `keyRefused`, and Setup's building step and the
+integration page's Get a new tool dialog link to `/settings` (exempt from the Setup intercept)
+instead of suggesting the task change. `createGuardedFetch` takes no dispatcher: its suite swaps
+undici's `Agent` (`packages/proxy/src/guarded-fetch.test.ts`).
 
 **Observability is three seams with no backing in the open form** (GRA-100; ADR 0002 as amended
 2026-09-19; `@graft/observability`): the **log drain** (`LogDrain`) — where a wide event goes after
