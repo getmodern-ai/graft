@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  ACCOUNT_LABEL_MAX,
+  accountLabelOf,
   SIGN_IN_HOSTS,
   setAsideSignInHosts,
   takesCredential,
@@ -415,5 +417,29 @@ describe("validateIssuedCredentialFields", () => {
       validateCredentialFields("oauth_authorization_code", { clientSecret: "s", accessToken: "a" }),
     ).toContain("takes no accessToken");
     expect(validateCredentialFields("oauth_authorization_code", { clientSecret: "s" })).toBeNull();
+  });
+});
+
+describe("accountLabelOf", () => {
+  it("keeps a label as the vendor named it, trimmed", () => {
+    expect(accountLabelOf("  seb@example.com ")).toBe("seb@example.com");
+    expect(accountLabelOf("Seb   Example")).toBe("Seb Example");
+  });
+
+  it("drops control characters rather than refusing the label", () => {
+    const bell = String.fromCodePoint(7);
+    const csi = String.fromCodePoint(0x9b);
+    expect(accountLabelOf(`seb${bell}@example.com${csi}`)).toBe("seb@example.com");
+  });
+
+  it("answers null for nothing usable, never a throw", () => {
+    expect(accountLabelOf(undefined)).toBeNull();
+    expect(accountLabelOf(null)).toBeNull();
+    expect(accountLabelOf(42)).toBeNull();
+    expect(accountLabelOf("   ")).toBeNull();
+  });
+
+  it("cuts a label past the bound", () => {
+    expect(accountLabelOf("a".repeat(ACCOUNT_LABEL_MAX + 50))).toHaveLength(ACCOUNT_LABEL_MAX);
   });
 });

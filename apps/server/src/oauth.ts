@@ -258,7 +258,15 @@ export function createOAuthRoutes(options: OAuthRouteOptions): Hono {
       const locked = await options.connection.findConnectionForUpdate(tx, personId, row.id);
       if (!locked) return null;
       const reconnection = locked.revokedAt !== null;
-      await completeOAuthConsent(scoped, principal, row.id, record, options.connection);
+      // The account the token response named, if any (GRA-300): a label, best-effort.
+      await completeOAuthConsent(
+        scoped,
+        principal,
+        row.id,
+        record,
+        options.connection,
+        token.account,
+      );
       // The waiting `request_connection` or `request_credential` takes `{ connectionId }` as the
       // answer (GRA-28). An ask answered, expired or closed meanwhile does not undo the consent —
       // the connection is connected either way — so those refusals are read and let go.

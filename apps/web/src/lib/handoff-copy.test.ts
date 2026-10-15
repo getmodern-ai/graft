@@ -23,6 +23,15 @@ describe("proposalLead (GRA-314)", () => {
     ).toBe("Hermes set this up. Sign in to Notion through Acme Connect to finish.");
   });
 
+  it("ends saying how often the agent asked, past the first (GRA-300)", () => {
+    expect(proposalLead({ ...base, docsUrl: null, finish: "key", askedCount: 3 })).toBe(
+      "Hermes set this up. Add your Unleashed key to finish. Hermes has asked 3 times.",
+    );
+    expect(proposalLead({ ...base, docsUrl: null, finish: "key", askedCount: 1 })).toBe(
+      "Hermes set this up. Add your Unleashed key to finish.",
+    );
+  });
+
   it("names the added hosts of a widening", () => {
     expect(
       proposalLead({

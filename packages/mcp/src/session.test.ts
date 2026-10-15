@@ -459,6 +459,7 @@ const DEMO_CONNECTION: ConnectionOutput = {
   credentialSetAt: null,
   oauth: null,
   providerReleaseFailedAt: null,
+  account: null,
   revokedAt: null,
   createdAt: new Date(0),
   updatedAt: new Date(0),

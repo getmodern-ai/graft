@@ -484,6 +484,16 @@ export type PendingActionCard = {
   answeredAt: Date | null;
   answer: Record<string, unknown> | null;
   consumedAt: Date | null;
+  /**
+   * How many times the agent has asked this (GRA-300): 1, and more when `request_connection` found
+   * it still open and asked again, which the Requests row says as "asked N times".
+   */
+  askedCount: number;
+  /**
+   * The account at the vendor of the connection the ask is about (GRA-300; `ConnectionOutput`'s
+   * `account`), for the row's "As …"; null when the ask names no connection or the row names none.
+   */
+  account: string | null;
   url: string;
 };
 
@@ -1345,7 +1355,30 @@ export function createApi(options: ApiOptions): Hono {
     return query;
   };
 
-  const card = async (row: PendingActionRow, principal: Principal): Promise<PendingActionCard> => {
+  /**
+   * The person's connections' account labels by id (GRA-300), read once for a list of cards; a
+   * single card reads its own connection instead.
+   */
+  const accountsOf = async (principal: Principal): Promise<Map<string, string | null>> =>
+    new Map(
+      (await listConnections(ctx, principal, connectionDeps)).map((row) => [row.id, row.account]),
+    );
+
+  const accountOf = async (
+    row: PendingActionRow,
+    principal: Principal,
+    accounts?: Map<string, string | null>,
+  ): Promise<string | null> => {
+    if (!row.connectionId) return null;
+    if (accounts) return accounts.get(row.connectionId) ?? null;
+    return (await getConnection(ctx, principal, row.connectionId, connectionDeps))?.account ?? null;
+  };
+
+  const card = async (
+    row: PendingActionRow,
+    principal: Principal,
+    accounts?: Map<string, string | null>,
+  ): Promise<PendingActionCard> => {
     const agent = await getAgent(ctx, principal, row.agentId, agentDeps);
     return {
       id: row.id,
@@ -1360,6 +1393,8 @@ export function createApi(options: ApiOptions): Hono {
       answeredAt: row.answeredAt,
       answer: row.answer,
       consumedAt: row.consumedAt,
+      askedCount: row.askedCount,
+      account: await accountOf(row, principal, accounts),
       url: handoffUrl(handoff.consoleUrl, row.id, signHandoffToken(row, handoff.secret)),
     };
   };
@@ -2709,8 +2744,9 @@ export function createApi(options: ApiOptions): Hono {
     }
     if (state.data === "open") {
       const rows = await listOpenPendingActions(ctx, principal, pendingActionDeps);
+      const accounts = await accountsOf(principal);
       return c.json({
-        pendingActions: await Promise.all(rows.map((row) => card(row, principal))),
+        pendingActions: await Promise.all(rows.map((row) => card(row, principal, accounts))),
       });
     }
     const limit = c.req.query("limit");
@@ -2723,6 +2759,7 @@ export function createApi(options: ApiOptions): Hono {
     const agents = new Map(
       (await listAgents(ctx, principal, agentDeps)).agents.map((agent) => [agent.id, agent]),
     );
+    const accounts = await accountsOf(principal);
     const output: DonePendingActionsOutput = {
       pendingActions: page.rows.map((row) => {
         const agent = agents.get(row.agentId);
@@ -2739,6 +2776,8 @@ export function createApi(options: ApiOptions): Hono {
           answeredAt: row.answeredAt,
           answer: row.answer,
           consumedAt: row.consumedAt,
+          askedCount: row.askedCount,
+          account: row.connectionId ? (accounts.get(row.connectionId) ?? null) : null,
           state: pendingActionDoneState(row),
           closedReason: row.closedReason,
           finishedAt: pendingActionFinishedAt(row),

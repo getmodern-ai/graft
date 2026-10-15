@@ -20,6 +20,7 @@ import type { BlobRow } from "@graft/db/repo/blob";
 import type { ConnectionRow } from "@graft/db/repo/connection";
 import type { findMcpClient, McpClientRow } from "@graft/db/repo/mcp-oauth";
 import type {
+  countPendingActionRepeat,
   listPendingActionsByKind,
   lockPendingActionKey,
   PendingActionRow,
@@ -98,6 +99,8 @@ export type FakeStore = {
     schemeConfig?: Record<string, string>;
     primaryHost: string;
     hosts?: readonly string[];
+    /** The account at the vendor (GRA-300); null when omitted, as most rows are. */
+    account?: string | null;
   }): ConnectionRow;
   /** A tool with one published version and the pointer on it — what GRA-18's publish leaves behind. */
   addTool(input: {
@@ -194,6 +197,7 @@ export function createFakeStore(options: { now?: () => Date } = {}): FakeStore {
         oauthScopes: null,
         oauthRefreshState: null,
         providerReleaseFailedAt: null,
+        account: input.account ?? null,
         revokedAt: null,
         owner: "person",
         createdAt: at,
@@ -326,6 +330,7 @@ export type FakeDeps = {
   approval: ApprovalDeps;
   pendingAction: PendingActionDeps;
   listPendingActionsByKind: typeof listPendingActionsByKind;
+  countPendingActionRepeat: typeof countPendingActionRepeat;
   lockPendingActionKey: typeof lockPendingActionKey;
   findMcpClient: typeof findMcpClient;
   acquireJob: AcquireJobDeps;
@@ -597,6 +602,7 @@ export function createFakeDeps(store: FakeStore): FakeDeps {
         oauthScopes: input.oauthScopes ?? null,
         oauthRefreshState: null,
         providerReleaseFailedAt: null,
+        account: input.account ?? null,
         revokedAt: null,
         owner: "person" as const,
         createdAt: at,
@@ -634,6 +640,7 @@ export function createFakeDeps(store: FakeStore): FakeDeps {
         ...(args.oauthRefreshState === undefined
           ? {}
           : { oauthRefreshState: args.oauthRefreshState }),
+        ...(args.account === undefined ? {} : { account: args.account }),
       };
       store.connections.set(id, updated);
       return updated;
@@ -646,11 +653,17 @@ export function createFakeDeps(store: FakeStore): FakeDeps {
       return updated;
     },
     /** The repo's statement: the provider's reference written, `revoked_at` cleared (ADR 0019). */
-    setConnectionProviderRef: async (_db, personId, id, providerRef) => {
+    setConnectionProviderRef: async (_db, personId, id, providerRef, account = null) => {
       const row = store.connections.get(id);
       if (!row || row.personId !== personId) return null;
       refuseDuplicateRef(row.provider, providerRef, id);
-      const updated = { ...row, providerRef, revokedAt: null, providerReleaseFailedAt: null };
+      const updated = {
+        ...row,
+        providerRef,
+        account,
+        revokedAt: null,
+        providerReleaseFailedAt: null,
+      };
       store.connections.set(id, updated);
       return updated;
     },
@@ -1391,6 +1404,7 @@ export function createFakeDeps(store: FakeStore): FakeDeps {
         answer: input.answer ?? null,
         consumedAt: input.consumedAt ?? null,
         closedReason: input.closedReason ?? null,
+        askedCount: input.askedCount ?? 1,
         owner: "person",
         createdAt: input.createdAt ?? store.now(),
         updatedAt: input.updatedAt ?? store.now(),
@@ -1459,6 +1473,21 @@ export function createFakeDeps(store: FakeStore): FakeDeps {
     },
     newId: () => `pa_${store.newId()}`,
     now: store.now,
+  };
+
+  /** The repo's statement (GRA-300): one more, only while the ask is open and in time. */
+  const countPendingActionRepeat: FakeDeps["countPendingActionRepeat"] = async (
+    _db,
+    scope,
+    id,
+    now,
+  ) => {
+    const row = store.pendingActions.get(id);
+    if (!ownsAgent(scope) || row?.agentId !== scope.agentId) return null;
+    if (row.answeredAt !== null || row.consumedAt !== null || row.expiresAt <= now) return null;
+    const updated = { ...row, askedCount: row.askedCount + 1 };
+    store.pendingActions.set(id, updated);
+    return updated;
   };
 
   const listPendingActionsByKind: FakeDeps["listPendingActionsByKind"] = async (
@@ -1691,6 +1720,7 @@ export function createFakeDeps(store: FakeStore): FakeDeps {
     approval,
     pendingAction,
     listPendingActionsByKind,
+    countPendingActionRepeat,
     // Nothing to serialise over a map: one process, one store, no concurrent transactions.
     lockPendingActionKey: async () => {},
     findMcpClient: async (_db, clientId) => store.mcpClients.get(clientId) ?? null,

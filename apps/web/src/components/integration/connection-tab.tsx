@@ -9,6 +9,7 @@ import { ReenterCredentialDialog } from "@/components/connection/reenter-credent
 import { RevokeConnectionDialog } from "@/components/connection/revoke-connection-dialog";
 import { useOAuthConsent } from "@/components/connection/use-oauth-consent";
 import {
+  AccountCircleIcon,
   CheckCircleIcon,
   KeyboardArrowDownIcon,
   KeyboardArrowUpIcon,
@@ -29,6 +30,7 @@ import { Card, CardContent, CardFooter } from "@/components/ui/card";
 import { isKeyringConnection } from "@/lib/connection-queries";
 import {
   connectedThroughLabel,
+  connectionAccountOf,
   loginHolderLine,
   oauthScopesOf,
   type PageConnection,
@@ -86,6 +88,7 @@ function ConnectionPanel({
   const scopes = oauthScopesOf(connection);
   const parameters = schemeParametersOf(connection);
   const revoked = connection.state === "revoked";
+  const account = connectionAccountOf(connection);
   // With several connections each panel carries its name as an `h2` and its sections step down.
   const Section = titled ? "h3" : "h2";
 
@@ -116,6 +119,11 @@ function ConnectionPanel({
                     <StatusChip chip={connectionStateChip(connection, connection.state)} />
                   </FactRow>
                 )}
+                {account ? (
+                  <FactRow icon={<AccountCircleIcon />} label="Signed in as">
+                    <span className="break-all">{account}</span>
+                  </FactRow>
+                ) : null}
                 <FactRow icon={<PowerIcon />} label="Connected through">
                   {connectedThroughLabel(connection)}
                 </FactRow>

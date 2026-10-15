@@ -23,7 +23,11 @@ import {
 } from "@graft/core";
 import type { DbOrTx } from "@graft/db";
 import { findMcpClient } from "@graft/db/repo/mcp-oauth";
-import { listPendingActionsByKind, lockPendingActionKey } from "@graft/db/repo/pending-action";
+import {
+  countPendingActionRepeat,
+  listPendingActionsByKind,
+  lockPendingActionKey,
+} from "@graft/db/repo/pending-action";
 import type { ModelAdapter } from "@graft/model";
 import {
   type PublishArgs,
@@ -144,6 +148,8 @@ export type McpDeps = {
   pendingAction: PendingActionDeps;
   /** The one read the ask flow needs that the pending-action seam does not carry — `approval.ts` says why. */
   listPendingActionsByKind: typeof listPendingActionsByKind;
+  /** One more on an open ask's `asked_count` when `request_connection` re-uses it (GRA-300). */
+  countPendingActionRepeat: typeof countPendingActionRepeat;
   /**
    * The advisory lock that serialises "find the open ask or make one" for a key, inside the
    * transaction that does both (`connection-request.ts`'s scope ask, GRA-104). The fake is a
@@ -330,6 +336,7 @@ export function createMcpDeps(input: CreateMcpDepsInput): McpDeps {
     acquireJob: defaultAcquireJobDeps,
     setup: defaultSetupDeps,
     listPendingActionsByKind,
+    countPendingActionRepeat,
     lockPendingActionKey,
     findMcpClient,
     checkModule,

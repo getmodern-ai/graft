@@ -134,6 +134,27 @@ export function integrationPageOf(
   };
 }
 
+/**
+ * The account a connection is signed in as (GRA-300; `ConnectionOutput`'s `account`), or null when
+ * the provider or the consent named none, which is most rows: every screen draws without it.
+ */
+export function connectionAccountOf(connection: Pick<Connection, "account">): string | null {
+  const account = connection.account;
+  return typeof account === "string" && account.trim() !== "" ? account.trim() : null;
+}
+
+/**
+ * The header's "As …": the account of the integration's one live connection. With several live
+ * connections the header names none, since each is drawn with its own on the Connection tab.
+ */
+export function headerAccountOf(
+  page: Pick<Extract<IntegrationPage, { kind: "integration" }>, "connections">,
+): string | null {
+  const live = page.connections.filter((connection) => connection.state !== "revoked");
+  const [only] = live;
+  return live.length === 1 && only ? connectionAccountOf(only) : null;
+}
+
 /** The header's last fact: how many of the person's agents can use the integration now. */
 export function agentsCanUseLine(agentCount: number): string {
   if (agentCount === 0) return "no agent can use it";

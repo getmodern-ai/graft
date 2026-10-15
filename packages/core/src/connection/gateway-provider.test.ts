@@ -30,6 +30,7 @@ const row: ConnectionRow = {
   provider: GATEWAY_PROVIDER,
   providerRef: null,
   providerReleaseFailedAt: null,
+  account: null,
   vendor: "unleashed",
   displayName: "Acme Unleashed",
   scheme: "gateway",

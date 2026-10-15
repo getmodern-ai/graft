@@ -1,5 +1,5 @@
 import { relations, sql } from "drizzle-orm";
-import { index, jsonb, pgTable, text, timestamp } from "drizzle-orm/pg-core";
+import { index, integer, jsonb, pgTable, text, timestamp } from "drizzle-orm/pg-core";
 
 import { agent } from "./agent";
 import { owned } from "./columns";
@@ -52,6 +52,12 @@ export const pendingAction = pgTable(
      * console's Done list says "closed" rather than "expired". `expires_at` still carries the moment.
      */
     closedReason: text("closed_reason", { enum: pendingActionClosedReason }),
+    /**
+     * How many times the agent has asked this: 1 when the ask is made, and one more each time a
+     * later call re-uses it while it is still open (GRA-300; `countPendingActionRepeat`), so a
+     * Requests row can say "asked 3 times". Counted only for the asks `request_connection` re-uses.
+     */
+    askedCount: integer("asked_count").notNull().default(1),
     ...owned(),
   },
   (table) => [

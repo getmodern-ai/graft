@@ -723,6 +723,10 @@ export function existingConnectionFor(
  *   when this call routed to a widening, and null otherwise.
  * - `scope`: this agent's `scope` ask about `connection`, a usable row of the person's the agent
  *   was not given (GRA-104), opened here or re-used.
+ *
+ * `reused` on the two ask answers is true when the ask was already standing open, unanswered, for
+ * this proposal: the agent is asking again, which `request_connection` counts (GRA-300). An ask
+ * opened here, or one answered and being taken, is not a repeat.
  * - `refused`: the proposal's shape, an existing row's verdict (`connection_exists`, GRA-76) or a
  *   no-step provider's two guards, with the reason word, the sentence and its details.
  */
@@ -734,6 +738,7 @@ export type RoutedProposal =
       action: PendingActionRow;
       payload: ConnectionProposalPayload;
       widens: ConnectionOutput | null;
+      reused: boolean;
     }
   | {
       kind: "scope";
@@ -741,6 +746,7 @@ export type RoutedProposal =
       action: PendingActionRow;
       payload: ScopeAskPayload;
       connection: ConnectionOutput;
+      reused: boolean;
     }
   | { kind: "refused"; reason: string; message: string; details: Record<string, unknown> };
 
@@ -809,6 +815,14 @@ export async function requestConnection(
   notifier?: ToolListChangedNotifier,
 ): Promise<ConnectionRequestOutcome> {
   const routing = await routeConnectionProposal(ctx, scope, input, deps, notifier);
+  // The agent asked again for an ask still open (GRA-300): counted here, in the MCP tool alone, so
+  // Setup's own routing of the person's click (`setup-connect.ts`) never reads as the agent asking.
+  // Best-effort: the count is for the Requests row, and a call is never failed over it.
+  if ((routing.kind === "connection" || routing.kind === "scope") && routing.reused) {
+    await deps
+      .countPendingActionRepeat(ctx.db, scope, routing.pendingActionId, deps.pendingAction.now())
+      .catch(() => null);
+  }
   const outcome = await awaitRoutedProposal(ctx, scope, routing, deps, notifier);
   return namingHostsSetAside(outcome, routing.hostsSetAside, routing.hosts);
 }
@@ -931,11 +945,11 @@ async function routeProposal(
       // A scope ask the person has answered and this agent has not read yet is taken first, so the
       // call that follows an Allow says so rather than "already connected, no ask was made".
       const answered = await openScopeAskFor(ctx, scope, existing.connection.id, deps);
-      if (answered) return scopeAsk(answered, existing.connection);
+      if (answered) return scopeAsk(answered, existing.connection, false);
       // Likewise a widening the person confirmed (GRA-167): the row now covers the proposal, which
       // is why this branch is reached, and the answer is taken so the call says what happened.
       const widened = await answeredWideningFor(ctx, scope, existing.connection.id, deps);
-      if (widened) return wideningAsk(widened, existing.connection);
+      if (widened) return wideningAsk(widened, existing.connection, false);
       return { kind: "connected", connection: existing.connection, how: "already" };
     }
     if (existing?.kind === "refuse") {
@@ -955,25 +969,25 @@ async function routeProposal(
       // identical calls racing here make one ask: the second waits on the lock, then finds the
       // first's row. The table has no uniqueness over the payload; the lock stands in for one
       // without a migration (Greptile on #87). The wait that follows runs outside the transaction.
-      const action = await ctx.db.transaction(async (tx) => {
+      const { action, reused } = await ctx.db.transaction(async (tx) => {
         const scoped: ServiceContext = { db: tx };
         await deps.lockPendingActionKey(tx, scope, SCOPE_ASK_KIND, connection.id);
-        return (
-          (await openScopeAskFor(scoped, scope, connection.id, deps)) ??
-          createPendingAction(
-            scoped,
-            scope,
-            {
-              kind: SCOPE_ASK_KIND,
-              payload: scopeAskPayload(connection, proposal.docsUrl),
-              ttlMs: deps.handoff.ttlMs,
-              connectionId: connection.id,
-            },
-            deps.pendingAction,
-          )
+        const standing = await openScopeAskFor(scoped, scope, connection.id, deps);
+        if (standing) return { action: standing, reused: standing.answeredAt === null };
+        const made = await createPendingAction(
+          scoped,
+          scope,
+          {
+            kind: SCOPE_ASK_KIND,
+            payload: scopeAskPayload(connection, proposal.docsUrl),
+            ttlMs: deps.handoff.ttlMs,
+            connectionId: connection.id,
+          },
+          deps.pendingAction,
         );
+        return { action: made, reused: false };
       });
-      return scopeAsk(action, connection);
+      return scopeAsk(action, connection, reused);
     }
   }
 
@@ -993,28 +1007,45 @@ async function routeProposal(
   const asked = (
     open ? (open.payload as ConnectionProposalPayload) : payload
   ) satisfies ConnectionProposalPayload;
-  return { kind: "connection", pendingActionId: action.id, action, payload: asked, widens: null };
+  return {
+    kind: "connection",
+    pendingActionId: action.id,
+    action,
+    payload: asked,
+    widens: null,
+    reused: open !== undefined && open.answeredAt === null,
+  };
 }
 
 /** A `scope` ask as the routing answers it. */
-function scopeAsk(action: PendingActionRow, connection: ConnectionOutput): RoutedProposal {
+function scopeAsk(
+  action: PendingActionRow,
+  connection: ConnectionOutput,
+  reused: boolean,
+): RoutedProposal {
   return {
     kind: "scope",
     pendingActionId: action.id,
     action,
     payload: action.payload as unknown as ScopeAskPayload,
     connection,
+    reused,
   };
 }
 
 /** A widening ask (GRA-167) as the routing answers it: a `connection` ask naming the row it widens. */
-function wideningAsk(action: PendingActionRow, connection: ConnectionOutput): RoutedProposal {
+function wideningAsk(
+  action: PendingActionRow,
+  connection: ConnectionOutput,
+  reused: boolean,
+): RoutedProposal {
   return {
     kind: "connection",
     pendingActionId: action.id,
     action,
     payload: action.payload as unknown as ConnectionProposalPayload,
     widens: connection,
+    reused,
   };
 }
 
@@ -1141,22 +1172,21 @@ async function askToWiden(
       const reach = new Set(asked.hosts.map((host) => host.toLowerCase()));
       return [...wanted].every((host) => reach.has(host));
     });
-    return (
-      open ??
-      createPendingAction(
-        scoped,
-        scope,
-        {
-          kind: CONNECTION_ASK_KIND,
-          payload,
-          ttlMs: deps.handoff.ttlMs,
-          connectionId: connection.id,
-        },
-        deps.pendingAction,
-      )
+    if (open) return { action: open, reused: open.answeredAt === null };
+    const made = await createPendingAction(
+      scoped,
+      scope,
+      {
+        kind: CONNECTION_ASK_KIND,
+        payload,
+        ttlMs: deps.handoff.ttlMs,
+        connectionId: connection.id,
+      },
+      deps.pendingAction,
     );
+    return { action: made, reused: false };
   });
-  return wideningAsk(action, connection);
+  return wideningAsk(action.action, connection, action.reused);
 }
 
 /**

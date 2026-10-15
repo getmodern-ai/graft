@@ -23,6 +23,8 @@ function card(id: string): PendingAction {
     answeredAt: null,
     answer: null,
     consumedAt: null,
+    askedCount: 1,
+    account: null,
     url: `https://console.example/pending/${id}?t=h_token`,
   };
 }

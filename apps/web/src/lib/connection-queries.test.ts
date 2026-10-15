@@ -26,6 +26,7 @@ const base: Connection = {
   credentialSetAt: null,
   oauth: null,
   providerReleaseFailedAt: null,
+  account: null,
   revokedAt: null,
   createdAt: "2026-09-17T09:00:00.000Z",
   updatedAt: "2026-09-17T09:00:00.000Z",

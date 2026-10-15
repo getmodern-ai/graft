@@ -146,6 +146,7 @@ const ask = (ms: number, answeredMs: number | null, position: number): RecordedA
     answer: answeredMs === null ? null : { allow: true },
     consumedAt: null,
     closedReason: null,
+    askedCount: 1,
     connectionId: "conn_demo",
     owner: "person",
     createdAt: at(ms),

@@ -286,6 +286,8 @@ describe("POST /api/setup/connect", () => {
       id: askId,
       agentId,
       kind: "connection",
+      askedCount: 1,
+      account: null,
       payload: {
         vendor: "open-meteo",
         scheme: "none",
@@ -294,14 +296,15 @@ describe("POST /api/setup/connect", () => {
       },
     });
 
-    // A repeat choice re-uses the open ask.
+    // A repeat choice re-uses the open ask, and is the person's click, not the agent asking again
+    // (GRA-300): the count stays at one.
     const again = await read(
       await h.app.request("/api/setup/connect", post({ starterId: "open-meteo" })),
     );
     expect(again.setup.pendingActionId).toBe(askId);
-    expect((await read(await h.app.request("/api/pending-actions"))).pendingActions).toHaveLength(
-      1,
-    );
+    const reread = (await read(await h.app.request("/api/pending-actions"))).pendingActions;
+    expect(reread).toHaveLength(1);
+    expect(reread[0].askedCount).toBe(1);
 
     // Still open: a read leaves the record where it is.
     expect((await read(await h.app.request("/api/setup"))).step).toBe("connect");

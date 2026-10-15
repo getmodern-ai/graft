@@ -561,11 +561,14 @@ describe("request_connection through a harness", () => {
         "awaiting_connection",
       );
       expect(again.action.id).toBe(action.id);
+      // The repeat is counted on the ask the agent asked again (GRA-300); a new ask starts at one.
+      expect(store.pendingActions.get(action.id)?.askedCount).toBe(2);
       const other = awaiting(
         await a.call("request_connection", { ...PROPOSAL, displayName: "Acme Orders (staging)" }),
         "awaiting_connection",
       );
       expect(other.action.id).not.toBe(action.id);
+      expect(store.pendingActions.get(other.action.id)?.askedCount).toBe(1);
       expect(actionsOf(AGENT_A, CONNECTION_ASK_KIND)).toHaveLength(2);
 
       // The person opens the link and enters the key; the console creates the connection.
@@ -590,6 +593,8 @@ describe("request_connection through a harness", () => {
       });
       expect(JSON.stringify(body(second))).not.toContain("sk_live_acme_1");
       expect(store.pendingActions.get(action.id)?.consumedAt).not.toBeNull();
+      // Taking the person's answer is not asking again.
+      expect(store.pendingActions.get(action.id)?.askedCount).toBe(2);
 
       // The requesting agent's list gained the execute tool; the other agent's did not (ADR 0007).
       await until(() => a.listChanged() > 0);
@@ -2167,6 +2172,7 @@ describe("request_connection asks to use a connection the person holds but this 
         "awaiting_scope",
       );
       expect(narrower.action.id).toBe(action.id);
+      expect(store.pendingActions.get(action.id)?.askedCount).toBe(3);
       expect(actionsOf(AGENT_B, SCOPE_ASK_KIND)).toHaveLength(1);
       expect(
         actionsOf(AGENT_B, CONNECTION_ASK_KIND).filter((r) => r.payload.vendor === "delta"),

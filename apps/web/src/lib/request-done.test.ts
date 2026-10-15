@@ -31,6 +31,8 @@ function card(
     answeredAt: "2026-10-14T09:30:00.000Z",
     answer: { allow: true },
     consumedAt: "2026-10-14T09:30:00.000Z",
+    askedCount: 1,
+    account: null,
     state: "answered",
     closedReason: null,
     finishedAt: "2026-10-14T09:30:00.000Z",

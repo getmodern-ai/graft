@@ -47,6 +47,7 @@ function connection(id: string, vendor: string, revokedAt: string | null = null)
     credentialSetAt: null,
     oauth: null,
     providerReleaseFailedAt: null,
+    account: null,
     revokedAt,
     createdAt: at,
     updatedAt: at,

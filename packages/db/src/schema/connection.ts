@@ -80,6 +80,13 @@ export const connection = pgTable(
      */
     providerReleaseFailedAt: timestamp("provider_release_failed_at"),
     /**
+     * Which account at the vendor the row is connected to, in the vendor's own words — an email, a
+     * username — for the console to say "As …" (GRA-300). Best-effort and never a secret: a link
+     * provider's `complete` may name it, an authorization-code consent may read it off the token
+     * response, and null is the common case, which every screen draws without.
+     */
+    account: text("account"),
+    /**
      * The vendor slug — `gmail`, `unleashed`, `cartoncloud` — the key an authored tool binds to
      * (ADR 0007: a tool is bound to a vendor, not a connection row, so it survives a revoke and
      * re-asks after reconnection). Lowercase letters, digits and hyphens; the service refuses

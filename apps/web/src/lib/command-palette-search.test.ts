@@ -31,6 +31,7 @@ const gmailConnection: IntegrationConnection = {
   credentialSetAt: at,
   oauth: null,
   providerReleaseFailedAt: null,
+  account: null,
   revokedAt: null,
   createdAt: at,
   updatedAt: at,
@@ -123,6 +124,8 @@ function ask(id: string, toolName: string, createdAt = "2026-10-14T11:58:00.000Z
     answeredAt: null,
     answer: null,
     consumedAt: null,
+    askedCount: 1,
+    account: null,
     url: `https://console.example/pending/${id}?t=h`,
   };
 }

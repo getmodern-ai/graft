@@ -300,6 +300,7 @@ export function createProviderLinkRoutes(options: ProviderLinkRouteOptions): Hon
             primaryHost: proposal.primaryHost,
             hosts: proposal.hosts,
             ref: outcome.ref,
+            account: outcome.label,
           },
           options.connection,
         );

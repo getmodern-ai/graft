@@ -61,6 +61,7 @@ const row: ConnectionRow = {
   oauthScopes: null,
   oauthRefreshState: null,
   providerReleaseFailedAt: null,
+  account: null,
   revokedAt: null,
   owner: "person",
   createdAt: NOW,
@@ -124,6 +125,7 @@ function fakeDeps(overrides: Partial<ConnectionDeps> = {}): ConnectionDeps {
       providerRef,
       revokedAt: null,
       providerReleaseFailedAt: null,
+      account: null,
     })),
     recordProviderRelease: vi.fn(async (_db, _p, _id, outcome) => ({
       ...row,
@@ -460,6 +462,7 @@ describe("the provider a registration names (ADR 0019)", () => {
           findConnection: vi.fn(async () => ({
             ...failed,
             providerReleaseFailedAt: null,
+            account: null,
             providerRef: null,
           })),
         }),
@@ -510,12 +513,19 @@ describe("connectThroughProvider (ADR 0019; GRA-59)", () => {
       providers: [broker, keyringProvider],
       listConnections: vi.fn(async () => []),
     });
-    const out = await connectThroughProvider(ctx, PRINCIPAL, { ...input, provider: broker }, deps);
+    // The provider's label for the account is the row's account (GRA-300), made safe to store.
+    const out = await connectThroughProvider(
+      ctx,
+      PRINCIPAL,
+      { ...input, provider: broker, account: "  a@gmail.com " },
+      deps,
+    );
     expect(deps.insertConnection).toHaveBeenCalledWith(ctx.db, {
       id: "conn_new",
       personId: "person_1",
       provider: "broker",
       providerRef: "acct_1",
+      account: "a@gmail.com",
       vendor: "gmail",
       displayName: "Gmail",
       scheme: "relay",
@@ -541,6 +551,7 @@ describe("connectThroughProvider (ADR 0019; GRA-59)", () => {
       "person_1",
       "conn_g",
       "acct_1",
+      null,
     );
     expect(deps.insertConnection).not.toHaveBeenCalled();
     expect(out.id).toBe("conn_g");
@@ -593,6 +604,7 @@ describe("connectThroughProvider (ADR 0019; GRA-59)", () => {
       "person_1",
       "conn_g",
       "acct_1",
+      null,
     );
     expect(deps.addConnectionHosts).toHaveBeenCalledWith(ctx.db, "person_1", "conn_g", [
       "gmail.googleapis.com",
@@ -639,6 +651,7 @@ describe("connectThroughProvider (ADR 0019; GRA-59)", () => {
       "person_1",
       "conn_newer",
       "acct_1",
+      null,
     );
     expect(deps.addConnectionHosts).not.toHaveBeenCalled();
     expect(deps.insertConnection).not.toHaveBeenCalled();
@@ -1431,6 +1444,8 @@ describe("the consent", () => {
       ciphertext: CIPHERTEXT,
       setAt: NOW,
       oauthRefreshState: { consentedAt: NOW.toISOString(), expiresAt: "2026-09-09T11:00:00.000Z" },
+      // No account named: null replaces whatever an earlier consent named (GRA-300).
+      account: null,
     });
     expect(output.oauth).toEqual({
       status: "connected",

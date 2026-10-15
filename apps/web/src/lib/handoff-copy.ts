@@ -28,6 +28,25 @@ export function proposalLead(input: {
   finish: ProposalFinish;
   provider?: string;
   addedHosts?: readonly string[];
+  /** The card's `askedCount` (GRA-300): past one, the lead ends saying how often the agent asked. */
+  askedCount?: number;
+}): string {
+  const asked =
+    typeof input.askedCount === "number" &&
+    Number.isInteger(input.askedCount) &&
+    input.askedCount > 1
+      ? ` ${input.agentName} has asked ${input.askedCount} times.`
+      : "";
+  return `${leadSentences(input)}${asked}`;
+}
+
+function leadSentences(input: {
+  agentName: string;
+  integrationName: string;
+  docsUrl: string | null;
+  finish: ProposalFinish;
+  provider?: string;
+  addedHosts?: readonly string[];
 }): string {
   const { agentName, integrationName, docsUrl, finish } = input;
   if (finish === "widen") {

@@ -87,7 +87,39 @@ export type TokenResponse = {
   expiresInSeconds: number | null;
   /** `refresh_token`, when the grant yielded one — a consent's does; a refresh's may rotate it. */
   refreshToken: string | null;
+  /**
+   * Which account the token is for, when the response says (GRA-300): the `email` claim of an
+   * OpenID Connect `id_token`, else its `preferred_username`. A label for the console and nothing
+   * more — read raw, never trusted for a decision, and null whenever the response names none.
+   */
+  account: string | null;
 };
+
+/**
+ * The account an `id_token` names, read from its claims without checking the signature: the token
+ * came straight from the token endpoint over TLS, which OpenID Connect Core 3.1.3.7 accepts in
+ * place of a signature check, and the value is only ever drawn as a label. Anything that does not
+ * parse is null; the caller makes the label safe to store (`@graft/core`'s `accountLabelOf`).
+ */
+export function accountOfIdToken(idToken: unknown): string | null {
+  if (typeof idToken !== "string") return null;
+  const payload = idToken.split(".")[1];
+  if (!payload) return null;
+  let claims: unknown;
+  try {
+    claims = JSON.parse(Buffer.from(payload, "base64url").toString("utf8"));
+  } catch {
+    return null;
+  }
+  if (typeof claims !== "object" || claims === null) return null;
+  const { email, preferred_username: username } = claims as {
+    email?: unknown;
+    preferred_username?: unknown;
+  };
+  if (typeof email === "string" && email !== "") return email;
+  if (typeof username === "string" && username !== "") return username;
+  return null;
+}
 
 /**
  * Parse a token response. `token_type` is compared case-insensitively because servers disagree on
@@ -108,6 +140,7 @@ export function parseTokenResponse(bytes: Uint8Array): TokenResponse | null {
     token_type?: unknown;
     expires_in?: unknown;
     refresh_token?: unknown;
+    id_token?: unknown;
   };
   if (typeof body.access_token !== "string" || body.access_token === "") return null;
   if (typeof body.token_type === "string" && body.token_type.toLowerCase() !== "bearer") {
@@ -126,6 +159,7 @@ export function parseTokenResponse(bytes: Uint8Array): TokenResponse | null {
       typeof body.refresh_token === "string" && body.refresh_token !== ""
         ? body.refresh_token
         : null,
+    account: accountOfIdToken(body.id_token),
   };
 }
 

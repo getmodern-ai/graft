@@ -44,6 +44,7 @@ function connection(over: Partial<Connection> = {}): Connection {
     credentialSetAt: AT,
     oauth: null,
     providerReleaseFailedAt: null,
+    account: null,
     revokedAt: null,
     createdAt: AT,
     updatedAt: AT,
