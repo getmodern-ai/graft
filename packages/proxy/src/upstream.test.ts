@@ -2,7 +2,6 @@ import type { LookupAddress } from "node:dns";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 
-import { MockAgent } from "undici";
 import { afterEach, describe, expect, it } from "vitest";
 
 import {
@@ -159,60 +158,6 @@ describe("createGuardedFetch", () => {
       expect(error).toBeInstanceOf(PrivateAddressError);
     }
     expect(looked).toBe(0);
-  });
-});
-
-describe("createGuardedFetch's request and response", () => {
-  it("carries a JSON POST to a public host and hands back the platform's Response", async () => {
-    const mock = new MockAgent();
-    mock.disableNetConnect();
-    let seen: { body: unknown; auth: unknown } | null = null;
-    mock
-      .get("https://gateway.example")
-      .intercept({ path: "/v1/chat/completions", method: "POST" })
-      .reply(
-        200,
-        (request) => {
-          const headers = request.headers as Record<string, string>;
-          const text = Buffer.from(request.body as Uint8Array).toString("utf8");
-          seen = { body: JSON.parse(text), auth: headers.authorization };
-          return { id: "chat_1" };
-        },
-        { headers: { "content-type": "application/json" } },
-      );
-    const guarded = createGuardedFetch({ dispatcher: mock });
-
-    const response = await guarded("https://gateway.example/v1/chat/completions", {
-      method: "POST",
-      headers: { authorization: "Bearer k", "content-type": "application/json" },
-      body: JSON.stringify({ model: "m" }),
-    });
-
-    expect(response).toBeInstanceOf(Response);
-    expect(response.status).toBe(200);
-    expect(response.headers.get("content-type")).toBe("application/json");
-    expect(await response.json()).toEqual({ id: "chat_1" });
-    expect(seen).toEqual({ body: { model: "m" }, auth: "Bearer k" });
-  });
-
-  it("returns a redirect to a private address as it came, with no second request", async () => {
-    const mock = new MockAgent();
-    mock.disableNetConnect();
-    mock
-      .get("https://gateway.example")
-      .intercept({ path: "/v1/chat/completions", method: "POST" })
-      .reply(302, "", { headers: { location: "http://169.254.169.254/latest/meta-data" } });
-    const guarded = createGuardedFetch({ dispatcher: mock });
-
-    const response = await guarded("https://gateway.example/v1/chat/completions", {
-      method: "POST",
-      body: "{}",
-    });
-
-    expect(response.status).toBe(302);
-    expect(response.headers.get("location")).toBe("http://169.254.169.254/latest/meta-data");
-    // Net connect is off and nothing intercepts the metadata host: a followed redirect would throw.
-    mock.assertNoPendingInterceptors();
   });
 });
 

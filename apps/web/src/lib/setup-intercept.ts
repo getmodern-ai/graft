@@ -7,8 +7,9 @@ import { SETUP_PATH } from "@graft/core/setup/setup.rules";
  * story 28). Every route outside the shell is exempt by construction, since only the shell's
  * `beforeLoad` asks: the handoff page `/pending/:id`, the consent page a chat product's connect
  * lands on (GRA-219; it must redirect back to the client at once, ADR 0018), the two popup
- * callbacks and Setup itself. Inside the shell, one is exempt by this list: the pending actions
- * list, where an ask an agent is waiting on is answered.
+ * callbacks and Setup itself. Inside the shell, two are exempt by this list: the pending actions
+ * list, where an ask an agent is waiting on is answered, and Settings, where Setup's building step
+ * sends a person whose own model key was refused (GRA-340) to put it right.
  *
  * The outside routes are listed too, so that moving one of them under the shell keeps it exempt.
  */
@@ -17,6 +18,7 @@ export const SETUP_INTERCEPT_EXEMPT: readonly string[] = [
   "/pending",
   "/oauth/callback",
   "/link/callback",
+  "/settings",
   SETUP_PATH,
 ];
 

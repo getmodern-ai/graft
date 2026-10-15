@@ -1,4 +1,4 @@
-import type { ModelKeyOutput } from "@graft/core";
+import type { ModelKeyOutput, SetModelKeyResult } from "@graft/core";
 import type { ModelOutput } from "@graft/server/api";
 import { queryOptions } from "@tanstack/react-query";
 
@@ -42,8 +42,13 @@ export type SetModelKeyInput = {
   baseUrl?: string | null;
 };
 
+/**
+ * Saves the key once the provider has not refused it (GRA-340): a refusal is the 400 the form
+ * shows under the key; `warning` is the sentence when the provider could not be asked, and the key
+ * is saved all the same.
+ */
 export function setModelKey(input: SetModelKeyInput) {
-  return api<{ modelKey: ModelKey }>("/me/model-key", { method: "PUT", body: input });
+  return api<Jsonified<SetModelKeyResult>>("/me/model-key", { method: "PUT", body: input });
 }
 
 export function removeModelKey() {

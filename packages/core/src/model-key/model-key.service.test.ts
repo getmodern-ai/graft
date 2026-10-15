@@ -76,14 +76,17 @@ describe("setPersonModelKey", () => {
     );
     expect(rows.get("person_a")?.keyCiphertext).toBe(CIPHERTEXT);
     expect(output).toEqual({
-      provider: "anthropic",
-      authoringModel: "claude-x",
-      triageModel: null,
-      baseUrl: null,
-      setAt: NOW,
+      modelKey: {
+        provider: "anthropic",
+        authoringModel: "claude-x",
+        triageModel: null,
+        baseUrl: null,
+        setAt: NOW,
+      },
+      warning: null,
     });
     expect(JSON.stringify(output)).not.toContain("sk-ant");
-    expect(output).not.toHaveProperty("keyCiphertext");
+    expect(output.modelKey).not.toHaveProperty("keyCiphertext");
   });
 
   it("replaces an earlier key in place — one row per person", async () => {
@@ -168,7 +171,7 @@ describe("setPersonModelKey", () => {
       { provider: "openai", apiKey: "k", baseUrl: "http://gateway.example/v1" },
       { ...deps, requireHttps: false },
     );
-    expect(laptop.baseUrl).toBe("http://gateway.example/v1");
+    expect(laptop.modelKey.baseUrl).toBe("http://gateway.example/v1");
     const withUser = await setPersonModelKey(
       ctx,
       A,
@@ -186,7 +189,7 @@ describe("setPersonModelKey", () => {
       { provider: "openai", apiKey: "k", baseUrl: "https://openrouter.ai/api/v1" },
       deps,
     );
-    expect(output.baseUrl).toBe("https://openrouter.ai/api/v1");
+    expect(output.modelKey.baseUrl).toBe("https://openrouter.ai/api/v1");
   });
 
   it("reads a blank model id or base URL as the provider's default", async () => {
@@ -197,7 +200,79 @@ describe("setPersonModelKey", () => {
       { provider: "openai", apiKey: "k", authoringModel: "  ", triageModel: null, baseUrl: "" },
       deps,
     );
-    expect(output).toMatchObject({ authoringModel: null, triageModel: null, baseUrl: null });
+    expect(output.modelKey).toMatchObject({
+      authoringModel: null,
+      triageModel: null,
+      baseUrl: null,
+    });
+  });
+});
+
+describe("setPersonModelKey's check with the provider (GRA-340)", () => {
+  const input = { provider: "anthropic", apiKey: "not-a-key" } as const;
+
+  it("refuses a key the provider refused, naming the field, and stores and encrypts nothing", async () => {
+    const { deps, rows, encrypt } = fakeDeps();
+    const checkKey = vi.fn(async () => ({ outcome: "refused" as const, status: 401 }));
+    const error = await setPersonModelKey(ctx, A, input, { ...deps, checkKey }).catch(
+      (e: unknown) => e,
+    );
+    expect(error).toBeInstanceOf(ServiceError);
+    expect((error as ServiceError).code).toBe("BAD_REQUEST");
+    expect((error as ServiceError).message).toBe(
+      "apiKey was refused by Anthropic (status 401). Check the key and enter it again.",
+    );
+    expect((error as ServiceError).details).toEqual({ field: "apiKey", reason: "key_refused" });
+    expect(checkKey).toHaveBeenCalledWith({
+      provider: "anthropic",
+      apiKey: "not-a-key",
+      baseUrl: null,
+    });
+    expect(rows.size).toBe(0);
+    expect(encrypt).not.toHaveBeenCalled();
+  });
+
+  it("names a gateway by its host, and refuses a name that resolved privately", async () => {
+    const { deps } = fakeDeps();
+    const refused = await setPersonModelKey(
+      ctx,
+      A,
+      { provider: "openai", apiKey: "k", baseUrl: "https://gateway.example/v1" },
+      { ...deps, checkKey: async () => ({ outcome: "refused", status: 401 }) },
+    ).catch((e: unknown) => e);
+    expect((refused as ServiceError).message).toMatch(/^apiKey was refused by gateway\.example /);
+    const rebound = await setPersonModelKey(
+      ctx,
+      A,
+      { provider: "openai", apiKey: "k", baseUrl: "https://gateway.example/v1" },
+      { ...deps, checkKey: async () => ({ outcome: "not_public" }) },
+    ).catch((e: unknown) => e);
+    expect((rebound as ServiceError).details).toEqual({
+      field: "baseUrl",
+      reason: "host_not_public",
+    });
+  });
+
+  it("saves with a warning when the provider could not be asked, and with none when it said yes", async () => {
+    const { deps, rows } = fakeDeps();
+    const timedOut = await setPersonModelKey(ctx, A, input, {
+      ...deps,
+      checkKey: async () => ({ outcome: "unchecked", reason: "timeout" }),
+    });
+    expect(timedOut.warning).toBe(
+      "The key is saved, but Anthropic did not answer in time, so Graft could not check it. A build will say so if the key is refused.",
+    );
+    expect(rows.get("person_a")).toBeDefined();
+    const unreachable = await setPersonModelKey(ctx, A, input, {
+      ...deps,
+      checkKey: async () => ({ outcome: "unchecked", reason: "unreachable" }),
+    });
+    expect(unreachable.warning).toMatch(/Anthropic could not be reached/);
+    const accepted = await setPersonModelKey(ctx, A, input, {
+      ...deps,
+      checkKey: async () => ({ outcome: "accepted" }),
+    });
+    expect(accepted.warning).toBeNull();
   });
 });
 

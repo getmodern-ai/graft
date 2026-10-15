@@ -20,7 +20,18 @@ export {
   type WireDraft,
   wireOf,
 } from "./answer";
-export { modelFailureSentence } from "./model-failure";
+export {
+  checkModelKey,
+  MODEL_KEY_CHECK_TIMEOUT_MS,
+  type ModelKeyCheck,
+  type ModelKeyCheckInput,
+} from "./key-check";
+export {
+  isKeyRefusal,
+  modelFailureSentence,
+  OwnModelKeyRefusedError,
+  withOwnKeyRefusal,
+} from "./model-failure";
 export {
   CONNECTION_PROPOSAL_INPUT_MAX_CHARS,
   CONNECTION_PROPOSAL_TIMEOUT_MS,

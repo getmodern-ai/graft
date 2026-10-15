@@ -1,5 +1,6 @@
 import { integrationNameFor } from "@graft/core/approval/vendor-approval.rules";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { Link } from "@tanstack/react-router";
 import { useEffect } from "react";
 
 import { CodeBlock } from "@/components/code-block";
@@ -18,6 +19,7 @@ import { Spinner } from "@/components/ui/spinner";
 import { vendorApprovalsQuery } from "@/lib/approval-queries";
 import {
   jobPollInterval,
+  MODEL_KEY_SETTINGS_PATH,
   type ProgressCard,
   progressCard,
   progressPart,
@@ -110,11 +112,19 @@ function BuildingJob({
   return (
     <div className="mx-auto flex w-full max-w-[880px] flex-col gap-6">
       <SetupStepHeader
-        title={failed ? "Your tool needs another try" : "Building your tool"}
+        title={
+          card.keyRefused
+            ? "Your model key was refused"
+            : failed
+              ? "Your tool needs another try"
+              : "Building your tool"
+        }
         description={
-          failed
-            ? "It did not pass its run, so nothing was added yet."
-            : `${name} is connected. Graft's model is writing, checking and trying the tool against the real service.`
+          card.keyRefused
+            ? "Graft's model could not start with your own key, so nothing was added yet."
+            : failed
+              ? "It did not pass its run, so nothing was added yet."
+              : `${name} is connected. Graft's model is writing, checking and trying the tool against the real service.`
         }
       />
       {job.isError ? (
@@ -171,14 +181,26 @@ function BuildingJob({
                 {card.message}
               </p>
               <div className="flex flex-wrap gap-2">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => retry.mutate(undefined)}
-                  disabled={busy}
-                >
-                  {retry.isPending ? "Going back…" : "Change the tool"}
-                </Button>
+                {card.keyRefused ? (
+                  // The person's own key is what failed, not the task (GRA-340).
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    nativeButton={false}
+                    render={<Link to={MODEL_KEY_SETTINGS_PATH} />}
+                  >
+                    Update the key in Settings
+                  </Button>
+                ) : (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => retry.mutate(undefined)}
+                    disabled={busy}
+                  >
+                    {retry.isPending ? "Going back…" : "Change the tool"}
+                  </Button>
+                )}
               </div>
             </div>
           ) : card.kind === "working" && card.message ? (

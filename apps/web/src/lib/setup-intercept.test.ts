@@ -6,7 +6,6 @@ describe("the Setup intercept", () => {
   it("sends a person the show rule admits to /setup from a screen of the console", () => {
     expect(setupInterceptTarget("/agents", { show: true })).toBe("/setup");
     expect(setupInterceptTarget("/connections", { show: true })).toBe("/setup");
-    expect(setupInterceptTarget("/settings", { show: true })).toBe("/setup");
     expect(setupInterceptTarget("/agents/agent_1", { show: true })).toBe("/setup");
   });
 
@@ -15,13 +14,18 @@ describe("the Setup intercept", () => {
     expect(setupInterceptTarget("/agents", null)).toBeNull();
   });
 
-  it.each(["/consent", "/pending", "/pending/pa_1", "/oauth/callback", "/link/callback", "/setup"])(
-    "never intercepts %s",
-    (path) => {
-      expect(isSetupExempt(path)).toBe(true);
-      expect(setupInterceptTarget(path, { show: true })).toBeNull();
-    },
-  );
+  it.each([
+    "/consent",
+    "/pending",
+    "/pending/pa_1",
+    "/oauth/callback",
+    "/link/callback",
+    "/setup",
+    "/settings",
+  ])("never intercepts %s", (path) => {
+    expect(isSetupExempt(path)).toBe(true);
+    expect(setupInterceptTarget(path, { show: true })).toBeNull();
+  });
 
   it("does not exempt a path that merely begins with an exempt one's letters", () => {
     expect(isSetupExempt("/pendingx")).toBe(false);

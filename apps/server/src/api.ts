@@ -1436,7 +1436,9 @@ export function createApi(options: ApiOptions): Hono {
   api.put("/me/model-key", async (c) => {
     const principal = await principalOf(c.req.raw.headers);
     const body = await parseBody(c.req.raw, modelKeyBody);
-    return c.json({ modelKey: await setPersonModelKey(ctx, principal, body, modelKeyDeps) });
+    // `warning` is the provider's check that said nothing either way (GRA-340); a refusal is a 400.
+    const saved = await setPersonModelKey(ctx, principal, body, modelKeyDeps);
+    return c.json({ modelKey: saved.modelKey, warning: saved.warning });
   });
 
   api.delete("/me/model-key", async (c) => {

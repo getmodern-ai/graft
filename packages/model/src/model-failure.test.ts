@@ -2,8 +2,14 @@ import { APICallError, RetryError } from "ai";
 import { describe, expect, it } from "vitest";
 
 import { ModelAnswerInvalidError } from "./answer";
-import { modelFailureSentence } from "./model-failure";
+import {
+  isKeyRefusal,
+  modelFailureSentence,
+  OwnModelKeyRefusedError,
+  withOwnKeyRefusal,
+} from "./model-failure";
 import { ScriptExhaustedError } from "./scripted";
+import type { ModelAdapter, ModelJobContext } from "./types";
 
 /** What a person reads when the model call fails (GRA-338): the status and what to check, never the endpoint's words. */
 
@@ -69,5 +75,49 @@ describe("modelFailureSentence", () => {
     const exhausted = new ScriptExhaustedError("goal", 1);
     expect(modelFailureSentence(exhausted)).toBe(exhausted.message);
     expect(modelFailureSentence(new Error(BODY))).toBe("The model call failed. Try again.");
+  });
+});
+
+describe("withOwnKeyRefusal (GRA-340)", () => {
+  function throwing(error: unknown): ModelAdapter {
+    return {
+      name: "anthropic:m",
+      open: () => ({
+        turn: async () => {
+          throw error;
+        },
+      }),
+    };
+  }
+  const context = {} as ModelJobContext;
+
+  it("names a 401 or 403 from the person's provider as their key, with a sentence pointing at Settings", async () => {
+    for (const status of [401, 403]) {
+      const adapter = withOwnKeyRefusal(throwing(apiCallError(status)), "Anthropic");
+      const error = await adapter
+        .open(context)
+        .turn({ kind: "goal" })
+        .catch((e: unknown) => e);
+      expect(error).toBeInstanceOf(OwnModelKeyRefusedError);
+      expect((error as OwnModelKeyRefusedError).provider).toBe("Anthropic");
+      expect(modelFailureSentence(error)).toBe(
+        "Your own model key was refused by Anthropic. Update it in Settings.",
+      );
+    }
+  });
+
+  it("finds the refusal through the SDK's retry wrapper, and leaves every other failure as it was", async () => {
+    const retried = new RetryError({
+      message: "Failed after 3 attempts.",
+      reason: "maxRetriesExceeded",
+      errors: [apiCallError(401)],
+    });
+    expect(isKeyRefusal(retried)).toBe(true);
+    const unavailable = apiCallError(503);
+    const error = await withOwnKeyRefusal(throwing(unavailable), "Anthropic")
+      .open(context)
+      .turn({ kind: "goal" })
+      .catch((e: unknown) => e);
+    expect(error).toBe(unavailable);
   });
 });
