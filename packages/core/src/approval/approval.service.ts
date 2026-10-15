@@ -185,7 +185,8 @@ export async function setAskEveryCall(
     );
   }
   return ctx.db.transaction(async (tx) => {
-    const before = await deps.findApproval(tx, scope, toolId);
+    // Read under the row's lock, so two switches at once each judge the setting the other left.
+    const before = await deps.findApproval(tx, scope, toolId, { forUpdate: true });
     const row = orNotFound(
       await deps.updateAskEveryCall(tx, scope, toolId, on),
       "No approval stands for this tool yet — answer its first ask before changing how it asks",
@@ -566,14 +567,18 @@ export async function setVendorApprovalDestructive(
   deps: ApprovalDeps,
 ): Promise<VendorApprovalRow | null> {
   return ctx.db.transaction(async (tx) => {
-    const before = await deps.findVendorApproval(tx, scope, vendor);
+    // Read under the row's lock, so a widen and a narrow at once each judge what the other left.
+    const before = await deps.findVendorApproval(tx, scope, vendor, { forUpdate: true });
+    if (!before) return null;
+    // A widen of one already wide, or a narrow of one already narrow, is no change: the row and
+    // its moment stay, so the activity read never shows the approval as a second answer.
+    if (before.includesDestructive === includesDestructive) return before;
     const now = deps.now();
     const row = await deps.updateVendorApprovalDestructive(tx, scope, vendor, {
       includesDestructive,
       grantedAt: now,
     });
-    // A widen of one already wide, or a narrow of one already narrow, changes nothing to record.
-    if (row && before?.includesDestructive !== includesDestructive) {
+    if (row) {
       const action = includesDestructive ? "widened" : "narrowed";
       await recordVendorEvent(tx, scope, row, action, CONSOLE, now, deps);
     }

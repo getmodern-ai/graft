@@ -18,16 +18,22 @@ export type ApprovalRow = typeof approval.$inferSelect;
 export type BuildApprovalRow = typeof buildApproval.$inferSelect;
 export type VendorApprovalRow = typeof vendorApproval.$inferSelect;
 
+/**
+ * `forUpdate` locks the row, so a change judged against it (the ask-every-call switch, GRA-341)
+ * serialises with another one made at the same time.
+ */
 export async function findApproval(
   db: DbOrTx,
   scope: AgentScope,
   toolId: string,
+  options: { forUpdate?: boolean } = {},
 ): Promise<ApprovalRow | null> {
-  const [row] = await db
+  const query = db
     .select()
     .from(approval)
     .where(and(eq(approval.toolId, toolId), inArray(approval.agentId, scopedAgentIds(db, scope))))
     .limit(1);
+  const [row] = await (options.forUpdate ? query.for("update") : query);
   return row ?? null;
 }
 
@@ -257,12 +263,14 @@ export async function deleteApproval(
  * The agent's standing approval for every tool of a vendor (ADR 0008 as amended 2026-10-09;
  * GRA-237), or null. Agent-scoped like a tool's approval.
  */
+/** `forUpdate` locks the row, so a widen and a narrow made at once serialise (GRA-341). */
 export async function findVendorApproval(
   db: DbOrTx,
   scope: AgentScope,
   vendor: string,
+  options: { forUpdate?: boolean } = {},
 ): Promise<VendorApprovalRow | null> {
-  const [row] = await db
+  const query = db
     .select()
     .from(vendorApproval)
     .where(
@@ -272,6 +280,7 @@ export async function findVendorApproval(
       ),
     )
     .limit(1);
+  const [row] = await (options.forUpdate ? query.for("update") : query);
   return row ?? null;
 }
 

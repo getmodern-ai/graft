@@ -3142,6 +3142,7 @@ describe("approvals", () => {
 
   it("widens or narrows an integration's standing approval, 404 when none stands", async () => {
     const { app, deps } = harness({ user: { id: "person_1" } });
+    vi.mocked(deps.approval.findVendorApproval).mockResolvedValueOnce(vendorApprovalRow);
     const wide = await app.request(
       "/api/agents/agent_1/vendor-approvals/demo",
       json({ includesDestructive: true }, "PATCH"),
@@ -3157,7 +3158,6 @@ describe("approvals", () => {
       { includesDestructive: true, grantedAt: NOW },
     );
 
-    vi.mocked(deps.approval.updateVendorApprovalDestructive).mockResolvedValueOnce(null);
     const none = await app.request(
       "/api/agents/agent_1/vendor-approvals/demo",
       json({ includesDestructive: false }, "PATCH"),

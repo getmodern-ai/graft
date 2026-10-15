@@ -246,7 +246,7 @@ function eventRowView(
     case "tool:denied":
       return view("denied", `Said no to ${tool}`, "you denied it");
     case "tool:withdrew":
-      return view("withdrawn", `Withdrew your answer on ${tool}`, "it asks again");
+      return view("withdrawn", `Withdrew your answer on ${tool}`);
     case "tool:ask_every_call_on":
       return view("changed", `Asks before every call to ${tool}`);
     case "tool:ask_every_call_off":
@@ -259,7 +259,7 @@ function eventRowView(
     case "vendor:narrowed":
       return view("changed", `Allowed every ${subject} tool except ones that delete`, "narrowed");
     case "vendor:withdrew":
-      return view("withdrawn", `Withdrew every ${subject} tool`, "they ask again");
+      return view("withdrawn", `Withdrew the approval for every ${subject} tool`);
     case "build:allowed":
       return view("allowed", `Allowed building tools for ${subject}`);
     case "build:denied":

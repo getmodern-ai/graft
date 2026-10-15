@@ -769,8 +769,9 @@ describe("build approvals on the agent's page", () => {
 });
 
 describe("setVendorApprovalDestructive", () => {
-  it("widens or narrows the row that stands, at the clock's moment, and answers null when none does", async () => {
+  it("widens or narrows the row that stands, read under its lock, at the clock's moment, and answers null when none does", async () => {
     const deps = fakeDeps({
+      findVendorApproval: vi.fn(async () => vendorApproval),
       updateVendorApprovalDestructive: vi.fn(async (_db, _scope, _vendor, input) => ({
         ...vendorApproval,
         ...input,
@@ -779,6 +780,9 @@ describe("setVendorApprovalDestructive", () => {
     await expect(
       setVendorApprovalDestructive(ctx, SCOPE, "hubspot", true, deps),
     ).resolves.toMatchObject({ vendor: "hubspot", includesDestructive: true });
+    expect(deps.findVendorApproval).toHaveBeenCalledWith(ctx.db, SCOPE, "hubspot", {
+      forUpdate: true,
+    });
     expect(deps.updateVendorApprovalDestructive).toHaveBeenCalledWith(ctx.db, SCOPE, "hubspot", {
       includesDestructive: true,
       grantedAt: NOW,
@@ -786,6 +790,16 @@ describe("setVendorApprovalDestructive", () => {
     await expect(
       setVendorApprovalDestructive(ctx, SCOPE, "hubspot", false, fakeDeps()),
     ).resolves.toBeNull();
+  });
+
+  /** Greptile on #276: a repeat that moved the moment showed the approval as a second answer. */
+  it("leaves a row already as asked untouched, its moment kept and nothing recorded", async () => {
+    const deps = fakeDeps({ findVendorApproval: vi.fn(async () => vendorApproval) });
+    await expect(setVendorApprovalDestructive(ctx, SCOPE, "hubspot", false, deps)).resolves.toBe(
+      vendorApproval,
+    );
+    expect(deps.updateVendorApprovalDestructive).not.toHaveBeenCalled();
+    expect(deps.insertApprovalEvent).not.toHaveBeenCalled();
   });
 });
 
@@ -833,11 +847,12 @@ describe("approval events", () => {
     expect(deps.insertApprovalEvent).not.toHaveBeenCalled();
   });
 
-  it("records the ask-every-call switch only when it moves", async () => {
+  it("records the ask-every-call switch only when it moves, judged on the row read under its lock", async () => {
     const deps = fakeDeps({ findApproval: vi.fn(async () => approval) });
     await setAskEveryCall(ctx, SCOPE, "tool_1", true, deps);
     await setAskEveryCall(ctx, SCOPE, "tool_1", false, deps);
     expect(events(deps).map((event) => event.action)).toEqual(["ask_every_call_on"]);
+    expect(deps.findApproval).toHaveBeenCalledWith(ctx.db, SCOPE, "tool_1", { forUpdate: true });
   });
 
   it("records an answer set from the console as the console's", async () => {

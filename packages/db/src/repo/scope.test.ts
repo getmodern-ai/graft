@@ -1565,3 +1565,18 @@ describe("approval events", () => {
     expect(s.params).not.toContain("agent_1");
   });
 });
+
+/** GRA-341 (Greptile on #276): a change judged against the standing row reads it locked. */
+describe("locked reads of a standing answer", () => {
+  it("a tool's answer and an integration's approval, under the scope, for update", async () => {
+    await findApproval(db, SCOPE, "tool_1", { forUpdate: true });
+    const tool = only();
+    expect(tool.sql).toMatch(SCOPED_AGENT);
+    expect(tool.sql).toMatch(/ for update$/);
+    statements = [];
+    await findVendorApproval(db, SCOPE, "hubspot", { forUpdate: true });
+    const vendor = only();
+    expect(vendor.sql).toMatch(SCOPED_AGENT);
+    expect(vendor.sql).toMatch(/ for update$/);
+  });
+});
