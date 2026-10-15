@@ -105,6 +105,22 @@ describe("integrationAccessClause", () => {
     expect(
       integrationAccessClause([read, send], [], { vendor: "gmail", includesDestructive: true }, 3),
     ).toBe("every tool runs without asking");
+    expect(integrationAccessClause([], [], { vendor: "gmail", includesDestructive: true }, 3)).toBe(
+      "every tool runs without asking",
+    );
+  });
+
+  it("says a ready-made tool that deletes asks first under an approval that leaves those out", () => {
+    const changes = { vendor: "gmail", includesDestructive: false };
+    expect(integrationAccessClause([read, send], [], changes, 3)).toBe(
+      "ready-made tools that delete ask first, the rest run without asking",
+    );
+    expect(integrationAccessClause([], [], changes, 7)).toBe(
+      "ready-made tools that delete ask first, the rest run without asking",
+    );
+    expect(integrationAccessClause([read, send, remove], [], changes, 2)).toBe(
+      "Delete message asks first, ready-made tools that delete ask first, the rest run without asking",
+    );
   });
 
   it("under the standing approval names what it leaves out, ones that delete included", () => {

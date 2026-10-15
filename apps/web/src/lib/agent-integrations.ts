@@ -62,8 +62,10 @@ const named = (titles: readonly string[], one: string, many: string) =>
  * never ask; each tool that changes data is judged as the gate would judge its current version.
  *
  * `unusedTools` counts the ready-made tools not yet in the toolbox (GRA-345). No answer can name
- * one before its first use copies it in, so with no standing approval for the integration any of
- * them that changes data asks first, and the clause never says every tool runs without asking.
+ * one before its first use copies it in, so the clause never says every tool runs without asking
+ * while one of them may ask: any change with no standing approval, one that deletes under an
+ * approval that leaves those out. Their annotations are not read here, so the clause says what
+ * such a tool would do rather than naming it.
  */
 export function integrationAccessClause(
   tools: readonly Tool[],
@@ -103,16 +105,20 @@ export function integrationAccessClause(
     exceptions.push(`${named(refused, "is", "are")} refused`);
   }
 
-  const unusedAsk = unusedTools > 0 && vendorApproval === null;
-  if (passes.length > 0 && exceptions.length === 0 && asksFirst.length === 0 && !unusedAsk) {
-    return "every tool runs without asking";
-  }
-  if (vendorApproval && passes.length > 0) {
+  // An unused ready-made tool is judged with no answer of its own: the standing approval covers it
+  // unless it deletes and the approval leaves those out; with no standing approval, a change asks.
+  const unusedAsk = unusedTools > 0 && !vendorApproval?.includesDestructive;
+  if (vendorApproval && (passes.length > 0 || unusedTools > 0)) {
     // The standing approval covers the rest, so the exceptions are named and the rest summed up.
     if (asksFirst.length > 0) {
       exceptions.push(`${named(asksFirst, "asks", "ask")} first`);
     }
+    if (unusedAsk) exceptions.push("ready-made tools that delete ask first");
+    if (exceptions.length === 0) return "every tool runs without asking";
     return [...exceptions, "the rest run without asking"].join(", ");
+  }
+  if (passes.length > 0 && exceptions.length === 0 && asksFirst.length === 0 && !unusedAsk) {
+    return "every tool runs without asking";
   }
   const free = passes.length > 0 ? `reads and ${listTools(passes)}` : "reads";
   const clauses = [`${free} run without asking`, ...exceptions];

@@ -47,10 +47,12 @@ export const Route = createFileRoute("/_auth/_shell/integrations/$vendor")({
     // Not awaited: the Tools tab owns this read's failure, and the header counts off the
     // integrations row until it lands.
     void context.queryClient.prefetchQuery(integrationToolsQuery(params.vendor));
-    void context.queryClient.prefetchQuery(toolsQuery);
+    // Awaited: the Tools tab words a tool's origin off the toolbox's versions, and a guess drawn
+    // before it lands would be taken back (Greptile on #280).
     return Promise.all([
       context.queryClient.ensureQueryData(integrationsQuery),
       context.queryClient.ensureQueryData(connectionsQuery),
+      context.queryClient.ensureQueryData(toolsQuery),
     ]);
   },
   component: IntegrationRoute,
