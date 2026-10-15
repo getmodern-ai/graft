@@ -17,7 +17,7 @@ import type {
  * exercise a link's two ends, the card, the relay rung and the revoke's release drive this fake
  * instead: a `ConnectionProvider` of `connect.kind: "link"` whose rows carry the generic `relay`
  * scheme, whose `start` mints a link on a fake origin and remembers what it was asked for, whose
- * `complete` answers the next account the test connected that no row of the person's claims yet,
+ * `complete` answers the oldest account the test connected that no row of the person's claims yet,
  * whose `resolve` hands the proxy a relay plugin rewriting the vendor request into a request to an
  * in-process upstream (the shape `@graft/proxy`'s `relay.test.ts` drives), and whose `revoke`
  * forgets the account. Everything it does is on its records, so a test asserts what a provider was
@@ -229,18 +229,19 @@ export function createFakeLinkProvider(options: FakeLinkProviderOptions = {}): F
           return { ok: false, message: `${name} does not cover ${input.vendor} at these hosts.` };
         }
         // Never the redirect's word for it: the account is whatever the provider now holds for
-        // this person at this target that no connection of theirs already names.
+        // this person at this target that no connection of theirs already names. The oldest such,
+        // in the order the test connected them: `createdAt` has millisecond grain, so two accounts
+        // connected in one test tie or not by the wall clock, and a sort on it flipped the answer
+        // between runs (GRA-337).
         const target = targetOf(input.vendor, input.hosts);
         const taken = new Set(input.takenRefs);
-        const account = accounts
-          .filter(
-            (candidate) =>
-              candidate.personId === input.personId &&
-              candidate.target === target &&
-              candidate.healthy &&
-              !taken.has(candidate.id),
-          )
-          .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
+        const account = accounts.find(
+          (candidate) =>
+            candidate.personId === input.personId &&
+            candidate.target === target &&
+            candidate.healthy &&
+            !taken.has(candidate.id),
+        );
         if (!account) {
           return {
             ok: false,

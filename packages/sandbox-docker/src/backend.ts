@@ -164,13 +164,19 @@ echo "$!" > "$d/pid"
  * Report a detached process: first line of stdout is its state, the rest of stdout is the process's
  * stdout, and stderr is the process's stderr — the two streams ride the exec's own two, so one round
  * trip carries everything. `$0` is the record directory.
+ *
+ * `code` is read again once `kill -0` finds the subshell gone: the subshell renames it into place
+ * and then exits, so one that finished between the first read and `kill -0` left it behind, and
+ * only a subshell gone with no `code` is lost. Read once, that finish was reported as LOST, a
+ * `failed` with no exit code, at a detached timeout's kill (GRA-337).
  */
-const DETACHED_POLL_SCRIPT = `
+export const DETACHED_POLL_SCRIPT = `
 d="$0"
 if [ ! -d "$d" ]; then echo NONE; exit 0; fi
 if [ -f "$d/code" ]; then echo "EXITED $(cat "$d/code")"
 elif [ ! -s "$d/pid" ]; then echo RUNNING
 elif kill -0 "$(cat "$d/pid")" 2>/dev/null; then echo RUNNING
+elif [ -f "$d/code" ]; then echo "EXITED $(cat "$d/code")"
 else echo LOST
 fi
 cat "$d/stdout" 2>/dev/null
