@@ -1,7 +1,7 @@
 import { lookup as dnsLookup, type LookupAddress } from "node:dns";
 import type { LookupFunction } from "node:net";
 
-import { Agent, fetch as undiciFetch } from "undici";
+import { Agent, type Dispatcher, fetch as undiciFetch } from "undici";
 
 import { hasCauseNamed } from "./cause-chain";
 import { isPublicAddress, isPublicHost } from "./public-host";
@@ -134,9 +134,17 @@ export function createUpstreamFetch(options: UpstreamFetchOptions = {}): Upstrea
  * client reads the 3xx as the failure it is. No `unguardedHosts`: nothing a person typed is exempt.
  */
 export function createGuardedFetch(
-  options: Pick<UpstreamFetchOptions, "resolveAll"> = {},
+  options: Pick<UpstreamFetchOptions, "resolveAll"> & {
+    /**
+     * A test's `MockAgent`, standing where the guarded agent would, so the request and response
+     * conversion is exercised with no socket. Nothing outside a test passes one: it replaces the
+     * resolver's half of the guard (the literal check still runs).
+     */
+    dispatcher?: Dispatcher;
+  } = {},
 ): typeof globalThis.fetch {
-  const agent = new Agent({ connect: { lookup: guardedLookup(options.resolveAll) } });
+  const agent =
+    options.dispatcher ?? new Agent({ connect: { lookup: guardedLookup(options.resolveAll) } });
 
   return async (input, init) => {
     const request = new Request(input, init);
