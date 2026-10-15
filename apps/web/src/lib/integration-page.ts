@@ -6,9 +6,9 @@ import {
   connectionStatus,
   isGatewayConnection,
   isKeyringConnection,
-  type ToolboxTool,
 } from "./connection-queries";
-import type { Integration } from "./integration-queries";
+import { count } from "./format";
+import type { Integration, IntegrationToolRow } from "./integration-queries";
 import { providerLabel } from "./provider-name";
 import { CONNECTION_STATUS_CHIP, connectionStateChip, type StatusChip } from "./status-chips";
 
@@ -60,7 +60,10 @@ export type IntegrationPage =
       chip: StatusChip;
       /** "connected 21 days ago" off the oldest live connection, or "revoked …" off the newest revoke. */
       since: { verb: "connected" | "revoked"; at: string };
-      toolCount: number;
+      /** Every tool the integration offers (GRA-345); null until a read that counts them lands. */
+      toolCount: number | null;
+      /** Of those, the ones in the person's toolbox; null with `toolCount`. */
+      inUseToolCount: number | null;
       agentCount: number;
     };
 
@@ -71,14 +74,18 @@ const newestRevokedFirst = (a: Connection, b: Connection) =>
  * The page for a vendor slug. A vendor with a live connection is its integrations row, with the
  * vendor's revoked connections listed after the live ones; a vendor whose every connection is
  * revoked has no row (GRA-291) and is drawn from the connections alone, read-only; a vendor the
- * person never connected is `missing`. The tool count off the row counts tools with a current
- * version, and the fallback counts the same way.
+ * person never connected is `missing`.
+ *
+ * The tool counts are the integration's tools read's (GRA-293), the list the Tools tab draws, so
+ * the header, the tab's badge and the tab's rows are one read and never disagree (GRA-345); until
+ * it lands, the integrations row's counts, which the server counts by the same rule; with neither,
+ * null, and the page draws no count rather than a guess it would take back.
  */
 export function integrationPageOf(
   vendor: string,
   integrations: readonly Integration[],
   connections: readonly Connection[],
-  tools: readonly Pick<ToolboxTool, "vendor" | "currentVersionId">[],
+  offered: readonly Pick<IntegrationToolRow, "source">[] | undefined,
 ): IntegrationPage {
   const row = integrations.find((integration) => integration.vendor === vendor) ?? null;
   const revoked = connections
@@ -97,9 +104,10 @@ export function integrationPageOf(
         .map((connection) => ({ ...connection, state: connectionStatus(connection) }));
   const newestRevoked = revoked[0];
   const oldestLive = live[0];
-  const toolCount =
-    row?.toolCount ??
-    tools.filter((tool) => tool.vendor === vendor && tool.currentVersionId !== null).length;
+  const toolCount = offered ? offered.length : (row?.toolCount ?? null);
+  const inUseToolCount = offered
+    ? offered.filter(isToolInUse).length
+    : (row?.inUseToolCount ?? null);
 
   if (oldestLive) {
     const attentionId =
@@ -117,6 +125,7 @@ export function integrationPageOf(
         : CONNECTION_STATUS_CHIP.connected,
       since: { verb: "connected", at: oldestLive.createdAt },
       toolCount,
+      inUseToolCount,
       agentCount: row?.agents.length ?? 0,
     };
   }
@@ -130,8 +139,27 @@ export function integrationPageOf(
     chip: CONNECTION_STATUS_CHIP.revoked,
     since: { verb: "revoked", at: newestRevoked.revokedAt ?? newestRevoked.updatedAt },
     toolCount,
+    inUseToolCount,
     agentCount: 0,
   };
+}
+
+/**
+ * Whether a tool of the integration is in use (GRA-345): in the person's toolbox. A ready-made tool
+ * enters it the first time it is reached for (ADR 0025), so one still listed from stock is not used
+ * yet.
+ */
+export function isToolInUse(tool: Pick<IntegrationToolRow, "source">): boolean {
+  return tool.source === "toolbox";
+}
+
+/** The header's tool facts: "12 tools · 3 in use", "12 tools", or null while nothing counted them. */
+export function headerToolsLine(
+  page: Pick<Extract<IntegrationPage, { kind: "integration" }>, "toolCount" | "inUseToolCount">,
+): string | null {
+  if (page.toolCount === null) return null;
+  const tools = count(page.toolCount, "tool");
+  return page.inUseToolCount ? `${tools} · ${page.inUseToolCount} in use` : tools;
 }
 
 /**

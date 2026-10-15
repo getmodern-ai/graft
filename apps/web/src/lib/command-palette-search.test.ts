@@ -48,6 +48,7 @@ const gmail: Integration = {
     { id: "agt_3", name: "Hermes", harness: null },
   ],
   toolCount: 10,
+  inUseToolCount: 3,
   lastUsedAt: null,
   needsAttention: null,
 };
@@ -80,6 +81,7 @@ const hubspot: Integration = {
   ],
   agents: [{ id: "agt_1", name: "Claude", harness: "Claude" }],
   toolCount: 2,
+  inUseToolCount: 2,
   lastUsedAt: null,
   needsAttention: { connectionId: "conn_hubspot", reason: "consent_required" },
 };
@@ -252,7 +254,7 @@ describe("paletteView, typing", () => {
     ]);
     const [integrations, tools, , activity] = view.groups;
     expect(integrations?.items[0]).toMatchObject({
-      detail: "Connected · 10 tools · used by 3 agents",
+      detail: "Connected · 10 tools · 3 in use · used by 3 agents",
       open: { to: "/integrations/$vendor", params: { vendor: "gmail" } },
     });
     expect(tools?.items.map((item) => item.detail)).toEqual([
@@ -377,7 +379,9 @@ describe("toolKindLabel", () => {
 describe("integrationDetail", () => {
   it("names who is cut off when it needs the person", () => {
     expect(integrationDetail(hubspot)).toBe("Signed out, so Claude can't use it");
-    expect(integrationDetail({ ...gmail, agents: [], toolCount: 1 })).toBe("Connected · 1 tool");
+    expect(integrationDetail({ ...gmail, agents: [], toolCount: 1, inUseToolCount: 0 })).toBe(
+      "Connected · 1 tool",
+    );
   });
 });
 

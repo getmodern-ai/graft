@@ -12,17 +12,6 @@ import { versionOrigin } from "./tool-versions";
  * connections' access reads (GRA-296). The tab draws what these answer.
  */
 
-/** The person's tools first, as the read orders them; the stock tools not yet copied in behind "Show more". */
-export function splitIntegrationTools(tools: readonly IntegrationToolRow[]): {
-  toolbox: IntegrationToolRow[];
-  stock: IntegrationToolRow[];
-} {
-  return {
-    toolbox: tools.filter((tool) => tool.source === "toolbox"),
-    stock: tools.filter((tool) => tool.source === "stock"),
-  };
-}
-
 /**
  * When each tool was last asked about and not yet answered: the newest open `tool` ask per tool
  * id, across every agent. A tool ask names the tool's row, so a stock tool not yet copied in has
@@ -47,9 +36,11 @@ export function openToolAsksByTool(
 
 /**
  * The line under a tool's description: an open ask first, since it is waiting on the person; then
- * its last run; then where it came from. `waiting` is the line drawn in the primary tone.
+ * its last run; then where it came from. `waiting` is the line drawn in the primary tone. A
+ * ready-made tool not yet in the toolbox is `unused`, and its line is the tab's one in-use marker
+ * (GRA-345): every other tool is in use, so it needs none.
  */
-export type ToolStatusLine = { kind: "waiting" | "ran" | "origin"; text: string };
+export type ToolStatusLine = { kind: "waiting" | "ran" | "origin" | "unused"; text: string };
 
 export function toolStatusLine(
   tool: Pick<IntegrationToolRow, "source" | "toolId" | "lastRun">,
@@ -72,7 +63,7 @@ export function toolStatusLine(
         tool.lastRun.outcome === "ok" ? `Ran ${when} by ${agent}` : `Failed ${when} for ${agent}`,
     };
   }
-  if (tool.source === "stock") return { kind: "origin", text: "Ready-made" };
+  if (tool.source === "stock") return { kind: "unused", text: "Ready-made, not used yet" };
   const current = context.toolbox
     .find((row) => row.id === tool.toolId)
     ?.versions.find((version) => version.current);

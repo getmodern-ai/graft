@@ -1,7 +1,7 @@
-import { and, asc, count, desc, eq, inArray, isNotNull, sql } from "drizzle-orm";
+import { and, asc, count, desc, eq, exists, inArray, isNotNull, notExists, sql } from "drizzle-orm";
 
 import type { DbOrTx } from "../index";
-import { stockToolVersion } from "../schema/stock";
+import { stockTool, stockToolVersion } from "../schema/stock";
 import {
   authoredTool,
   type NewAuthoredTool,
@@ -83,7 +83,6 @@ export async function listAuthoredToolsForVendor(
     .orderBy(asc(authoredTool.name));
 }
 
-/** One tool by the triple that identifies it — (person, vendor, name). */
 /**
  * How many live tools the person holds per vendor — a tool with a current version, which is the one
  * `find_tool` lists and a run reaches (ADR 0012, L0 as amended 2026-09-17). The integrations list's
@@ -101,6 +100,48 @@ export async function countLiveToolsByVendor(
     .orderBy(asc(authoredTool.vendor));
 }
 
+/**
+ * How many stock tools per vendor the person holds no tool of the name of (GRA-345): the ready-made
+ * tools an integration offers them that are not yet in their toolbox. A tool of the person's of the
+ * same vendor and name hides the stock one, versionless included, as in `find_tool` and the
+ * integration's tools read (GRA-293), so the integrations list counts what that read lists. The
+ * catalogue side is global (ADR 0025); the person is named in the shadowing subquery. A stock tool
+ * with no version yet is not offered.
+ */
+export async function countUnheldStockToolsByVendor(
+  db: DbOrTx,
+  personId: string,
+): Promise<{ vendor: string; count: number }[]> {
+  return db
+    .select({ vendor: stockTool.vendor, count: count() })
+    .from(stockTool)
+    .where(
+      and(
+        exists(
+          db
+            .select({ id: stockToolVersion.id })
+            .from(stockToolVersion)
+            .where(eq(stockToolVersion.stockToolId, stockTool.id)),
+        ),
+        notExists(
+          db
+            .select({ id: authoredTool.id })
+            .from(authoredTool)
+            .where(
+              and(
+                eq(authoredTool.personId, personId),
+                eq(authoredTool.vendor, stockTool.vendor),
+                eq(authoredTool.name, stockTool.name),
+              ),
+            ),
+        ),
+      ),
+    )
+    .groupBy(stockTool.vendor)
+    .orderBy(asc(stockTool.vendor));
+}
+
+/** One tool by the triple that identifies it — (person, vendor, name). */
 export async function findAuthoredTool(
   db: DbOrTx,
   personId: string,

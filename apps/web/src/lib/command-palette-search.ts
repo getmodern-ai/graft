@@ -19,7 +19,7 @@ import { count, formatRelative } from "./format";
 import { homeActivityCopy, homeIntegrationNames } from "./home";
 import { activityToolLabel } from "./integration-activity";
 import type { Integration } from "./integration-queries";
-import { agentsPhrase, attentionSentence } from "./integrations-list";
+import { agentsPhrase, attentionSentence, inUsePhrase } from "./integrations-list";
 import { harnessMark } from "./marks";
 import { type PendingAction, readAsk } from "./pending-action-queries";
 import { requestAgentName, requestRowCopy, requestRowWhen } from "./request-row";
@@ -70,11 +70,16 @@ function nameOf(vendor: string, names: IntegrationNames): string {
   return integrationNameFor(vendor, names.byVendor.get(vendor) ?? vendor);
 }
 
-/** "Connected · 10 tools · used by 3 agents", or the row's attention when it needs the person. */
+/**
+ * "Connected · 10 tools · 3 in use · used by 3 agents", or the row's attention when it needs the
+ * person. The count is every tool the integration offers (GRA-345).
+ */
 export function integrationDetail(row: Integration): string {
   const attention = attentionSentence(row);
   if (attention) return attention;
   const parts = ["Connected", count(row.toolCount, "tool")];
+  const inUse = inUsePhrase(row);
+  if (inUse) parts.push(inUse);
   if (row.agents.length > 0) parts.push(`used by ${agentsPhrase(row.agents)}`);
   return parts.join(" · ");
 }

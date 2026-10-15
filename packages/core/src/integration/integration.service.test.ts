@@ -61,6 +61,7 @@ function fakeDeps(overrides: Partial<IntegrationDeps> = {}): IntegrationDeps {
     listConnections: vi.fn(async () => []),
     listActiveAgentReach: vi.fn(async () => []),
     countLiveToolsByVendor: vi.fn(async () => []),
+    countUnheldStockToolsByVendor: vi.fn(async () => []),
     lastUsedAtByVendor: vi.fn(async () => []),
     providers: DEFAULT_PROVIDERS,
     ...overrides,
@@ -97,13 +98,15 @@ describe("listIntegrations", () => {
       { id: "agent_b", name: "Agent agent_b", harness: null },
     ]);
     expect(gmail?.toolCount).toBe(3);
+    expect(gmail?.inUseToolCount).toBe(3);
     expect(gmail?.needsAttention).toBeNull();
     expect(slack?.agents.map((a) => a.id)).toEqual(["agent_a"]);
     expect(slack?.toolCount).toBe(0);
+    expect(slack?.inUseToolCount).toBe(0);
     expect(gmail?.connections[0]).not.toHaveProperty("credentialCiphertext");
   });
 
-  it("issues the same four reads under the person whatever the person holds", async () => {
+  it("issues the same five reads under the person whatever the person holds", async () => {
     const deps = fakeDeps({
       listConnections: vi.fn(async () => [base, { ...base, id: "conn_2" }]),
     });
@@ -114,10 +117,33 @@ describe("listIntegrations", () => {
     expect(deps.listActiveAgentReach).toHaveBeenCalledWith(ctx.db, "person_1");
     expect(deps.countLiveToolsByVendor).toHaveBeenCalledTimes(1);
     expect(deps.countLiveToolsByVendor).toHaveBeenCalledWith(ctx.db, "person_1");
+    expect(deps.countUnheldStockToolsByVendor).toHaveBeenCalledTimes(1);
+    expect(deps.countUnheldStockToolsByVendor).toHaveBeenCalledWith(ctx.db, "person_1");
     expect(deps.lastUsedAtByVendor).toHaveBeenCalledTimes(1);
     expect(deps.lastUsedAtByVendor).toHaveBeenCalledWith(ctx.db, "person_1", {
       toolNames: ["execute__conn_1", "execute__conn_2"],
     });
+  });
+
+  it("counts every tool offered, the unused stock ones beside the live ones, and the live ones as in use (GRA-345)", async () => {
+    const deps = fakeDeps({
+      listConnections: vi.fn(async () => [
+        base,
+        { ...base, id: "conn_3", vendor: "notion", displayName: "Notion" },
+      ]),
+      countLiveToolsByVendor: vi.fn(async () => [{ vendor: "gmail", count: 2 }]),
+      countUnheldStockToolsByVendor: vi.fn(async () => [
+        { vendor: "gmail", count: 6 },
+        { vendor: "notion", count: 7 },
+        // A vendor the person has not connected has no row to count on.
+        { vendor: "slack", count: 8 },
+      ]),
+    });
+    const rows = await listIntegrations(ctx, PRINCIPAL, { executeToolName }, deps);
+    expect(rows.map((row) => [row.vendor, row.toolCount, row.inUseToolCount])).toEqual([
+      ["gmail", 8, 2],
+      ["notion", 7, 0],
+    ]);
   });
 
   it("leaves out revoked connections, and a vendor whose every connection is revoked", async () => {

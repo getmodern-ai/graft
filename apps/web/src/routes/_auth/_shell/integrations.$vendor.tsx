@@ -1,4 +1,4 @@
-import { useSuspenseQuery } from "@tanstack/react-query";
+import { useQuery, useSuspenseQuery } from "@tanstack/react-query";
 import { createFileRoute, Link } from "@tanstack/react-router";
 
 import { PowerIcon } from "@/components/icons";
@@ -27,12 +27,13 @@ import {
   integrationPageOf,
   readIntegrationSearch,
 } from "@/lib/integration-page";
-import { integrationsQuery } from "@/lib/integration-queries";
+import { integrationsQuery, integrationToolsQuery } from "@/lib/integration-queries";
 
 /**
  * One integration's page (GRA-315; GRA-287 item 1: one page per integration, listing its
  * connections). Its live connections come from the integrations read (GRA-291), its revoked ones
- * from the connections read, and the tool count of a vendor with nothing live from the toolbox;
+ * from the connections read, and its tool counts from the integration's tools read (GRA-293), the
+ * Tools tab's own, so the header, the badge and the rows count one list (GRA-345);
  * `lib/integration-page.ts` decides the page from the three. The open tab is `?tab=`, so every tab
  * is a deep link. Tools, Agents and Activity are filled by GRA-317, GRA-318 and GRA-319.
  */
@@ -42,12 +43,16 @@ export const Route = createFileRoute("/_auth/_shell/integrations/$vendor")({
     ...readIntegrationSearch(search),
     ...readActivityFilters(search),
   }),
-  loader: ({ context }) =>
-    Promise.all([
+  loader: ({ context, params }) => {
+    // Not awaited: the Tools tab owns this read's failure, and the header counts off the
+    // integrations row until it lands.
+    void context.queryClient.prefetchQuery(integrationToolsQuery(params.vendor));
+    void context.queryClient.prefetchQuery(toolsQuery);
+    return Promise.all([
       context.queryClient.ensureQueryData(integrationsQuery),
       context.queryClient.ensureQueryData(connectionsQuery),
-      context.queryClient.ensureQueryData(toolsQuery),
-    ]),
+    ]);
+  },
   component: IntegrationRoute,
 });
 
@@ -57,12 +62,12 @@ function IntegrationRoute() {
   const navigate = Route.useNavigate();
   const { data: integrationData } = useSuspenseQuery(integrationsQuery);
   const { data: connectionData } = useSuspenseQuery(connectionsQuery);
-  const { data: toolData } = useSuspenseQuery(toolsQuery);
+  const { data: offered } = useQuery(integrationToolsQuery(vendor));
   const page = integrationPageOf(
     vendor,
     integrationData.integrations,
     connectionData.connections,
-    toolData.tools,
+    offered?.tools,
   );
   const name = page.kind === "integration" ? page.displayName : vendor;
 
@@ -104,7 +109,7 @@ function IntegrationRoute() {
       <IntegrationTabs
         vendor={page.vendor}
         current={tab}
-        counts={{ tools: page.toolCount, agents: page.agentCount }}
+        counts={{ tools: page.toolCount ?? undefined, agents: page.agentCount }}
       />
       {tab === "connection" ? (
         <ConnectionTab connections={page.connections} integrationName={page.displayName} />

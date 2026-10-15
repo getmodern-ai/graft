@@ -9,7 +9,6 @@ import {
 import { groupAgents } from "./agent-cards";
 import type { AgentListItem } from "./agent-queries";
 import { api } from "./api";
-import { count } from "./format";
 import {
   type ActivityPage,
   activityKeys,
@@ -17,7 +16,12 @@ import {
   refusalSentence,
 } from "./integration-activity";
 import type { Integration, SuggestedIntegration } from "./integration-queries";
-import { agentsPhrase, integrationsListOf, suggestedVendorsOf } from "./integrations-list";
+import {
+  agentsPhrase,
+  integrationsListOf,
+  suggestedVendorsOf,
+  toolsPhrase,
+} from "./integrations-list";
 
 /**
  * Home (GRA-327; Figma 2040:5486), as pure decisions over the reads each panel owns: how many
@@ -72,9 +76,14 @@ export function homeIntegrations(rows: readonly Integration[]) {
   return firstOf(integrationsListOf(rows, { query: "", sort: "attention" }), HOME_INTEGRATION_ROWS);
 }
 
-/** "3 tools, used by Claude and Codex"; "No tools yet, no agent can use it". */
-export function integrationUsageLine(row: Pick<Integration, "toolCount" | "agents">): string {
-  const tools = row.toolCount === 0 ? "No tools yet" : count(row.toolCount, "tool");
+/**
+ * "7 tools, 2 in use, used by Claude and Codex"; "No tools yet, no agent can use it". The count is
+ * every tool the integration offers, ready-made ones not yet used included (GRA-345).
+ */
+export function integrationUsageLine(
+  row: Pick<Integration, "toolCount" | "inUseToolCount" | "agents">,
+): string {
+  const tools = toolsPhrase(row, ", ");
   const agents =
     row.agents.length === 0 ? "no agent can use it" : `used by ${agentsPhrase(row.agents)}`;
   return `${tools}, ${agents}`;

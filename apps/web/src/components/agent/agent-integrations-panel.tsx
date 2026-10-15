@@ -27,7 +27,7 @@ import {
 } from "@/lib/agent-queries";
 import { approvalsQuery, vendorApprovalsQuery } from "@/lib/approval-queries";
 import { type Connection, toolsQuery } from "@/lib/connection-queries";
-import { integrationKeys } from "@/lib/integration-queries";
+import { integrationKeys, integrationsQuery } from "@/lib/integration-queries";
 import {
   type ScopeState,
   type ScopeToggleOutcome,
@@ -64,6 +64,7 @@ export function AgentIntegrationsPanel({
   const toolbox = useQuery(toolsQuery);
   const approvals = useQuery(approvalsQuery(agent.id));
   const vendorApprovals = useQuery(vendorApprovalsQuery(agent.id));
+  const integrations = useQuery(integrationsQuery);
   const [pending, setPending] = useState<ScopeState | null>(null);
   const saved = scopeStateOf({ agent, connectionIds });
   const scope = pending ?? saved;
@@ -116,15 +117,16 @@ export function AgentIntegrationsPanel({
     );
 
   const live = connections.filter((connection) => connection.revokedAt === null);
-  const reads = [toolbox, approvals, vendorApprovals];
-  // The access line waits on these three reads; the switches do not, since the scope and the
+  const reads = [toolbox, approvals, vendorApprovals, integrations];
+  // The access line waits on these four reads; the switches do not, since the scope and the
   // connections are the page's own (a failed read must never take away the way to turn one off).
   const access =
-    toolbox.data && approvals.data && vendorApprovals.data
+    toolbox.data && approvals.data && vendorApprovals.data && integrations.data
       ? {
           tools: toolbox.data.tools,
           approvals: approvals.data.approvals,
           vendorApprovals: vendorApprovals.data.vendorApprovals,
+          toolCounts: integrations.data.integrations,
         }
       : null;
   const failed = reads.find((read) => read.isError);

@@ -97,6 +97,7 @@ import {
 } from "./stock";
 import {
   countLiveToolsByVendor,
+  countUnheldStockToolsByVendor,
   findAuthoredToolForUpdate,
   findToolVersion,
   listAuthoredToolsForVendor,
@@ -797,6 +798,15 @@ describe("person-scoped statements take the person", () => {
     const s = only();
     expect(s.sql).toBe(
       'select "vendor", count(*) from "authored_tool" where ("authored_tool"."person_id" = $1 and "authored_tool"."current_version_id" is not null) group by "authored_tool"."vendor" order by "authored_tool"."vendor" asc',
+    );
+    expect(s.params).toEqual(["person_1"]);
+  });
+
+  it("the integrations list's unused stock tools per vendor, the person named in the shadowing subquery", async () => {
+    await countUnheldStockToolsByVendor(db, "person_1");
+    const s = only();
+    expect(s.sql).toBe(
+      'select "vendor", count(*) from "stock_tool" where (exists (select "id" from "stock_tool_version" where "stock_tool_version"."stock_tool_id" = "stock_tool"."id") and not exists (select "id" from "authored_tool" where ("authored_tool"."person_id" = $1 and "authored_tool"."vendor" = "stock_tool"."vendor" and "authored_tool"."name" = "stock_tool"."name"))) group by "stock_tool"."vendor" order by "stock_tool"."vendor" asc',
     );
     expect(s.params).toEqual(["person_1"]);
   });

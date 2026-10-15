@@ -17,6 +17,7 @@ import {
   suggestedBanner,
   suggestedVendorsOf,
   toolsCell,
+  toolsPhrase,
   usedByLabel,
 } from "./integrations-list";
 
@@ -49,6 +50,7 @@ const row = (overrides: Partial<Integration> = {}): Integration => ({
   connections: [connection],
   agents: [],
   toolCount: 0,
+  inUseToolCount: 0,
   lastUsedAt: null,
   needsAttention: null,
   ...overrides,
@@ -247,12 +249,35 @@ describe("attentionSentence", () => {
 
 describe("toolsCell", () => {
   it("counts the tools, and says they can't run when nothing is connected, never paused", () => {
-    expect(toolsCell(row({ toolCount: 10 }))).toEqual({ text: "10", blocked: false });
+    expect(toolsCell(row({ toolCount: 10 }))).toEqual({ text: "10", inUse: null, blocked: false });
     expect(toolsCell(signedOut)).toEqual({
       text: "4 can't run until you reconnect",
+      inUse: null,
       blocked: true,
     });
-    expect(toolsCell({ ...signedOut, toolCount: 0 })).toEqual({ text: "0", blocked: false });
+    expect(toolsCell({ ...signedOut, toolCount: 0 })).toEqual({
+      text: "0",
+      inUse: null,
+      blocked: false,
+    });
+  });
+
+  it("counts every tool offered and says how many are in use, only when any is (GRA-345)", () => {
+    expect(toolsCell(row({ toolCount: 12, inUseToolCount: 3 }))).toEqual({
+      text: "12",
+      inUse: "3 in use",
+      blocked: false,
+    });
+  });
+});
+
+describe("toolsPhrase", () => {
+  it("counts every tool offered, then the ones in use, in the caller's separator", () => {
+    expect(toolsPhrase({ toolCount: 12, inUseToolCount: 3 })).toBe("12 tools · 3 in use");
+    expect(toolsPhrase({ toolCount: 12, inUseToolCount: 3 }, ", ")).toBe("12 tools, 3 in use");
+    expect(toolsPhrase({ toolCount: 7, inUseToolCount: 0 })).toBe("7 tools");
+    expect(toolsPhrase({ toolCount: 1, inUseToolCount: 1 })).toBe("1 tool · 1 in use");
+    expect(toolsPhrase({ toolCount: 0, inUseToolCount: 0 })).toBe("No tools yet");
   });
 });
 

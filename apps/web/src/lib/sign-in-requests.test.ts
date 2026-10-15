@@ -58,6 +58,7 @@ const row = (connections: IntegrationConnection[], overrides: Partial<Integratio
     connections,
     agents: [],
     toolCount: 0,
+    inUseToolCount: 0,
     lastUsedAt: null,
     needsAttention: null,
     ...overrides,

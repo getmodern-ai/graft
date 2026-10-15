@@ -23,6 +23,7 @@ const integration = (overrides: Partial<Integration> = {}): Integration => ({
   connections: [],
   agents: [],
   toolCount: 0,
+  inUseToolCount: 0,
   lastUsedAt: null,
   needsAttention: null,
   ...overrides,
@@ -98,6 +99,15 @@ describe("integrationUsageLine", () => {
       "3 tools, used by Claude and Codex",
     );
     expect(integrationUsageLine(integration())).toBe("No tools yet, no agent can use it");
+  });
+
+  it("counts every tool offered and says how many are in use (GRA-345)", () => {
+    expect(
+      integrationUsageLine(integration({ toolCount: 7, inUseToolCount: 2, agents: [claude] })),
+    ).toBe("7 tools, 2 in use, used by Claude");
+    expect(integrationUsageLine(integration({ toolCount: 7 }))).toBe(
+      "7 tools, no agent can use it",
+    );
   });
 });
 
