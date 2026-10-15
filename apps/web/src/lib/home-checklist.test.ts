@@ -127,11 +127,17 @@ describe("agentStepAction", () => {
     expect(agentStepAction([ready, revoked], undefined)).toEqual({ kind: "create" });
   });
 
-  it("resumes Setup for the agent an unfinished Setup runs as", () => {
-    expect(agentStepAction([awaiting], setupState())).toEqual({
+  it("resumes Setup for the agent a running Setup runs as", () => {
+    expect(agentStepAction([awaiting], setupState({ skippedAt: null }))).toEqual({
       kind: "setup",
       agentId: awaiting.id,
     });
+  });
+
+  it("never sends a person who skipped Setup back into it (GRA-347)", () => {
+    // The production case: Setup started as Other MCP agent, a starter chosen and cleared, Skip.
+    const skipped = setupState({ harness: "other", starterId: null, skippedAt: at });
+    expect(agentStepAction([awaiting], skipped)).toEqual({ kind: "dialog", agent: awaiting });
   });
 
   it("opens Connect an agent for any other agent awaiting its software", () => {

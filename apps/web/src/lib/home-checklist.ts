@@ -84,7 +84,7 @@ export function checklistProgress(checklist: Pick<HomeChecklist, "done" | "total
 /**
  * The agent step's action: the create dialog, or, for an agent already made and awaiting its
  * software, where that agent is connected from (`connectAgentTarget`: Setup when it is the agent
- * an unfinished Setup runs as, else *Connect an agent*), so a second agent is not made beside it.
+ * a running Setup runs as, else *Connect an agent*), so a second agent is not made beside it.
  */
 export type AgentStepAction =
   | { kind: "create" }

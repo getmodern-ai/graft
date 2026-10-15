@@ -13,6 +13,7 @@ import { afterEach, beforeEach, describe, expect, it, type Mock, vi } from "vite
 import type { Agent } from "@/lib/agent-queries";
 import type { Connection } from "@/lib/connection-queries";
 import { hermesConfigSnippet } from "@/lib/mcp-snippet";
+import { type SetupStateData, setupKeys } from "@/lib/setup-queries";
 import { AgentActions } from "./agent-actions";
 import type { ConnectAgent } from "./agent-card";
 import { AgentCards } from "./agent-cards";
@@ -43,6 +44,15 @@ beforeEach(() => {
   root = createRoot(container);
   client = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+  });
+  // The connection dialog reads which agent Setup was told about (GRA-347); none here.
+  client.setQueryDefaults(setupKeys.current, { staleTime: Number.POSITIVE_INFINITY });
+  client.setQueryData<SetupStateData>(setupKeys.current, {
+    setup: null,
+    step: "harness",
+    show: false,
+    agent: null,
+    activeAgents: [],
   });
 });
 

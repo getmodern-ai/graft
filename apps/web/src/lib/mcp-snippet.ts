@@ -17,6 +17,8 @@
  * for byte, with the deployment's origin in place of `https://app.getgraft.ai`.
  */
 
+import type { SetupHarness } from "@graft/core/setup/harness";
+
 export const TOKEN_ENV_VAR = "GRAFT_TOKEN";
 
 /** Where the harness connects: this deployment's origin plus the server's MCP mount (`/mcp`). */
@@ -54,6 +56,18 @@ export const HARNESS_ITEMS: readonly { value: Harness; label: string }[] = [
 
 export function readHarness(value: string | null): Harness | null {
   return HARNESS_ITEMS.some((item) => item.value === value) ? (value as Harness) : null;
+}
+
+/**
+ * The shape the token's block opens on, from the agent the person told Setup they use (GRA-347: a
+ * person who picked *Other MCP agent* was handed Hermes's files to edit). Hermes and OpenClaw have
+ * their own; every other answer is a client that takes the generic block; no answer is Hermes, the
+ * block's first (ADR 0016). The picker under it still changes it.
+ */
+export function harnessOfSetup(setupHarness: SetupHarness | null | undefined): Harness {
+  if (!setupHarness) return "hermes";
+  if (setupHarness === "hermes" || setupHarness === "openclaw") return setupHarness;
+  return "generic";
 }
 
 /** Hermes's entry for `~/.hermes/config.yaml`: YAML under `mcp_servers`, the token as `${GRAFT_TOKEN}`. */

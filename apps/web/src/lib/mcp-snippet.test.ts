@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   exportTokenLine,
   HARNESS_ITEMS,
+  harnessOfSetup,
   harnessSetup,
   hermesConfigSnippet,
   hermesEnvLine,
@@ -11,6 +12,20 @@ import {
   openclawConfigSnippet,
   readHarness,
 } from "./mcp-snippet";
+
+describe("harnessOfSetup", () => {
+  it("opens on the agent the person told Setup they use (GRA-347)", () => {
+    expect(harnessOfSetup("other")).toBe("generic");
+    expect(harnessOfSetup("claude-code")).toBe("generic");
+    expect(harnessOfSetup("hermes")).toBe("hermes");
+    expect(harnessOfSetup("openclaw")).toBe("openclaw");
+  });
+
+  it("opens on Hermes when Setup never asked", () => {
+    expect(harnessOfSetup(null)).toBe("hermes");
+    expect(harnessOfSetup(undefined)).toBe("hermes");
+  });
+});
 
 describe("the mcpServers snippet", () => {
   it("points at /mcp on the deployment's origin and references the token, never embedding it", () => {

@@ -1,5 +1,5 @@
 import { isAwaitingHarness } from "@graft/core/setup/setup.rules";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { type ReactNode, type RefObject, useState } from "react";
 
 import { HarnessSetup } from "@/components/agent/harness-setup";
@@ -16,8 +16,9 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { type Agent, agentKeys, issueAgentToken } from "@/lib/agent-queries";
-import { mcpEndpointUrl } from "@/lib/mcp-snippet";
+import { harnessOfSetup, mcpEndpointUrl } from "@/lib/mcp-snippet";
 import { promptHarnessOfClient } from "@/lib/setup-prompt-harness";
+import { setupQuery } from "@/lib/setup-queries";
 
 /**
  * Reopens setup without retrieving a token (ADR 0007, ADR 0018). Named for what the person does,
@@ -43,6 +44,8 @@ export function AgentConnectionDialog({
   // Held here, not in the branch that issued it: the agents list refetched after the issue reads
   // the agent with a token, which would otherwise swap the branch and drop the one view of it.
   const [issued, setIssued] = useState<string | null>(null);
+  // Which agent the person told Setup they use, for the configuration the blocks open on.
+  const harness = harnessOfSetup(useQuery(setupQuery).data?.setup?.harness);
 
   return (
     <Dialog
@@ -61,9 +64,9 @@ export function AgentConnectionDialog({
         </DialogHeader>
         <div className="flex min-w-0 flex-col gap-4">
           {issued ? (
-            <TokenOnce token={issued} agentName={agent.name} />
+            <TokenOnce token={issued} agentName={agent.name} harness={harness} />
           ) : agent.tokenPrefix ? (
-            <HarnessSetup agentName={agent.name} />
+            <HarnessSetup agentName={agent.name} initialHarness={harness} />
           ) : isAwaitingHarness(agent) ? (
             <AwaitingHarness agent={agent} onIssued={setIssued} />
           ) : (

@@ -27,10 +27,19 @@ import { promptHarnessOfShape } from "@/lib/setup-prompt-harness";
  * hand). The URL is the same for every harness and stays above the choice. Under the configuration,
  * the setup prompt for the same harness (GRA-205), naming the agent and never the token.
  */
-export function HarnessSetup({ token, agentName }: { token?: string; agentName: string }) {
+export function HarnessSetup({
+  token,
+  agentName,
+  initialHarness = "hermes",
+}: {
+  token?: string;
+  agentName: string;
+  /** The shape to open on (`harnessOfSetup`); the picker still changes it. */
+  initialHarness?: Harness;
+}) {
   const origin = window.location.origin;
   const id = useId();
-  const [harness, setHarness] = useState<Harness>("hermes");
+  const [harness, setHarness] = useState<Harness>(initialHarness);
   const blocks = harnessSetup(harness, origin, token);
 
   return (
