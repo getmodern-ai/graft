@@ -60,8 +60,7 @@ function fakeDeps(overrides: Partial<IntegrationDeps> = {}): IntegrationDeps {
   return {
     listConnections: vi.fn(async () => []),
     listActiveAgentReach: vi.fn(async () => []),
-    countLiveToolsByVendor: vi.fn(async () => []),
-    countUnheldStockToolsByVendor: vi.fn(async () => []),
+    countToolsByVendor: vi.fn(async () => []),
     lastUsedAtByVendor: vi.fn(async () => []),
     providers: DEFAULT_PROVIDERS,
     ...overrides,
@@ -82,7 +81,7 @@ describe("listIntegrations", () => {
         reach("agent_a", "conn_3", "Claude"),
         reach("agent_b", "conn_2"),
       ]),
-      countLiveToolsByVendor: vi.fn(async () => [{ vendor: "gmail", count: 3 }]),
+      countToolsByVendor: vi.fn(async () => [{ vendor: "gmail", inUse: 3, offered: 3 }]),
     });
     const rows = await listIntegrations(ctx, PRINCIPAL, { executeToolName }, deps);
     expect(rows.map((row) => row.vendor)).toEqual(["gmail", "slack"]);
@@ -106,7 +105,7 @@ describe("listIntegrations", () => {
     expect(gmail?.connections[0]).not.toHaveProperty("credentialCiphertext");
   });
 
-  it("issues the same five reads under the person whatever the person holds", async () => {
+  it("issues the same four reads under the person whatever the person holds", async () => {
     const deps = fakeDeps({
       listConnections: vi.fn(async () => [base, { ...base, id: "conn_2" }]),
     });
@@ -115,10 +114,9 @@ describe("listIntegrations", () => {
     expect(deps.listConnections).toHaveBeenCalledWith(ctx.db, "person_1");
     expect(deps.listActiveAgentReach).toHaveBeenCalledTimes(1);
     expect(deps.listActiveAgentReach).toHaveBeenCalledWith(ctx.db, "person_1");
-    expect(deps.countLiveToolsByVendor).toHaveBeenCalledTimes(1);
-    expect(deps.countLiveToolsByVendor).toHaveBeenCalledWith(ctx.db, "person_1");
-    expect(deps.countUnheldStockToolsByVendor).toHaveBeenCalledTimes(1);
-    expect(deps.countUnheldStockToolsByVendor).toHaveBeenCalledWith(ctx.db, "person_1");
+    // Both tool counts come from one read, so a copy landing mid-read cannot split them (GRA-345).
+    expect(deps.countToolsByVendor).toHaveBeenCalledTimes(1);
+    expect(deps.countToolsByVendor).toHaveBeenCalledWith(ctx.db, "person_1");
     expect(deps.lastUsedAtByVendor).toHaveBeenCalledTimes(1);
     expect(deps.lastUsedAtByVendor).toHaveBeenCalledWith(ctx.db, "person_1", {
       toolNames: ["execute__conn_1", "execute__conn_2"],
@@ -131,12 +129,11 @@ describe("listIntegrations", () => {
         base,
         { ...base, id: "conn_3", vendor: "notion", displayName: "Notion" },
       ]),
-      countLiveToolsByVendor: vi.fn(async () => [{ vendor: "gmail", count: 2 }]),
-      countUnheldStockToolsByVendor: vi.fn(async () => [
-        { vendor: "gmail", count: 6 },
-        { vendor: "notion", count: 7 },
+      countToolsByVendor: vi.fn(async () => [
+        { vendor: "gmail", inUse: 2, offered: 8 },
+        { vendor: "notion", inUse: 0, offered: 7 },
         // A vendor the person has not connected has no row to count on.
-        { vendor: "slack", count: 8 },
+        { vendor: "slack", inUse: 0, offered: 8 },
       ]),
     });
     const rows = await listIntegrations(ctx, PRINCIPAL, { executeToolName }, deps);

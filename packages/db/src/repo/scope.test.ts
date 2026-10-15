@@ -97,8 +97,7 @@ import {
   lockStockCatalogue,
 } from "./stock";
 import {
-  countLiveToolsByVendor,
-  countUnheldStockToolsByVendor,
+  countToolsByVendor,
   findAuthoredToolForNoKeyUpdate,
   findAuthoredToolForUpdate,
   findToolVersion,
@@ -795,22 +794,13 @@ describe("person-scoped statements take the person", () => {
     expect(s.params).toEqual(["person_1", "all", "person_1"]);
   });
 
-  it("the integrations list's tool counts, live tools of the person per vendor", async () => {
-    await countLiveToolsByVendor(db, "person_1");
+  it("the integrations list's tool counts are one statement, the person named on the toolbox branch and in the shadowing subquery", async () => {
+    await countToolsByVendor(db, "person_1");
     const s = only();
     expect(s.sql).toBe(
-      'select "vendor", count(*) from "authored_tool" where ("authored_tool"."person_id" = $1 and "authored_tool"."current_version_id" is not null) group by "authored_tool"."vendor" order by "authored_tool"."vendor" asc',
+      'select "vendor", sum("in_use")::int, sum("in_use" + "unheld")::int from ((select "vendor", count(*) as "in_use", 0 as "unheld" from "authored_tool" where ("authored_tool"."person_id" = $1 and "authored_tool"."current_version_id" is not null) group by "authored_tool"."vendor") union all (select "vendor", 0 as "in_use", count(*) as "unheld" from "stock_tool" where (exists (select "id" from "stock_tool_version" where "stock_tool_version"."stock_tool_id" = "stock_tool"."id") and not exists (select "id" from "authored_tool" where ("authored_tool"."person_id" = $2 and "authored_tool"."vendor" = "stock_tool"."vendor" and "authored_tool"."name" = "stock_tool"."name"))) group by "stock_tool"."vendor")) "tool_counts" group by "tool_counts"."vendor" order by "tool_counts"."vendor" asc',
     );
-    expect(s.params).toEqual(["person_1"]);
-  });
-
-  it("the integrations list's unused stock tools per vendor, the person named in the shadowing subquery", async () => {
-    await countUnheldStockToolsByVendor(db, "person_1");
-    const s = only();
-    expect(s.sql).toBe(
-      'select "vendor", count(*) from "stock_tool" where (exists (select "id" from "stock_tool_version" where "stock_tool_version"."stock_tool_id" = "stock_tool"."id") and not exists (select "id" from "authored_tool" where ("authored_tool"."person_id" = $1 and "authored_tool"."vendor" = "stock_tool"."vendor" and "authored_tool"."name" = "stock_tool"."name"))) group by "stock_tool"."vendor" order by "stock_tool"."vendor" asc',
-    );
-    expect(s.params).toEqual(["person_1"]);
+    expect(s.params).toEqual(["person_1", "person_1"]);
   });
 
   it("the integrations list's last call per vendor, by the vendor-usage rule, through the agent's owner", async () => {

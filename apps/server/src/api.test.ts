@@ -391,8 +391,7 @@ function integrationDeps(): IntegrationDeps {
         connectionId: "conn_2",
       },
     ]),
-    countLiveToolsByVendor: vi.fn(async () => [{ vendor: "demo", count: 2 }]),
-    countUnheldStockToolsByVendor: vi.fn(async () => [{ vendor: "demo", count: 3 }]),
+    countToolsByVendor: vi.fn(async () => [{ vendor: "demo", inUse: 2, offered: 5 }]),
     lastUsedAtByVendor: vi.fn(async () => [
       { vendor: null, toolName: "execute__conn_1", lastUsedAt: NOW },
     ]),
@@ -1581,8 +1580,7 @@ describe("integrations (GRA-291)", () => {
     for (const read of [
       deps.integration.listConnections,
       deps.integration.listActiveAgentReach,
-      deps.integration.countLiveToolsByVendor,
-      deps.integration.countUnheldStockToolsByVendor,
+      deps.integration.countToolsByVendor,
       deps.integration.lastUsedAtByVendor,
     ]) {
       expect(read).toHaveBeenCalledTimes(1);

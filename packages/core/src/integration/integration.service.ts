@@ -81,9 +81,10 @@ export function worstAttention(
 }
 
 /**
- * Five statements whatever the person holds: the connections, the agent reach, the live tool
- * counts, the unused stock tool counts and the last call per vendor. Rows come in the order of each vendor's oldest connection; the console
- * sorts. `executeToolName` is `@graft/mcp`'s, passed in as the usage route passes it, since a
+ * Four statements whatever the person holds: the connections, the agent reach, the tool counts and
+ * the last call per vendor. Both tool counts come from one statement, so a stock tool copied in
+ * mid-read is counted once, as in use or as offered stock, never twice or not at all (GRA-345).
+ * Rows come in the order of each vendor's oldest connection; the console sorts. `executeToolName` is `@graft/mcp`'s, passed in as the usage route passes it, since a
  * connection's execute tool has no toolbox row and is matched by its wire name.
  */
 export async function listIntegrations(
@@ -96,10 +97,9 @@ export async function listIntegrations(
   // Every connection's execute tool, revoked ones included: a call made before the revoke was
   // still a call to the vendor, as the usage route counts it.
   const vendorOfToolName = new Map(rows.map((row) => [input.executeToolName(row.id), row.vendor]));
-  const [reach, toolCounts, stockCounts, lastUsed] = await Promise.all([
+  const [reach, toolCounts, lastUsed] = await Promise.all([
     deps.listActiveAgentReach(ctx.db, principal.personId),
-    deps.countLiveToolsByVendor(ctx.db, principal.personId),
-    deps.countUnheldStockToolsByVendor(ctx.db, principal.personId),
+    deps.countToolsByVendor(ctx.db, principal.personId),
     deps.lastUsedAtByVendor(ctx.db, principal.personId, {
       toolNames: [...vendorOfToolName.keys()],
     }),
@@ -132,8 +132,7 @@ export async function listIntegrations(
     agentsOf.set(vendor, agents);
   }
 
-  const toolCountOf = new Map(toolCounts.map((row) => [row.vendor, row.count]));
-  const stockCountOf = new Map(stockCounts.map((row) => [row.vendor, row.count]));
+  const toolCountOf = new Map(toolCounts.map((row) => [row.vendor, row]));
   const lastUsedOf = new Map<string, Date>();
   for (const row of lastUsed) {
     const vendor = row.vendor ?? (row.toolName ? vendorOfToolName.get(row.toolName) : undefined);
@@ -147,8 +146,8 @@ export async function listIntegrations(
     displayName: connections[0]?.displayName ?? vendor,
     connections,
     agents: [...(agentsOf.get(vendor)?.values() ?? [])],
-    toolCount: (toolCountOf.get(vendor) ?? 0) + (stockCountOf.get(vendor) ?? 0),
-    inUseToolCount: toolCountOf.get(vendor) ?? 0,
+    toolCount: toolCountOf.get(vendor)?.offered ?? 0,
+    inUseToolCount: toolCountOf.get(vendor)?.inUse ?? 0,
     lastUsedAt: lastUsedOf.get(vendor) ?? null,
     needsAttention: worstAttention(connections),
   }));

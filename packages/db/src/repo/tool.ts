@@ -1,4 +1,5 @@
-import { and, asc, count, desc, eq, exists, inArray, isNotNull, notExists, sql } from "drizzle-orm";
+import { and, asc, desc, eq, exists, inArray, isNotNull, notExists, sql } from "drizzle-orm";
+import { unionAll } from "drizzle-orm/pg-core";
 
 import type { DbOrTx } from "../index";
 import { stockTool, stockToolVersion } from "../schema/stock";
@@ -84,36 +85,38 @@ export async function listAuthoredToolsForVendor(
 }
 
 /**
- * How many live tools the person holds per vendor — a tool with a current version, which is the one
- * `find_tool` lists and a run reaches (ADR 0012, L0 as amended 2026-09-17). The integrations list's
- * tool count (GRA-291); a vendor with none answers no row.
+ * The integrations list's tool counts per vendor (GRA-291, GRA-345), in **one statement**, so a
+ * stock tool's first-use copy landing mid-read can never count it twice or not at all:
+ *
+ * - `inUse`: the person's live tools, a tool with a current version, which is the one `find_tool`
+ *   lists and a run reaches (ADR 0012, L0 as amended 2026-09-17).
+ * - `offered`: those plus the stock tools of the vendor the person holds no tool of the name of. A
+ *   tool of theirs of the same vendor and name hides the stock one, versionless included, as in
+ *   `find_tool` and the integration's tools read (GRA-293), so this counts what that read lists. A
+ *   stock tool with no version yet is not offered.
+ *
+ * The catalogue side is global (ADR 0025); the person is named on the toolbox branch and in the
+ * shadowing subquery. A vendor with neither answers no row.
  */
-export async function countLiveToolsByVendor(
+export async function countToolsByVendor(
   db: DbOrTx,
   personId: string,
-): Promise<{ vendor: string; count: number }[]> {
-  return db
-    .select({ vendor: authoredTool.vendor, count: count() })
+): Promise<{ vendor: string; inUse: number; offered: number }[]> {
+  const live = db
+    .select({
+      vendor: authoredTool.vendor,
+      inUse: sql<number>`count(*)`.as("in_use"),
+      unheld: sql<number>`0`.as("unheld"),
+    })
     .from(authoredTool)
     .where(and(eq(authoredTool.personId, personId), isNotNull(authoredTool.currentVersionId)))
-    .groupBy(authoredTool.vendor)
-    .orderBy(asc(authoredTool.vendor));
-}
-
-/**
- * How many stock tools per vendor the person holds no tool of the name of (GRA-345): the ready-made
- * tools an integration offers them that are not yet in their toolbox. A tool of the person's of the
- * same vendor and name hides the stock one, versionless included, as in `find_tool` and the
- * integration's tools read (GRA-293), so the integrations list counts what that read lists. The
- * catalogue side is global (ADR 0025); the person is named in the shadowing subquery. A stock tool
- * with no version yet is not offered.
- */
-export async function countUnheldStockToolsByVendor(
-  db: DbOrTx,
-  personId: string,
-): Promise<{ vendor: string; count: number }[]> {
-  return db
-    .select({ vendor: stockTool.vendor, count: count() })
+    .groupBy(authoredTool.vendor);
+  const unheld = db
+    .select({
+      vendor: stockTool.vendor,
+      inUse: sql<number>`0`.as("in_use"),
+      unheld: sql<number>`count(*)`.as("unheld"),
+    })
     .from(stockTool)
     .where(
       and(
@@ -137,8 +140,17 @@ export async function countUnheldStockToolsByVendor(
         ),
       ),
     )
-    .groupBy(stockTool.vendor)
-    .orderBy(asc(stockTool.vendor));
+    .groupBy(stockTool.vendor);
+  const counts = unionAll(live, unheld).as("tool_counts");
+  return db
+    .select({
+      vendor: counts.vendor,
+      inUse: sql<number>`sum(${counts.inUse})::int`.mapWith(Number),
+      offered: sql<number>`sum(${counts.inUse} + ${counts.unheld})::int`.mapWith(Number),
+    })
+    .from(counts)
+    .groupBy(counts.vendor)
+    .orderBy(asc(counts.vendor));
 }
 
 /** One tool by the triple that identifies it — (person, vendor, name). */
