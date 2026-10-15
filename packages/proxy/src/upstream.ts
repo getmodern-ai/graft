@@ -93,7 +93,23 @@ export type UpstreamFetchOptions = {
    * upstreamFetch`); the header of this file says why the shared fetch takes none. Exact, lower-case.
    */
   unguardedHosts?: readonly string[];
+  /** How long one address may take to connect before the next is tried; a test shortens it. */
+  connectAttemptTimeoutMs?: number;
 };
+
+/**
+ * How long one resolved address may take to answer the TCP handshake before the next is tried.
+ * Node's happy eyeballs (`autoSelectFamily`, on by default) gives each address but the last
+ * 250 ms and then *abandons* it rather than racing it, so a vendor whose handshake takes longer
+ * than that — any host on another continent from ap-southeast-2 — failed outright when a second
+ * address followed and itself failed, as an IPv6 one does where the network has no IPv6 route:
+ * `AggregateError [ETIMEDOUT]` after ~250 ms (GRA-339). A far handshake with one SYN retransmit
+ * still fits inside this; a black-holed first address costs this long before the next one.
+ */
+export const CONNECT_ATTEMPT_TIMEOUT_MS = 2_500;
+
+/** The whole connect, every address together — undici's own default, stated so it is read here. */
+export const CONNECT_TIMEOUT_MS = 10_000;
 
 /**
  * undici's fetch over an `Agent` whose connector resolves through `guardedLookup`. undici's own
@@ -103,7 +119,12 @@ export type UpstreamFetchOptions = {
  */
 export function createUpstreamFetch(options: UpstreamFetchOptions = {}): UpstreamFetch {
   const agent = new Agent({
-    connect: { lookup: guardedLookup(options.resolveAll, options.unguardedHosts) },
+    connect: {
+      lookup: guardedLookup(options.resolveAll, options.unguardedHosts),
+      autoSelectFamily: true,
+      autoSelectFamilyAttemptTimeout: options.connectAttemptTimeoutMs ?? CONNECT_ATTEMPT_TIMEOUT_MS,
+      timeout: CONNECT_TIMEOUT_MS,
+    },
   });
 
   return async (request, { signal }) => {

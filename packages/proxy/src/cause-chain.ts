@@ -73,9 +73,11 @@ export function causeChain(error: unknown): CauseChain {
 export function describeLink(link: unknown): string {
   if (link instanceof Error) {
     const code = (link as { code?: unknown }).code;
-    return typeof code === "string"
-      ? `${link.name} [${code}]: ${link.message}`
-      : `${link.name}: ${link.message}`;
+    const text =
+      typeof code === "string"
+        ? `${link.name} [${code}]: ${link.message}`
+        : `${link.name}: ${link.message}`;
+    return link instanceof AggregateError ? `${text}${describeAttempts(link)}` : text;
   }
   if (typeof link === "object" && link !== null) {
     const body = link as Record<string, unknown>;
@@ -93,6 +95,28 @@ export function describeLink(link: unknown): string {
     }
   }
   return String(link);
+}
+
+/**
+ * How many of an `AggregateError`'s errors are read: one per address a connect tried, and a vendor
+ * name answers with a handful at most.
+ */
+export const MAX_AGGREGATE_ERRORS = 4;
+
+/**
+ * An `AggregateError`'s own message is empty when Node's happy eyeballs raises it, and the line
+ * read `AggregateError [ETIMEDOUT]: ` with nothing saying which address failed how (GRA-339). Each
+ * attempt's message (`connect ETIMEDOUT 202.61.206.6:443`) in parentheses; the same fields are
+ * read as of any link, and no `cause` of an attempt.
+ */
+function describeAttempts(error: AggregateError): string {
+  const errors: unknown[] = Array.isArray(error.errors) ? error.errors : [];
+  const attempts = errors
+    .slice(0, MAX_AGGREGATE_ERRORS)
+    .map((attempt) => (attempt instanceof Error ? attempt.message : String(attempt)));
+  if (attempts.length === 0) return "";
+  if (errors.length > MAX_AGGREGATE_ERRORS) attempts.push(TRUNCATED);
+  return ` (${attempts.join("; ")})`;
 }
 
 /**
