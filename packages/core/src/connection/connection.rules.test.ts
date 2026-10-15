@@ -442,4 +442,11 @@ describe("accountLabelOf", () => {
   it("cuts a label past the bound", () => {
     expect(accountLabelOf("a".repeat(ACCOUNT_LABEL_MAX + 50))).toHaveLength(ACCOUNT_LABEL_MAX);
   });
+
+  it("cuts at a whole code point, never through an emoji (Greptile on #271)", () => {
+    const emoji = String.fromCodePoint(0x1f600);
+    const cut = accountLabelOf(`${"a".repeat(ACCOUNT_LABEL_MAX - 1)}${emoji}b`);
+    expect(cut).toBe(`${"a".repeat(ACCOUNT_LABEL_MAX - 1)}${emoji}`);
+    expect(cut?.isWellFormed()).toBe(true);
+  });
 });
