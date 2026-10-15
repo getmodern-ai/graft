@@ -1,10 +1,13 @@
 import type { SetupStep } from "@graft/db/schema/setup";
 
+import { withoutTrailingSlashes } from "../url.rules";
+
 /**
  * Setup's rules (CONTEXT.md, *Setup*; ADR 0024), **browser-safe**: the console's shell applies the
  * show rule on entry and the agents table draws the awaiting-harness state from the predicate,
  * while the server answers the same verdicts on `GET /api/setup`. Nothing here imports more than a
- * type, so one rule has two readers and cannot disagree with itself.
+ * type and `url.rules.ts`, which imports nothing, so one rule has two readers and cannot disagree
+ * with itself.
  *
  * Every function takes the fields it reads and nothing else, typed so that a server `Date` and the
  * wire's string both fit: the console holds `Jsonified` shapes, the server holds rows.
@@ -55,17 +58,6 @@ export function shouldShowSetup(setup: SetupClocks | null, work: SetupWorkCounts
  * Setup adopts that agent even when the person has several.
  */
 export const SETUP_AGENT_PARAM = "agent";
-
-/**
- * A URL with its trailing slashes trimmed, by index rather than by a regular expression over
- * caller input: `/\/+$/` backtracks polynomially on a long run of slashes (CodeQL's
- * polynomial-regex rule, on #167). `setupUrl` and `setup-prompt.ts` read it.
- */
-export function withoutTrailingSlashes(url: string): string {
-  let end = url.length;
-  while (end > 0 && url.charCodeAt(end - 1) === 47) end -= 1;
-  return url.slice(0, end);
-}
 
 /**
  * The console URL of the Setup page for one agent: `<GRAFT_CONSOLE_URL>/setup?agent=<id>`, the

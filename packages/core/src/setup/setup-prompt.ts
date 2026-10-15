@@ -28,13 +28,13 @@
  * descriptions, in its order, which the route answers as JSON (reconciled under GRA-208).
  */
 
+import { withoutTrailingSlashes } from "../url.rules";
 import {
   readSetupHarness,
   SETUP_HARNESSES,
   type SetupHarness,
   type SetupHarnessEntry,
 } from "./harness";
-import { withoutTrailingSlashes } from "./setup.rules";
 
 /**
  * The harnesses a setup prompt is written for: Setup's own list (`harness.ts`), whose ids, labels,

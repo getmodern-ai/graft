@@ -20,7 +20,6 @@ import {
   setupUrl,
   shouldOfferSetup,
   shouldShowSetup,
-  withoutTrailingSlashes,
 } from "./setup.rules";
 
 const AT = "2026-09-23T10:00:00.000Z";
@@ -114,10 +113,7 @@ describe("setupUrl", () => {
     );
   });
 
-  it("trims a long run of trailing slashes in linear time, and nothing else", () => {
-    expect(withoutTrailingSlashes("https://graft.example///")).toBe("https://graft.example");
-    expect(withoutTrailingSlashes("///")).toBe("");
-    expect(withoutTrailingSlashes("https://graft.example/a//b")).toBe("https://graft.example/a//b");
+  it("trims a long run of trailing slashes in linear time (`url.rules.ts`)", () => {
     const hostile = `https://graft.example/${"/".repeat(100_000)}x`;
     const started = performance.now();
     expect(setupUrl(hostile, "a")).toBe(`${hostile}/setup?agent=a`);
