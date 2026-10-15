@@ -6,11 +6,15 @@ import {
   MODEL_PROVIDERS,
   type ModelAdapter,
   type ModelRoute,
+  modelFailureSentence,
   NO_TELEMETRY,
   type ProviderModelConfig,
   type ProviderModelDeps,
+  providerModels,
+  resolveModelSettings,
 } from "@graft/model";
 import type { ModelTelemetryBacking } from "@graft/observability";
+import { createGuardedFetch } from "@graft/proxy";
 import { describe, expect, it, vi } from "vitest";
 
 import { createModel, type ModelEnv } from "./model";
@@ -94,7 +98,7 @@ function recordingFactory() {
   return { factory, built, opened, proposed };
 }
 
-function harness(env: ModelEnv, rows: PersonModelKeyRow[]) {
+function harness(env: ModelEnv, rows: PersonModelKeyRow[], personFetch?: typeof globalThis.fetch) {
   const byPerson = new Map(rows.map((row) => [row.personId, row]));
   const decrypt = vi.fn(
     async (ciphertext: Uint8Array, scope: { personId: string; connectionId: string }) => {
@@ -115,6 +119,7 @@ function harness(env: ModelEnv, rows: PersonModelKeyRow[]) {
     modelKey: { findPersonModelKey: async (_db, personId) => byPerson.get(personId) ?? null },
     providerFactory: factory,
     onRoute: (route) => routes.push(route),
+    ...(personFetch ? { personFetch } : {}),
   });
   return { setup, decrypt, built, opened, proposed, routes };
 }
@@ -418,5 +423,68 @@ describe("the deployment a person reads", () => {
       provider: "openai",
       personKeyAccepted: true,
     });
+  });
+});
+
+describe("a person's base URL at call time (GRA-338)", () => {
+  /** A resolver that answers every name with one private address, as a rebound name would. */
+  const rebound = createGuardedFetch({
+    resolveAll: (_hostname, callback) => callback(null, [{ address: "10.0.0.5", family: 4 }]),
+  });
+
+  it("hands the guarded fetch to a person's provider with a base URL, and to nothing else", async () => {
+    const withUrl = { ...keyRow("person_a", "openai"), baseUrl: "https://gateway.example/v1" };
+    const { setup, built } = harness(
+      { ...FIXED, GRAFT_MODEL_BASE_URL: "http://10.0.0.9/v1" },
+      [withUrl, keyRow("person_b", "anthropic")],
+      rebound,
+    );
+    const { model } = await setup;
+    if (!model) throw new Error("a fixed model means a model");
+    await model.open(job("job_a", "person_a")).turn({ kind: "goal" });
+    await model.open(job("job_b", "person_b")).turn({ kind: "goal" });
+
+    // The operator's base URL is configuration and is not guarded; the person's is.
+    expect(built[0]?.deps.fetch).toBeUndefined();
+    expect(built[1]?.config.baseUrl).toBe("https://gateway.example/v1");
+    expect(built[1]?.deps.fetch).toBe(rebound);
+    // A key with no base URL calls the provider's own host through the platform's fetch.
+    expect(built[2]?.deps.fetch).toBeUndefined();
+  });
+
+  it("refuses a public name that resolves to a private address, and says so without the endpoint's words", async () => {
+    const settings = resolveModelSettings({
+      provider: "openai",
+      apiKey: "k",
+      baseUrl: "https://gateway.example/v1",
+    });
+    const { authoring } = providerModels(settings, "k", rebound);
+    if (typeof authoring === "string") throw new Error("a provider model, not an id");
+    const error = await authoring
+      .doGenerate({ prompt: [{ role: "user", content: [{ type: "text", text: "hi" }] }] })
+      .then(
+        () => null,
+        (e: unknown) => e,
+      );
+    expect(error).toBeInstanceOf(Error);
+    expect(modelFailureSentence(error)).toBe(
+      "The model's base URL does not resolve to a public address, so Graft did not call it. Change the base URL in Settings.",
+    );
+  });
+
+  it("refuses a private literal before any lookup, so a row saved before the rule is refused too", async () => {
+    const resolveAll = vi.fn();
+    const guarded = createGuardedFetch({ resolveAll });
+    for (const url of [
+      "http://169.254.169.254/latest",
+      "http://localhost:3000/v1",
+      "https://10.0.0.1/v1",
+      "http://[::1]/v1",
+    ]) {
+      await expect(guarded(url, { method: "POST", body: "{}" })).rejects.toThrow(
+        /not a public address/,
+      );
+    }
+    expect(resolveAll).not.toHaveBeenCalled();
   });
 });

@@ -20,6 +20,7 @@ export {
   type WireDraft,
   wireOf,
 } from "./answer";
+export { modelFailureSentence } from "./model-failure";
 export {
   CONNECTION_PROPOSAL_INPUT_MAX_CHARS,
   CONNECTION_PROPOSAL_TIMEOUT_MS,

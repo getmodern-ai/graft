@@ -1,10 +1,10 @@
 import { lookup as dnsLookup, type LookupAddress } from "node:dns";
 import type { LookupFunction } from "node:net";
 
-import { Agent, fetch as undiciFetch } from "undici";
+import { Agent, type Dispatcher, fetch as undiciFetch } from "undici";
 
 import { hasCauseNamed } from "./cause-chain";
-import { isPublicAddress } from "./public-host";
+import { isPublicAddress, isPublicHost } from "./public-host";
 import type { UpstreamFetch } from "./types";
 
 /**
@@ -112,13 +112,11 @@ export const CONNECT_ATTEMPT_TIMEOUT_MS = 2_500;
 export const CONNECT_TIMEOUT_MS = 10_000;
 
 /**
- * undici's fetch over an `Agent` whose connector resolves through `guardedLookup`. undici's own
- * fetch rather than the global one, with a plain init rather than a `Request` instance, because
- * the two are different copies of the same library and a `Request` from one is an opaque object
- * to the other. `redirect: "manual"` always — the proxy decides about redirects, never the fetch.
+ * The connector both fetches below open sockets through: the guarded resolver and the connect
+ * timeouts, in one place so the vendor's way out and a person's model call cannot drift apart.
  */
-export function createUpstreamFetch(options: UpstreamFetchOptions = {}): UpstreamFetch {
-  const agent = new Agent({
+function guardedAgent(options: UpstreamFetchOptions): Agent {
+  return new Agent({
     connect: {
       lookup: guardedLookup(options.resolveAll, options.unguardedHosts),
       autoSelectFamily: true,
@@ -126,6 +124,16 @@ export function createUpstreamFetch(options: UpstreamFetchOptions = {}): Upstrea
       timeout: CONNECT_TIMEOUT_MS,
     },
   });
+}
+
+/**
+ * undici's fetch over an `Agent` whose connector resolves through `guardedLookup`. undici's own
+ * fetch rather than the global one, with a plain init rather than a `Request` instance, because
+ * the two are different copies of the same library and a `Request` from one is an opaque object
+ * to the other. `redirect: "manual"` always — the proxy decides about redirects, never the fetch.
+ */
+export function createUpstreamFetch(options: UpstreamFetchOptions = {}): UpstreamFetch {
+  const agent = guardedAgent(options);
 
   return async (request, { signal }) => {
     const response = await undiciFetch(request.url, {
@@ -142,6 +150,59 @@ export function createUpstreamFetch(options: UpstreamFetchOptions = {}): Upstrea
       headers: new Headers([...response.headers]),
       body: response.body as ReadableStream<Uint8Array> | null,
     };
+  };
+}
+
+/**
+ * The same guard in the shape of the platform's `fetch`, for a client that takes one: the AI SDK
+ * provider a person's own model key builds when they named a base URL (`apps/server/src/model.ts`,
+ * GRA-338), since that URL is the person's choice as a vendor host is an agent's. The literal is
+ * judged before the request leaves, because Node connects to an IP literal without asking the
+ * resolver, so a row saved before the save-time rule, or a literal the rule missed, is still
+ * refused. `redirect: "manual"`, so a public host cannot bounce the call to a private literal; the
+ * client reads the 3xx as the failure it is. No `unguardedHosts`: nothing a person typed is exempt.
+ */
+export function createGuardedFetch(
+  options: Pick<UpstreamFetchOptions, "resolveAll" | "connectAttemptTimeoutMs"> & {
+    /**
+     * A test's `MockAgent`, standing where the guarded agent would, so the request and response
+     * conversion is exercised with no socket. Nothing outside a test passes one: it replaces the
+     * resolver's half of the guard (the literal check still runs).
+     */
+    dispatcher?: Dispatcher;
+  } = {},
+): typeof globalThis.fetch {
+  // The vendor fetch's connector less `unguardedHosts`: the same resolver and timeouts.
+  const agent =
+    options.dispatcher ??
+    guardedAgent({
+      resolveAll: options.resolveAll,
+      connectAttemptTimeoutMs: options.connectAttemptTimeoutMs,
+    });
+
+  return async (input, init) => {
+    const request = new Request(input, init);
+    const { hostname } = new URL(request.url);
+    if (!isPublicHost(hostname)) throw new PrivateAddressError(hostname, hostname);
+    const body =
+      request.method === "GET" || request.method === "HEAD"
+        ? undefined
+        : new Uint8Array(await request.arrayBuffer());
+    const response = await undiciFetch(request.url, {
+      method: request.method,
+      headers: [...request.headers],
+      body,
+      dispatcher: agent,
+      signal: request.signal,
+      redirect: "manual",
+    });
+    // undici's own `Response` is another copy of the class; the caller gets the platform's.
+    const nullBody = [204, 205, 304].includes(response.status);
+    return new Response(nullBody ? null : (response.body as ReadableStream<Uint8Array> | null), {
+      status: response.status,
+      statusText: response.statusText,
+      headers: new Headers([...response.headers]),
+    });
   };
 }
 

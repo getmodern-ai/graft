@@ -1811,6 +1811,38 @@ describe("a job that fails and tries again", () => {
     }
   }, 30_000);
 
+  it("ends model_failed with a sentence, never the provider's words, and keeps the raw error in the trace (GRA-338)", async () => {
+    const leak = "instance-identity i-0abc123 from the metadata service";
+    deps.model = {
+      name: "failing",
+      open: () => ({
+        turn: async () => {
+          // What a provider's package throws quotes the endpoint (`@graft/model`'s suite covers
+          // the status mapping); anything unrecognised reads as the generic sentence.
+          throw new Error(leak);
+        },
+      }),
+    };
+    const a = await connect(TOKEN_A);
+    try {
+      const { status, jobId } = await acquireAndFinish(a, {
+        connectionId: CONN_DEMO,
+        goal: "List the items, with a broken model",
+      });
+      expect(status.status).toBe("failed");
+      const failure = status.result as AcquireFailure;
+      expect(failure.failure).toBe("model_failed");
+      expect(failure.message).toBe(
+        "The model failed to answer goal: The model call failed. Try again.",
+      );
+      expect(JSON.stringify(status)).not.toContain("i-0abc123");
+      const { traces } = rowsOf(jobId);
+      expect(traces.some((row) => JSON.stringify(row.data).includes("i-0abc123"))).toBe(true);
+    } finally {
+      await a.close();
+    }
+  }, 30_000);
+
   it("names a proof read whose run failed with the runner's sentence and its stderr, joined without an em dash", async () => {
     // The probe is Graft's own module; a run of it the runner cannot finish (the process exits
     // here, as a kill or a timeout ends it) is reported as the run's sentence and its stderr tail,

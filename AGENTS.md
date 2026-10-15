@@ -1821,6 +1821,18 @@ the fixed model, so their jobs — and the vendor documentation those jobs read 
 and nobody else's (`apps/server/src/model.test.ts` proves the isolation through the service seam).
 Routing applies whenever a fixed model exists, and always under `cloud`; under `open` with no fixed
 model `acquire` refuses at the door rather than accepting a job that fails for want of a key.
+**The key's base URL is a host this server calls, so it is held to the proxy's address rule**
+(GRA-338; ADR 0010): `setPersonModelKey` refuses one whose host `isPublicHost` refuses — private,
+loopback, link-local, carrier-NAT, metadata, unique-local, `localhost`, single-label or internal,
+an IP in any spelling the URL parser canonicalises — with a `baseUrl` sentence and
+`details.reason: "host_not_public"`, and refuses plain `http` unless `ModelKeyDeps.requireHttps` is
+false, which `index.ts` sets outside `NODE_ENV=production`. At call time `model.ts` hands a person's
+provider with a base URL `@graft/proxy`'s `createGuardedFetch` (`ProviderModelDeps.fetch`): the
+literal judged before the request, the resolved address judged inside the lookup the socket opens
+through, redirects never followed, so a rebound name or a row saved before the rule is refused. The
+operator's `GRAFT_MODEL_BASE_URL` and a key with no base URL get the platform's `fetch`. A failed
+model turn ends the job with `@graft/model`'s `modelFailureSentence` (the status and what to check,
+never the endpoint's message or body); the raw error goes to the job's trace alone.
 
 **Observability is three seams with no backing in the open form** (GRA-100; ADR 0002 as amended
 2026-09-19; `@graft/observability`): the **log drain** (`LogDrain`) — where a wide event goes after

@@ -121,6 +121,74 @@ describe("setPersonModelKey", () => {
     expect(encrypt).not.toHaveBeenCalled();
   });
 
+  it("refuses a base URL on a private, loopback, link-local, metadata or internal host (GRA-338)", async () => {
+    const { deps, encrypt } = fakeDeps();
+    const laptop = { ...deps, requireHttps: false };
+    for (const baseUrl of [
+      "http://169.254.169.254/latest",
+      "http://localhost:3000/v1",
+      "https://10.0.0.1/v1",
+      "http://[::1]:8080/v1",
+      "http://2852039166/latest", // 169.254.169.254, decimal
+      "https://0x7f.1/v1", // 127.0.0.1, hex and short
+      "https://[fd00:ec2::254]/",
+      "https://100.64.0.1/v1",
+      "https://intranet/v1",
+      "https://models.corp.internal/v1",
+    ]) {
+      const error = await setPersonModelKey(
+        ctx,
+        A,
+        { provider: "openai", apiKey: "k", baseUrl },
+        laptop,
+      ).catch((e: unknown) => e);
+      expect(error, baseUrl).toBeInstanceOf(ServiceError);
+      expect((error as ServiceError).code).toBe("BAD_REQUEST");
+      expect((error as ServiceError).details).toEqual({
+        field: "baseUrl",
+        reason: "host_not_public",
+      });
+      expect((error as ServiceError).message).toMatch(/^baseUrl must be on a public host/);
+    }
+    expect(encrypt).not.toHaveBeenCalled();
+  });
+
+  it("takes plain http only where https is not required, and never credentials in the URL", async () => {
+    const { deps } = fakeDeps();
+    const strict = await setPersonModelKey(
+      ctx,
+      A,
+      { provider: "openai", apiKey: "k", baseUrl: "http://gateway.example/v1" },
+      deps,
+    ).catch((e: unknown) => e);
+    expect((strict as ServiceError).message).toBe("baseUrl must be an absolute https URL");
+    const laptop = await setPersonModelKey(
+      ctx,
+      A,
+      { provider: "openai", apiKey: "k", baseUrl: "http://gateway.example/v1" },
+      { ...deps, requireHttps: false },
+    );
+    expect(laptop.baseUrl).toBe("http://gateway.example/v1");
+    const withUser = await setPersonModelKey(
+      ctx,
+      A,
+      { provider: "openai", apiKey: "k", baseUrl: "https://user:pass@gateway.example/v1" },
+      deps,
+    ).catch((e: unknown) => e);
+    expect((withUser as ServiceError).details).toEqual({ field: "baseUrl" });
+  });
+
+  it("accepts a public https base URL", async () => {
+    const { deps } = fakeDeps();
+    const output = await setPersonModelKey(
+      ctx,
+      A,
+      { provider: "openai", apiKey: "k", baseUrl: "https://openrouter.ai/api/v1" },
+      deps,
+    );
+    expect(output.baseUrl).toBe("https://openrouter.ai/api/v1");
+  });
+
   it("reads a blank model id or base URL as the provider's default", async () => {
     const { deps } = fakeDeps();
     const output = await setPersonModelKey(

@@ -117,6 +117,12 @@ export type ProviderModelDeps = {
   goalProposal?: GoalProposalOptions;
   /** The connection proposal's bound, for a test; `CONNECTION_PROPOSAL_TIMEOUT_MS` when absent. */
   connectionProposal?: ConnectionProposalOptions;
+  /**
+   * The HTTP client the provider's package calls through; the platform's `fetch` when absent. A
+   * person's own key with a base URL gets the proxy's address-guarded one (`apps/server/src/model.ts`,
+   * GRA-338); the deployment's own `GRAFT_MODEL_BASE_URL` is the operator's and gets none.
+   */
+  fetch?: typeof globalThis.fetch;
 };
 
 export type ProviderModel = ModelAdapter & { readonly settings: ProviderModelSettings };
@@ -135,16 +141,21 @@ export function resolveModelSettings(config: ProviderModelConfig): ProviderModel
 }
 
 /** The provider's two models, from its package. The key goes here and nowhere else in this file. */
-export function providerModels(settings: ProviderModelSettings, apiKey: string): ResolvedModels {
+export function providerModels(
+  settings: ProviderModelSettings,
+  apiKey: string,
+  fetch?: typeof globalThis.fetch,
+): ResolvedModels {
   const baseURL = settings.baseUrl ? { baseURL: settings.baseUrl } : {};
+  const client = fetch ? { fetch } : {};
   if (settings.provider === "anthropic") {
-    const anthropic = createAnthropic({ apiKey, ...baseURL });
+    const anthropic = createAnthropic({ apiKey, ...baseURL, ...client });
     return {
       authoring: anthropic(settings.authoringModel),
       triage: anthropic(settings.triageModel),
     };
   }
-  const openai = createOpenAI({ apiKey, ...baseURL });
+  const openai = createOpenAI({ apiKey, ...baseURL, ...client });
   // Responses against api.openai.com; Chat Completions behind a gateway — see `baseUrl` above.
   const model = (id: string) => (settings.baseUrl ? openai.chat(id) : openai.responses(id));
   return { authoring: model(settings.authoringModel), triage: model(settings.triageModel) };
@@ -158,7 +169,7 @@ export function createProviderModel(
   const bound: Bound = {
     settings,
     telemetry: deps.telemetry ?? NO_TELEMETRY,
-    models: deps.models ?? providerModels(settings, config.apiKey),
+    models: deps.models ?? providerModels(settings, config.apiKey, deps.fetch),
   };
   return {
     name: `${settings.provider}:${settings.authoringModel}`,

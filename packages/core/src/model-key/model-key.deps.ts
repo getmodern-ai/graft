@@ -18,15 +18,24 @@ export type ModelKeyDeps = {
   deletePersonModelKey: typeof deletePersonModelKey;
   vault: EncryptOnlyVault;
   now: () => Date;
+  /**
+   * Whether a base URL must be https: the server's `NODE_ENV=production`. Absent means it must, so
+   * a laptop opts into plain http; nothing opts out of the public-host rule (GRA-338).
+   */
+  requireHttps?: boolean;
 };
 
 /** The real deps, given the vault — the server calls this once, as it does `createConnectionDeps`. */
-export function createModelKeyDeps(vault: EncryptOnlyVault): ModelKeyDeps {
+export function createModelKeyDeps(
+  vault: EncryptOnlyVault,
+  options: { requireHttps?: boolean } = {},
+): ModelKeyDeps {
   return {
     findPersonModelKey,
     upsertPersonModelKey,
     deletePersonModelKey,
     vault,
     now: () => new Date(),
+    requireHttps: options.requireHttps ?? true,
   };
 }
