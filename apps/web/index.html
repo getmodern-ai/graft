@@ -16,7 +16,13 @@
          whichever media query the browser applies. -->
     <meta name="theme-color" media="(prefers-color-scheme: light)" content="#ffffff" />
     <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#0f0c0a" />
+    <!-- The Graft mark (GRA-343). The SVG switches with the tab strip's scheme; the `.ico` is for
+         a browser that takes no SVG icon, and the PNGs are the home-screen and install icons. The
+         manifest's two colours are the light `theme-color` above, kept in step with it. -->
+    <link rel="icon" href="/favicon.ico" sizes="32x32" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <link rel="manifest" href="/site.webmanifest" />
     <title>Graft</title>
   </head>
 

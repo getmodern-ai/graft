@@ -87,7 +87,7 @@ export const COLOUR_EXCEPTIONS: readonly ColourException[] = [
     file: "apps/web/index.html",
     literals: ["#ffffff", "#0f0c0a"],
     reason:
-      'The same two values in the media-gated `<meta name="theme-color">` tags that cover the instant before `theme-provider.tsx` mounts — the one place a colour has to be written before any stylesheet or script is in effect. Sanctioned for the reason above, and kept in step with that entry.',
+      'The same two values in the media-gated `<meta name="theme-color">` tags that cover the instant before `theme-provider.tsx` mounts — the one place a colour has to be written before any stylesheet or script is in effect. Sanctioned for the reason above, and kept in step with that entry and with the light value in `public/site.webmanifest` (GRA-343), which the guard does not scan.',
   },
 ];
 
