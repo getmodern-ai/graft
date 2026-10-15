@@ -147,7 +147,7 @@ function HomeRoute() {
 
         <div className="grid gap-8 lg:grid-cols-[minmax(0,1fr)_22.5rem] lg:gap-6">
           <NeedsYouPanel />
-          <AgentsPanel onConnectAgent={openConnect} />
+          <AgentsPanel onConnectAgent={openConnect} onCreateAgent={openCreate} />
         </div>
 
         <div className="grid gap-8 lg:grid-cols-2 lg:gap-6">

@@ -1,8 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { useState } from "react";
 
-import { CreateAgentDialog } from "@/components/agent/create-agent-dialog";
 import type { ConnectAgent } from "@/components/home/get-started-panel";
 import {
   HomeListFailed,
@@ -24,7 +22,6 @@ import {
   requestsLabel,
 } from "@/lib/agent-cards";
 import { type AgentListItem, agentsQuery } from "@/lib/agent-queries";
-import { connectionsQuery } from "@/lib/connection-queries";
 import { homeAgents } from "@/lib/home";
 import { pendingActionsQuery } from "@/lib/pending-action-queries";
 import { type SetupStateData, setupQuery } from "@/lib/setup-queries";
@@ -32,18 +29,21 @@ import { type SetupStateData, setupQuery } from "@/lib/setup-queries";
 /**
  * *Your agents* (GRA-327): each active agent's mark, name and client line (GRA-324's decisions in
  * `lib/agent-cards.ts`), with its open requests as a chip, or *Connect its agent* while it awaits
- * its software (ADR 0024); then *Connect another agent*, which opens the agents screen's create
- * dialog here. *Connect its agent* opens Home's `HomeConnectAgentDialog` (GRA-328): issuing the
- * token swaps this row's action away, and the dialog showing it once must not go with it.
+ * its software (ADR 0024); then *Connect another agent*. Both open Home's own dialogs
+ * (`HomeConnectAgentDialog`, `HomeCreateAgentDialog`; GRA-328, GRA-347): what each does can swap
+ * this panel's rows or Home's view, and the token each shows once must not go with them.
  */
-export function AgentsPanel({ onConnectAgent }: { onConnectAgent: ConnectAgent }) {
+export function AgentsPanel({
+  onConnectAgent,
+  onCreateAgent,
+}: {
+  onConnectAgent: ConnectAgent;
+  onCreateAgent: () => void;
+}) {
   const agents = useQuery(agentsQuery);
   // The sidebar's read and key, so a chip's count is a share of the badge's.
   const pending = useQuery({ ...pendingActionsQuery, refetchInterval: 15_000 });
   const setup = useQuery(setupQuery);
-  const [creating, setCreating] = useState(false);
-  // The create dialog's scope; read only once it is opened.
-  const connections = useQuery({ ...connectionsQuery, enabled: creating });
   const { shown } = homeAgents(agents.data?.agents ?? []);
   const requests = requestCounts(pending.data?.pendingActions ?? []);
 
@@ -78,7 +78,7 @@ export function AgentsPanel({ onConnectAgent }: { onConnectAgent: ConnectAgent }
               <button
                 type="button"
                 className="rounded-sm text-left underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
-                onClick={() => setCreating(true)}
+                onClick={onCreateAgent}
               >
                 Connect another agent
               </button>
@@ -87,21 +87,6 @@ export function AgentsPanel({ onConnectAgent }: { onConnectAgent: ConnectAgent }
           />
         </HomeRow>
       </RequestList>
-
-      <CreateAgentDialog
-        open={creating}
-        onOpenChange={setCreating}
-        connections={connections.data?.connections}
-        connectionsFailed={
-          connections.isError
-            ? {
-                error: connections.error,
-                onRetry: () => void connections.refetch(),
-                retrying: connections.isFetching,
-              }
-            : undefined
-        }
-      />
     </HomePanel>
   );
 }

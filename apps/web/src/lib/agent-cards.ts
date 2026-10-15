@@ -89,15 +89,19 @@ export function agentMark(
 }
 
 /**
- * Where an agent awaiting its harness (ADR 0024) is connected from: Setup, when it is the agent an
- * unfinished Setup runs as, so the person resumes there; otherwise *Connect an agent*. Null for an
- * agent that is not awaiting its harness, which draws no such action.
+ * Where an agent awaiting its harness (ADR 0024) is connected from: Setup, when it is the agent a
+ * Setup still running runs as, so the person resumes there; otherwise *Connect an agent*. A
+ * skipped Setup is not running: the person said no to it, and an agent's own button that sent them
+ * back in is a loop they cannot leave by skipping (GRA-347). *Resume Setup* is the way back, asked
+ * for by name. Null for an agent that is not awaiting its harness, which draws no such action.
  */
 export function connectAgentTarget(
   agent: Pick<AgentListItem, "id" | "revokedAt" | "tokenPrefix" | "connectedVia">,
   setup: Pick<SetupStateData, "setup" | "agent"> | undefined,
 ): "setup" | "dialog" | null {
   if (!isAwaitingHarness(agent)) return null;
-  if (setup?.agent?.id === agent.id && setup.setup && !setup.setup.completedAt) return "setup";
+  const record = setup?.setup;
+  const running = record && !record.completedAt && !record.skippedAt;
+  if (setup?.agent?.id === agent.id && running) return "setup";
   return "dialog";
 }

@@ -1,5 +1,5 @@
 import type { AgentScopeMode } from "@graft/core";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 
 import { ScopeModeField } from "@/components/agent/scope-mode-field";
@@ -17,6 +17,8 @@ import { Field, FieldDescription, FieldGroup, FieldLabel } from "@/components/ui
 import { Input } from "@/components/ui/input";
 import { agentKeys, type CreatedAgent, createAgent } from "@/lib/agent-queries";
 import type { Connection } from "@/lib/connection-queries";
+import { harnessOfSetup } from "@/lib/mcp-snippet";
+import { setupQuery } from "@/lib/setup-queries";
 
 /**
  * Create an agent: a name, the cap and the idle window (ADR 0009's two per-agent knobs), and the
@@ -46,6 +48,8 @@ export function CreateAgentDialog({
   connectionsFailed?: { error: unknown; onRetry: () => void; retrying: boolean };
 }) {
   const queryClient = useQueryClient();
+  // Which agent the person told Setup they use, for the configuration the token opens on.
+  const setup = useQuery(setupQuery);
   const [name, setName] = useState("");
   const [cap, setCap] = useState("20");
   const [idleDays, setIdleDays] = useState("21");
@@ -86,7 +90,11 @@ export function CreateAgentDialog({
                 Connect your agent with the token below. It will not be shown again.
               </DialogDescription>
             </DialogHeader>
-            <TokenOnce token={created.token} agentName={created.agent.name} />
+            <TokenOnce
+              token={created.token}
+              agentName={created.agent.name}
+              harness={harnessOfSetup(setup.data?.setup?.harness)}
+            />
             <DialogFooter>
               <Button onClick={close}>I have copied the token</Button>
             </DialogFooter>

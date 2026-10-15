@@ -2,6 +2,7 @@ import { HarnessSetup } from "@/components/agent/harness-setup";
 import { CodeBlock } from "@/components/code-block";
 import { KeyIcon } from "@/components/icons";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import type { Harness } from "@/lib/mcp-snippet";
 
 /**
  * The one view of an agent's token (ADR 0007: the row stores a hash and a prefix, so this is the
@@ -9,7 +10,16 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
  * harness's environment and the `mcpServers` block that reads it from there — the block itself
  * carries no secret (`mcp-snippet.ts`).
  */
-export function TokenOnce({ token, agentName }: { token: string; agentName: string }) {
+export function TokenOnce({
+  token,
+  agentName,
+  harness,
+}: {
+  token: string;
+  agentName: string;
+  /** The configuration's shape to open on (`harnessOfSetup`). */
+  harness?: Harness;
+}) {
   return (
     // `min-w-0`: this is a grid item of `DialogContent`, and a grid track's `auto` minimum takes the
     // widest unbreakable line inside it — the `export` line below is longer than the dialog — so
@@ -25,7 +35,7 @@ export function TokenOnce({ token, agentName }: { token: string; agentName: stri
       </Alert>
 
       <CodeBlock label="The agent's token" code={token} copyLabel="Copy token" />
-      <HarnessSetup token={token} agentName={agentName} />
+      <HarnessSetup token={token} agentName={agentName} initialHarness={harness} />
     </div>
   );
 }

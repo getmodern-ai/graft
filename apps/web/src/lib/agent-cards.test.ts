@@ -150,9 +150,15 @@ describe("agentMark", () => {
 });
 
 describe("connectAgentTarget", () => {
-  it("sends the agent an unfinished Setup runs as back to Setup", () => {
+  it("sends the agent a running Setup runs as back to Setup", () => {
     expect(connectAgentTarget(awaiting, setupState())).toBe("setup");
-    expect(connectAgentTarget(awaiting, setupState({ skippedAt: at }))).toBe("setup");
+  });
+
+  it("never sends a person who skipped Setup back into it (GRA-347)", () => {
+    expect(connectAgentTarget(awaiting, setupState({ skippedAt: at }))).toBe("dialog");
+    expect(connectAgentTarget(awaiting, setupState({ skippedAt: at, starterId: "gmail" }))).toBe(
+      "dialog",
+    );
   });
 
   it("opens Connect an agent for any other agent awaiting its harness", () => {
