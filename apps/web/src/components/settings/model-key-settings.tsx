@@ -194,12 +194,15 @@ function ModelKeyDialog({ current, onClose }: { current: ModelKey | null; onClos
 
   const save = useMutation({
     mutationFn: setModelKey,
-    onSuccess: () => {
+    onSuccess: ({ warning }) => {
       queryClient.invalidateQueries({ queryKey: modelKeyKeys.current });
       queryClient.invalidateQueries({ queryKey: modelKeyKeys.model });
-      toast.success(replacing ? "Your model key is replaced" : "Your model key is set", {
-        description: "Your next acquire job runs on your provider.",
-      });
+      const title = replacing ? "Your model key is replaced" : "Your model key is set";
+      // The provider could not be asked, so the key is saved unchecked (GRA-340).
+      if (warning) toast.warning(title, { description: warning });
+      else {
+        toast.success(title, { description: "Your next acquire job runs on your provider." });
+      }
       setApiKey("");
       setOpen(false);
     },

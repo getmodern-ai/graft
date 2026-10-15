@@ -43,6 +43,7 @@ import {
   type ModelUsage,
   type ModuleDraft,
   modelFailureSentence,
+  OwnModelKeyRefusedError,
   type ProofRead,
   type ProofReadTarget,
   proofReadLabel,
@@ -777,6 +778,14 @@ class AcquireLoop {
         data: { situation: situation.kind, error: errorMessage(error) },
       });
       await this.closeOpen(this.openOutcome(), this.setAside(`the model failed: ${sentence}`));
+      // The person's own key refused is theirs to fix, not the goal's: a kind of its own, and the
+      // sentence alone, which points at Settings (GRA-340).
+      if (error instanceof OwnModelKeyRefusedError) {
+        throw this.end("model_key_refused", sentence, {
+          error: sentence,
+          provider: error.provider,
+        });
+      }
       throw this.end("model_failed", `The model failed to answer ${situation.kind}: ${sentence}`, {
         error: sentence,
         last: this.lastDiagnostics,

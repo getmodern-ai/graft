@@ -1,7 +1,7 @@
 import { lookup as dnsLookup, type LookupAddress } from "node:dns";
 import type { LookupFunction } from "node:net";
 
-import { Agent, type Dispatcher, fetch as undiciFetch } from "undici";
+import { Agent, fetch as undiciFetch } from "undici";
 
 import { hasCauseNamed } from "./cause-chain";
 import { isPublicAddress, isPublicHost } from "./public-host";
@@ -163,22 +163,14 @@ export function createUpstreamFetch(options: UpstreamFetchOptions = {}): Upstrea
  * client reads the 3xx as the failure it is. No `unguardedHosts`: nothing a person typed is exempt.
  */
 export function createGuardedFetch(
-  options: Pick<UpstreamFetchOptions, "resolveAll" | "connectAttemptTimeoutMs"> & {
-    /**
-     * A test's `MockAgent`, standing where the guarded agent would, so the request and response
-     * conversion is exercised with no socket. Nothing outside a test passes one: it replaces the
-     * resolver's half of the guard (the literal check still runs).
-     */
-    dispatcher?: Dispatcher;
-  } = {},
+  options: Pick<UpstreamFetchOptions, "resolveAll" | "connectAttemptTimeoutMs"> = {},
 ): typeof globalThis.fetch {
-  // The vendor fetch's connector less `unguardedHosts`: the same resolver and timeouts.
-  const agent =
-    options.dispatcher ??
-    guardedAgent({
-      resolveAll: options.resolveAll,
-      connectAttemptTimeoutMs: options.connectAttemptTimeoutMs,
-    });
+  // The vendor fetch's connector less `unguardedHosts`: the same resolver and timeouts. There is
+  // no way to hand it another dispatcher; its suite swaps undici's `Agent` instead (GRA-340).
+  const agent = guardedAgent({
+    resolveAll: options.resolveAll,
+    connectAttemptTimeoutMs: options.connectAttemptTimeoutMs,
+  });
 
   return async (input, init) => {
     const request = new Request(input, init);

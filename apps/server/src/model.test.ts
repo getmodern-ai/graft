@@ -8,6 +8,7 @@ import {
   type ModelRoute,
   modelFailureSentence,
   NO_TELEMETRY,
+  OwnModelKeyRefusedError,
   type ProviderModelConfig,
   type ProviderModelDeps,
   providerModels,
@@ -17,7 +18,7 @@ import type { ModelTelemetryBacking } from "@graft/observability";
 import { createGuardedFetch } from "@graft/proxy";
 import { describe, expect, it, vi } from "vitest";
 
-import { createModel, type ModelEnv } from "./model";
+import { createModel, createModelKeyCheck, type ModelEnv } from "./model";
 
 /**
  * The model's boot-time choice and the per-person routing behind it (ADR 0014), through the
@@ -486,5 +487,60 @@ describe("a person's base URL at call time (GRA-338)", () => {
       );
     }
     expect(resolveAll).not.toHaveBeenCalled();
+  });
+});
+
+describe("a person's own key refused (GRA-340)", () => {
+  /** A provider that refuses every key, as Anthropic answers "invalid x-api-key". */
+  const refusing: typeof globalThis.fetch = async () =>
+    new Response(
+      JSON.stringify({
+        type: "error",
+        error: { type: "authentication_error", message: "invalid x-api-key" },
+      }),
+      { status: 401, headers: { "content-type": "application/json" } },
+    );
+
+  it("ends the person's turn as their key refused, naming the provider by the base URL's host", async () => {
+    const row = {
+      ...keyRow("person_a", "anthropic"),
+      baseUrl: "https://gateway.example/v1",
+    };
+    const setup = await createModel({
+      env: FIXED,
+      db,
+      decrypt: async () => ({ [MODEL_KEY_FIELD]: "not-a-key" }),
+      modelKey: { findPersonModelKey: async () => row },
+      personFetch: refusing,
+    });
+    if (!setup.model) throw new Error("a fixed model means a model");
+    const error = await setup.model
+      .open(job("job_a", "person_a"))
+      .turn({ kind: "goal" })
+      .catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(OwnModelKeyRefusedError);
+    expect(modelFailureSentence(error)).toBe(
+      "Your own model key was refused by gateway.example. Update it in Settings.",
+    );
+  });
+
+  it("checks a key at save through the guarded fetch: a refusal, and a name that resolves privately", async () => {
+    expect(
+      await createModelKeyCheck(refusing)({
+        provider: "anthropic",
+        apiKey: "not-a-key",
+        baseUrl: null,
+      }),
+    ).toEqual({ outcome: "refused", status: 401 });
+    const rebound = createGuardedFetch({
+      resolveAll: (_hostname, callback) => callback(null, [{ address: "10.0.0.5", family: 4 }]),
+    });
+    expect(
+      await createModelKeyCheck(rebound)({
+        provider: "openai",
+        apiKey: "k",
+        baseUrl: "https://gateway.example/v1",
+      }),
+    ).toEqual({ outcome: "not_public" });
   });
 });

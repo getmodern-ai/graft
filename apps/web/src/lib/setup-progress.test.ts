@@ -5,6 +5,7 @@ import {
   explainProgress,
   JOB_POLL_MS,
   jobPollInterval,
+  MODEL_KEY_SETTINGS_PATH,
   progressCard,
   progressPart,
   progressStage,
@@ -110,11 +111,49 @@ describe("buildingView", () => {
         status: "failed",
         result: { failure: "model_gave_up", message: "The model gave up: no such read." },
       }),
-    ).toEqual({ kind: "failed", message: "The model gave up: no such read." });
+    ).toEqual({
+      kind: "failed",
+      message: "The model gave up: no such read.",
+      keyRefused: false,
+    });
     expect(buildingView({ status: "failed" })).toEqual({
       kind: "failed",
       message: "The job failed.",
+      keyRefused: false,
     });
+  });
+
+  it("marks a refusal of the person's own model key, which Settings fixes (GRA-340)", () => {
+    const refused = {
+      status: "failed",
+      progress: [
+        "Authoring for demo.",
+        "Stopped: Your own model key was refused by Anthropic. Update it in Settings.",
+      ],
+      result: {
+        failure: "model_key_refused",
+        message: "Your own model key was refused by Anthropic. Update it in Settings.",
+      },
+    };
+    expect(buildingView(refused)).toEqual({
+      kind: "failed",
+      message: "Your own model key was refused by Anthropic. Update it in Settings.",
+      keyRefused: true,
+    });
+    const card = progressCard(refused);
+    expect(card).toMatchObject({
+      kind: "failed",
+      keyRefused: true,
+      message: "Your own model key was refused by Anthropic. Update it in Settings.",
+      failureDetails: null,
+    });
+    expect(
+      progressCard({
+        status: "failed",
+        result: { failure: "model_failed", message: "The model call failed. Try again." },
+      }).keyRefused,
+    ).toBe(false);
+    expect(MODEL_KEY_SETTINGS_PATH).toBe("/settings");
   });
 });
 
