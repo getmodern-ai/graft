@@ -1,9 +1,10 @@
-import type { ConnectionOutput, RevokeConnectionResult } from "@graft/core";
+import type { ConnectionAccess, ConnectionOutput, RevokeConnectionResult } from "@graft/core";
 import { takesCredential } from "@graft/core/connection/connection.rules";
 import { GATEWAY_PROVIDER } from "@graft/core/connection/gateway-provider";
-import { KEYRING_PROVIDER } from "@graft/core/connection/provider";
+import { KEYRING_PROVIDER, providerDisplayName } from "@graft/core/connection/provider";
 import type { AuthScheme } from "@graft/proxy/types";
 import type {
+  ConnectionBody,
   ConnectionCallOutput,
   ConnectionSubmitBody,
   ToolboxToolOutput,
@@ -27,10 +28,13 @@ import type { PendingAction } from "./pending-action-queries";
 export type Connection = Jsonified<ConnectionOutput>;
 export type ConnectionCall = Jsonified<ConnectionCallOutput>;
 export type RevokeResult = Jsonified<RevokeConnectionResult>;
+/** Which agents may use a connection and what each may run without asking (GRA-296). */
+export type ConnectionAccessView = Jsonified<ConnectionAccess>;
 
 export const connectionKeys = {
   all: ["connections"] as const,
   calls: (connectionId: string) => ["connections", connectionId, "calls"] as const,
+  access: (connectionId: string) => ["connections", connectionId, "access"] as const,
 };
 
 export const toolKeys = {
@@ -52,6 +56,19 @@ export const connectionCallsQuery = (connectionId: string, limit = 25) =>
     queryFn: () =>
       api<{ calls: ConnectionCall[] }>(
         `/connections/${encodeURIComponent(connectionId)}/usage?limit=${limit}`,
+      ),
+  });
+
+/**
+ * The integration page's Agents view (GRA-296): every active agent's scope, last use and answers
+ * for the connection's vendor, in one read. `lib/agent-access.ts` words each row.
+ */
+export const connectionAccessQuery = (connectionId: string) =>
+  queryOptions({
+    queryKey: connectionKeys.access(connectionId),
+    queryFn: () =>
+      api<{ access: ConnectionAccessView }>(
+        `/connections/${encodeURIComponent(connectionId)}/access`,
       ),
   });
 
@@ -138,11 +155,11 @@ export function isGatewayConnection(connection: Pick<Connection, "provider">): b
 
 /**
  * The provider's badge on a card, in the person's words: the gateway is *their* API gateway, and
- * a provider this console has no words for yet is named as the row names it.
+ * a provider this console has no words for yet is named by its name, drawn capitalised.
  */
 export function providerLabel(connection: Pick<Connection, "provider">): string {
   if (isGatewayConnection(connection)) return "Through your API gateway";
-  return `via ${connection.provider}`;
+  return `via ${providerDisplayName(connection.provider)}`;
 }
 
 /**
@@ -176,9 +193,16 @@ export function connectionStatus(connection: Connection): ConnectionStatus {
  */
 export type StoredCredential = { connection: Connection; authorizeUrl?: string };
 
-/** The person's own Add connection: registered with its credential in one transaction (GRA-28). */
+/**
+ * The person's own Add connection: registered with its credential in one transaction (GRA-28).
+ * `access` is the console connect's choice (GRA-304): `full` records the in-scope agents' approvals
+ * with the row.
+ */
 export function createConnection(
-  input: ConnectionRegistration & { credential: Record<string, string> },
+  input: ConnectionRegistration & {
+    credential: Record<string, string>;
+    access?: ConnectionBody["access"];
+  },
 ) {
   return api<StoredCredential>("/connections", { method: "POST", body: input });
 }

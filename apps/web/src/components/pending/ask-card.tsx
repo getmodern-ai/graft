@@ -3,8 +3,9 @@ import type * as React from "react";
 import { toast } from "sonner";
 
 import { OpenInNewIcon } from "@/components/icons";
+import { IntegrationMark } from "@/components/marks";
+import { type FocusedAsk, FocusedAskCard } from "@/components/pending/focused-ask-card";
 import { SetupAppCard } from "@/components/setup/setup-app-card";
-import { SetupLogo } from "@/components/setup/setup-logo";
 import { Time } from "@/components/time";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -24,8 +25,9 @@ import {
   isOpen,
   type PendingAction,
   type PendingAnswer,
-  pendingKeys,
+  settleAnsweredAsk,
 } from "@/lib/pending-action-queries";
+import { proposalDocsLabel, proposalSourceBadge } from "@/lib/proposal-source";
 import { cachedDirectoryLogo } from "@/lib/setup-queries";
 
 /**
@@ -45,11 +47,12 @@ export function useAnswerAsk(
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (answer: PendingAnswer) => answerPendingAction(action.id, answer),
-    onSuccess: (_result, answer) => {
-      queryClient.invalidateQueries({ queryKey: pendingKeys.all });
+    onSuccess: (result, answer) => {
+      settleAnsweredAsk(queryClient, action.id, result);
       queryClient.invalidateQueries({ queryKey: agentKeys.all });
       queryClient.invalidateQueries({ queryKey: approvalKeys.ofAgent(action.agentId) });
       queryClient.invalidateQueries({ queryKey: approvalKeys.vendorsOfAgent(action.agentId) });
+      queryClient.invalidateQueries({ queryKey: approvalKeys.buildsOfAgent(action.agentId) });
       if (answer.allow && allowedToast) {
         const { title, description } = allowedToast(answer);
         toast.success(title, { description });
@@ -79,6 +82,7 @@ export function AskCard({
   approveLabel = "Approve",
   alsoApprove,
   compact,
+  focused,
 }: {
   action: PendingAction;
   /** "<agent> asks to …" — the kind's own words after the agent's name. */
@@ -100,19 +104,37 @@ export function AskCard({
    * Decline (the footer's Back is the way out), then the card's own inputs and `footer` under it.
    */
   compact?: { vendor: string; name: string; subline: React.ReactNode; footer?: React.ReactNode };
+  /** The handoff page's layout (GRA-314); `FocusedAskCard` says what each field is. */
+  focused?: FocusedAsk;
 }) {
   const open = isOpen(action);
   const agentName = action.agent?.name ?? "A revoked agent";
 
   const queryClient = useQueryClient();
+  if (focused) {
+    return (
+      <FocusedAskCard
+        action={action}
+        focused={focused}
+        settled={settled}
+        onAnswer={onAnswer}
+        pending={pending}
+        approveLabel={approveLabel}
+        logoUrl={cachedDirectoryLogo(queryClient, focused.vendor)}
+      >
+        {children}
+      </FocusedAskCard>
+    );
+  }
   if (compact) {
     return (
       <SetupAppCard
         media={
-          <SetupLogo
-            starterId={compact.vendor}
-            url={cachedDirectoryLogo(queryClient, compact.vendor)}
-            tile={false}
+          <IntegrationMark
+            slug={compact.vendor}
+            name={compact.name}
+            logoUrl={cachedDirectoryLogo(queryClient, compact.vendor)}
+            tile="none"
             className="size-8"
           />
         }
@@ -206,6 +228,7 @@ export function Hosts({ hosts }: { hosts: readonly string[] }) {
   );
 }
 
+export type { AskLayout, FocusedAsk } from "@/components/pending/focused-ask-card";
 /**
  * Who wrote a connection ask's proposal, for the cards that say so (GRA-206). `agent`, the
  * default, is an ask an agent's own `request_connection` opened from what its model read: the
@@ -219,15 +242,19 @@ export function Hosts({ hosts }: { hosts: readonly string[] }) {
 export type { AskOrigin } from "@/lib/ask-answered-copy";
 
 /**
- * Where a proposal came from: under `agent`, the provenance badge, the server's note and the page
- * the agent read; under `setup`, the vendor's documentation alone, since Graft wrote the entry.
+ * Where a proposal came from: under `agent`, the badge naming the agent that asked (its model or a
+ * ready-made tool may have written it, `lib/proposal-source.ts`), the server's note and the page
+ * the agent named; under `setup`, the vendor's documentation alone, since Graft wrote the entry.
  */
 export function ProposalSource({
   origin,
+  agentName,
   note,
   docsUrl,
 }: {
   origin: AskOrigin;
+  /** The agent that asked, by its name; null for a revoked agent's ask. */
+  agentName: string | null;
   note?: string | null;
   docsUrl?: string | null;
 }) {
@@ -235,7 +262,7 @@ export function ProposalSource({
   return (
     <figure className="flex flex-col gap-1.5">
       <figcaption className="flex flex-wrap items-center gap-2 text-muted-foreground text-xs">
-        <Badge variant="outline">proposed by the agent's model</Badge>
+        <Badge variant="outline">{proposalSourceBadge(agentName)}</Badge>
         {note}
       </figcaption>
       {docsUrl ? (
@@ -258,7 +285,7 @@ export function DocsLink({ href, origin }: { href: string; origin: AskOrigin }) 
       rel="noreferrer noopener"
       className="inline-flex items-center gap-1 text-xs underline underline-offset-4"
     >
-      {`${origin === "setup" ? "The integration's documentation" : "The documentation the agent read"}: ${href}`}
+      {`${proposalDocsLabel(origin)}: ${href}`}
       <OpenInNewIcon className="size-3" />
     </a>
   );

@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
+import { and, asc, count, desc, eq, inArray, isNotNull, sql } from "drizzle-orm";
 
 import type { DbOrTx } from "../index";
 import { stockToolVersion } from "../schema/stock";
@@ -66,7 +66,41 @@ export async function listAuthoredTools(db: DbOrTx, personId: string): Promise<A
     .orderBy(asc(authoredTool.vendor), asc(authoredTool.name));
 }
 
+/**
+ * The person's tools of one vendor, demoted and versionless ones included: an integration's tools
+ * as the console lists them (GRA-293), where a versionless row is not shown but still hides the
+ * stock tool of its name, as it does in `find_tool`.
+ */
+export async function listAuthoredToolsForVendor(
+  db: DbOrTx,
+  personId: string,
+  vendor: string,
+): Promise<AuthoredToolRow[]> {
+  return db
+    .select()
+    .from(authoredTool)
+    .where(and(eq(authoredTool.personId, personId), eq(authoredTool.vendor, vendor)))
+    .orderBy(asc(authoredTool.name));
+}
+
 /** One tool by the triple that identifies it — (person, vendor, name). */
+/**
+ * How many live tools the person holds per vendor — a tool with a current version, which is the one
+ * `find_tool` lists and a run reaches (ADR 0012, L0 as amended 2026-09-17). The integrations list's
+ * tool count (GRA-291); a vendor with none answers no row.
+ */
+export async function countLiveToolsByVendor(
+  db: DbOrTx,
+  personId: string,
+): Promise<{ vendor: string; count: number }[]> {
+  return db
+    .select({ vendor: authoredTool.vendor, count: count() })
+    .from(authoredTool)
+    .where(and(eq(authoredTool.personId, personId), isNotNull(authoredTool.currentVersionId)))
+    .groupBy(authoredTool.vendor)
+    .orderBy(asc(authoredTool.vendor));
+}
+
 export async function findAuthoredTool(
   db: DbOrTx,
   personId: string,

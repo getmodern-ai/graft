@@ -7,10 +7,16 @@ describe("routeEvent", () => {
     expect(routeEvent("POST", "/api/agents")).toBe("agent_created");
     expect(routeEvent("POST", "/agents")).toBe("agent_created");
     expect(routeEvent("POST", "/api/agents/ag_1/revoke")).toBe("agent_revoked");
+    expect(routeEvent("POST", "/api/agents/ag_1/token/rotate")).toBe("agent_token_rotated");
+    // The first issue is not a rotation, and is not counted.
+    expect(routeEvent("POST", "/api/agents/ag_1/token")).toBeNull();
     expect(routeEvent("PUT", "/api/agents/ag_1/scope")).toBe("scope_changed");
+    expect(routeEvent("PUT", "/api/connections/c_1/agents/ag_1")).toBe("scope_changed");
+    expect(routeEvent("DELETE", "/api/connections/c_1/agents/ag_1")).toBe("scope_changed");
     expect(routeEvent("POST", "/api/pending-actions/pa_1/answer?x=1")).toBe("approval_answered");
     expect(routeEvent("PUT", "/api/me/model-key")).toBe("model_key_set");
     expect(routeEvent("DELETE", "/api/me/model-key")).toBe("model_key_removed");
+    expect(routeEvent("POST", "/api/me/password")).toBe("password_set");
     expect(routeEvent("POST", "/api/mcp-oauth/consent")).toBe("mcp_client_consented");
     expect(routeEvent("POST", "/api/setup/start")).toBe("setup_started");
     expect(routeEvent("POST", "/api/setup/skip")).toBe("setup_skipped");
@@ -23,6 +29,32 @@ describe("routeEvent", () => {
     expect(setupHarnessProperty({ setup: null })).toEqual({ harness: null });
     expect(setupHarnessProperty(null)).toEqual({ harness: null });
     expect(trackedRoute("POST", "/api/agents")?.properties).toBeUndefined();
+  });
+
+  it("counts the console connect with its answer's kind, access and whether it made a row (GRA-304)", () => {
+    const connect = trackedRoute("POST", "/api/connect");
+    expect(connect?.event).toBe("connection_started");
+    expect(connect?.properties?.({ kind: "link", access: "full", url: "https://x" })).toEqual({
+      kind: "link",
+      access: "full",
+      created: false,
+    });
+    expect(connect?.properties?.({ kind: "connected", access: "ask", created: true })).toEqual({
+      kind: "connected",
+      access: "ask",
+      created: true,
+    });
+    expect(connect?.properties?.(null)).toEqual({ kind: null, access: null, created: false });
+  });
+
+  it("counts a console Create as acquire_started, with the job and the agent and never the goal", () => {
+    const route = trackedRoute("POST", "/api/connections/conn_1/acquire");
+    expect(route?.event).toBe("acquire_started");
+    expect(
+      route?.properties?.({ jobId: "job_1", agent: { id: "agent_1" }, goal: "Read my mail" }),
+    ).toEqual({ job_id: "job_1", agent_id: "agent_1" });
+    expect(route?.properties?.(null)).toEqual({ job_id: null, agent_id: null });
+    expect(routeEvent("GET", "/api/connections/conn_1/acquire-jobs")).toBeNull();
   });
 
   it("is null for a read, an unlisted mutation and a near miss", () => {

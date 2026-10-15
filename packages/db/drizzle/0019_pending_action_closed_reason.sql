@@ -1,0 +1,2 @@
+ALTER TABLE "pending_action" ADD COLUMN "closed_reason" text;--> statement-breakpoint
+CREATE INDEX "pending_action_agent_finished_idx" ON "pending_action" USING btree ("agent_id",coalesce("answered_at", "expires_at"),"id");

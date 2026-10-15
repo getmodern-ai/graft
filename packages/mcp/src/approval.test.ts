@@ -6,7 +6,9 @@ import {
   answerPendingAction,
   revokeApproval,
   setApproval,
+  setApprovalFromConsole,
   setAskEveryCall,
+  setVendorApprovalDestructive,
   withdrawVendorApproval,
 } from "@graft/core";
 import type { PendingActionRow } from "@graft/db/repo/pending-action";
@@ -58,6 +60,7 @@ const AGENT_G = "agent_g";
 const AGENT_I = "agent_i";
 const AGENT_J = "agent_j";
 const AGENT_K = "agent_k";
+const AGENT_L = "agent_l";
 const TOKEN_A = "grft_approval_token_a_000000000000000000000000";
 const TOKEN_B = "grft_approval_token_b_000000000000000000000000";
 const TOKEN_C = "grft_approval_token_c_000000000000000000000000";
@@ -68,6 +71,7 @@ const TOKEN_G = "grft_approval_token_g_000000000000000000000000";
 const TOKEN_I = "grft_approval_token_i_000000000000000000000000";
 const TOKEN_J = "grft_approval_token_j_000000000000000000000000";
 const TOKEN_K = "grft_approval_token_k_000000000000000000000000";
+const TOKEN_L = "grft_approval_token_l_000000000000000000000000";
 const CONN_DEMO = "conn_demo";
 const CONSOLE_URL = "http://console.graft.test";
 const SECRET = "graft-approval-test-handoff-secret-long-enough-32";
@@ -148,6 +152,7 @@ beforeAll(async () => {
     [AGENT_I, TOKEN_I, "integration Hermes"],
     [AGENT_J, TOKEN_J, "connecting Hermes"],
     [AGENT_K, TOKEN_K, "careful Hermes"],
+    [AGENT_L, TOKEN_L, "console-answered Hermes"],
   ] as const) {
     store.addAgent({
       scopeMode: "listed",
@@ -182,6 +187,7 @@ beforeAll(async () => {
       AGENT_I,
       AGENT_J,
       AGENT_K,
+      AGENT_L,
     ]) {
       store.promote(agent, tool.id);
     }
@@ -835,6 +841,78 @@ describe("an integration allowed when connecting", () => {
       awaiting(await k.call(CREATE_ITEM, { limit: 1 }));
     } finally {
       await k.close();
+    }
+  }, 60_000);
+});
+
+/** ADR 0008 as amended 2026-10-14 (GRA-302): the console sets an answer outright, per agent. */
+describe("an answer the console sets outright", () => {
+  const scopeL = { personId: PERSON, agentId: AGENT_L };
+  const set = (toolId: string, decision: "allow" | "deny") =>
+    setApprovalFromConsole({ db: deps.db }, scopeL, toolId, decision, deps.approval);
+
+  it("answers and closes the open ask, so the next call runs on the allow and is refused on the deny", async () => {
+    const l = await connect(TOKEN_L);
+    try {
+      const open = awaiting(await l.call(CREATE_ITEM, { limit: 1 }));
+      const allowed = await set("tool_create", "allow");
+      expect(allowed.answeredPendingActionIds).toEqual([open.action.id]);
+      expect(store.pendingActions.get(open.action.id)).toMatchObject({
+        answer: { allow: true, via: "setting" },
+        answeredAt: expect.any(Date),
+        consumedAt: expect.any(Date),
+      });
+      expect(approvalOf(AGENT_L, "tool_create")).toMatchObject({
+        decision: "allow",
+        toolVersionId: open.action.payload.toolVersionId,
+      });
+      const before = actionsOf(AGENT_L, "tool").length;
+      expect(body(await l.call(CREATE_ITEM, { limit: 1 }))).toEqual(VENDOR_BODY);
+      expect(actionsOf(AGENT_L, "tool")).toHaveLength(before);
+
+      await set("tool_create", "deny");
+      expect(body(await l.call(CREATE_ITEM, { limit: 1 }))).toMatchObject({
+        error: "refused",
+        reason: "tool_denied",
+      });
+
+      // Where no answer stood, one is created: the person's answer, given on Graft's page.
+      expect(approvalOf(AGENT_L, "tool_update")).toBeUndefined();
+      await set("tool_update", "allow");
+      expect(body(await l.call(UPDATE_ITEM, { limit: 1 }))).toEqual(VENDOR_BODY);
+    } finally {
+      await l.close();
+      store.approvals.delete(`${AGENT_L} tool_create`);
+      store.approvals.delete(`${AGENT_L} tool_update`);
+    }
+  }, 60_000);
+
+  it("refuses a read-only tool, which never asks", async () => {
+    await expect(set("tool_list", "allow")).rejects.toMatchObject({ code: "BAD_REQUEST" });
+    expect(approvalOf(AGENT_L, "tool_list")).toBeUndefined();
+  });
+
+  it("widens an integration's allow to its destructive tools and narrows it back", async () => {
+    const l = await connect(TOKEN_L);
+    try {
+      await expect(
+        setVendorApprovalDestructive({ db: deps.db }, scopeL, "demo", true, deps.approval),
+      ).resolves.toBeNull();
+      await allowVendor(
+        { db: deps.db },
+        scopeL,
+        "demo",
+        { includesDestructive: false },
+        deps.approval,
+      );
+      awaiting(await l.call(DELETE_ITEM, { limit: 1 }));
+      await setVendorApprovalDestructive({ db: deps.db }, scopeL, "demo", true, deps.approval);
+      expect(body(await l.call(DELETE_ITEM, { limit: 1 }))).toEqual(VENDOR_BODY);
+      await setVendorApprovalDestructive({ db: deps.db }, scopeL, "demo", false, deps.approval);
+      awaiting(await l.call(DELETE_ITEM, { limit: 1 }));
+    } finally {
+      await l.close();
+      store.vendorApprovals.delete(`${AGENT_L} demo`);
     }
   }, 60_000);
 });
@@ -1691,4 +1769,180 @@ describe("an approval is for the version the person was shown", () => {
     // The pointer's version runs on its own approval.
     expect(await run()).toEqual({ isError: false, answer: { version: 2 } });
   }, 60_000);
+});
+
+/**
+ * GRA-301: the ledger line says how the call ended in the console's words — `reason` on a refusal
+ * or a failure, `asked` once the gate decided, and the connection the call resolved to — and holds
+ * nothing the call carried in or out. One agent of its own, so no other block's answers stand.
+ */
+describe("the ledger line records the reason, the ask and the connection", () => {
+  const AGENT_M = "agent_m";
+  const TOKEN_M = "grft_approval_token_m_000000000000000000000000";
+  const BROKEN_ITEMS = authoredToolName("demo", "broken-items");
+  const EXECUTE = executeToolName(CONN_DEMO);
+  const line = () => store.usage.at(-1);
+
+  beforeAll(async () => {
+    store.addAgent({
+      scopeMode: "listed",
+      id: AGENT_M,
+      personId: PERSON,
+      token: TOKEN_M,
+      name: "ledger Hermes",
+      connectionIds: [CONN_DEMO],
+    });
+    for (const tool of TOOLS) store.promote(AGENT_M, tool.id);
+    // A read-only tool whose module throws, for a failure's line.
+    const dir = join(sandbox.toolboxRoot(PERSON), "tools/demo/broken-items/v1");
+    await mkdir(dir, { recursive: true });
+    await writeFile(
+      join(dir, "index.ts"),
+      'export default async () => { throw new Error("Widget went missing"); };\n',
+    );
+    store.addTool({
+      id: "tool_broken",
+      personId: PERSON,
+      vendor: "demo",
+      name: "broken-items",
+      description: "broken-items at Demo Orders.",
+      inputSchema: { type: "object", properties: { limit: { type: "integer" } } },
+      readOnly: true,
+      destructive: false,
+      defaultConnectionId: CONN_DEMO,
+      path: "tools/demo/broken-items/v1",
+    });
+    store.promote(AGENT_M, "tool_broken");
+  });
+
+  it("a read runs without asking: ok, no reason, asked false, on the tool's connection", async () => {
+    const m = await connect(TOKEN_M);
+    try {
+      const ran = await m.call(LIST_ITEMS, { limit: 1 });
+      expect(ran.isError).toBeFalsy();
+      expect(line()).toMatchObject({
+        agentId: AGENT_M,
+        toolId: "tool_list",
+        outcome: "ok",
+        reason: null,
+        asked: false,
+        connectionId: CONN_DEMO,
+      });
+    } finally {
+      await m.close();
+    }
+  });
+
+  it("a write asks, is approved on the next call, then runs on the standing answer", async () => {
+    const m = await connect(TOKEN_M);
+    try {
+      const first = awaiting(await m.call(CREATE_ITEM, { limit: 1 }));
+      expect(line()).toMatchObject({
+        toolId: "tool_create",
+        outcome: "refused",
+        reason: "awaiting_approval",
+        asked: true,
+        connectionId: CONN_DEMO,
+      });
+      await answer(first.action.id, { allow: true });
+
+      expect((await m.call(CREATE_ITEM, { limit: 1 })).isError).toBeFalsy();
+      expect(line()).toMatchObject({ outcome: "ok", reason: null, asked: true });
+
+      expect((await m.call(CREATE_ITEM, { limit: 1 })).isError).toBeFalsy();
+      expect(line()).toMatchObject({ outcome: "ok", reason: null, asked: false });
+    } finally {
+      await m.close();
+    }
+  });
+
+  it("a person's no on this call is asked, and the standing deny after it is not", async () => {
+    const m = await connect(TOKEN_M);
+    try {
+      const first = awaiting(await m.call(UPDATE_ITEM, { limit: 1 }));
+      await answer(first.action.id, { allow: false });
+
+      await m.call(UPDATE_ITEM, { limit: 1 });
+      expect(line()).toMatchObject({
+        toolId: "tool_update",
+        outcome: "refused",
+        reason: "approval_declined",
+        asked: true,
+        connectionId: CONN_DEMO,
+      });
+
+      await m.call(UPDATE_ITEM, { limit: 1 });
+      expect(line()).toMatchObject({ outcome: "refused", reason: "tool_denied", asked: false });
+    } finally {
+      await m.close();
+    }
+  });
+
+  it("a refusal before the gate names its reason and leaves the ask unknown", async () => {
+    const m = await connect(TOKEN_M);
+    try {
+      await m.call(LIST_ITEMS, { limit: "five" });
+      expect(line()).toMatchObject({
+        toolId: "tool_list",
+        outcome: "refused",
+        reason: "input_invalid",
+        asked: null,
+        connectionId: CONN_DEMO,
+      });
+    } finally {
+      await m.close();
+    }
+  });
+
+  it("a failure names its kind, and nothing the module said", async () => {
+    const m = await connect(TOKEN_M);
+    try {
+      const failed = await m.call(BROKEN_ITEMS, { limit: 1 });
+      expect(failed.isError).toBe(true);
+      expect(line()).toMatchObject({
+        toolId: "tool_broken",
+        outcome: "error",
+        reason: "threw",
+        asked: false,
+        connectionId: CONN_DEMO,
+      });
+      expect(JSON.stringify(line())).not.toContain("Widget");
+    } finally {
+      await m.close();
+    }
+  });
+
+  it("execute asks for the build approval once, then runs without asking, and names an exit", async () => {
+    const m = await connect(TOKEN_M);
+    try {
+      const first = awaiting(await m.call(EXECUTE, { command: RUN_LIST_ITEMS }));
+      expect(line()).toMatchObject({
+        toolName: EXECUTE,
+        toolId: null,
+        outcome: "refused",
+        reason: "awaiting_approval",
+        asked: true,
+        connectionId: CONN_DEMO,
+      });
+      await answer(first.action.id, { allow: true });
+
+      expect(body(await m.call(EXECUTE, { command: RUN_LIST_ITEMS })).exitCode).toBe(0);
+      expect(line()).toMatchObject({ outcome: "ok", reason: null, asked: true });
+
+      expect(body(await m.call(EXECUTE, { command: RUN_LIST_ITEMS })).exitCode).toBe(0);
+      expect(line()).toMatchObject({ outcome: "ok", reason: null, asked: false });
+
+      await m.call(EXECUTE, { command: "echo Widget; exit 3" });
+      expect(line()).toMatchObject({
+        outcome: "error",
+        reason: "exit_nonzero",
+        asked: false,
+        connectionId: CONN_DEMO,
+      });
+      // Neither the command nor its output reaches a column.
+      expect(JSON.stringify(line())).not.toMatch(/Widget|GRAFT_RUNNER|echo/);
+    } finally {
+      await m.close();
+    }
+  }, 30_000);
 });

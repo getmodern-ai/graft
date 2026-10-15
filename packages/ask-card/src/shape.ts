@@ -129,7 +129,13 @@ export type AskCard = {
   kind: PendingAskKind;
   /** The agent that asked, by the name the person gave it. */
   agentName: string;
+  /** The vendor slug: an identifier, never drawn. */
   vendor: string;
+  /**
+   * The integration as the person reads it (`@graft/core`'s `integrationNameFor`), never the slug
+   * (GRA-273). Optional on the wire so a card written before it still renders, on the slug.
+   */
+  integrationName?: string;
   /** The connection's display name, or the proposal's. */
   displayName: string;
   primaryHost: string | null;
@@ -144,7 +150,11 @@ export type AskCard = {
   /** The handoff URL, exactly as the result's `url`: what the console button opens. */
   url: string;
   answerable: boolean;
-  /** For a connection or scope ask a provider other than the keyring covers (ADR 0019): the provider's name. */
+  /**
+   * For a connection or scope ask a provider other than the keyring covers (ADR 0019): the
+   * provider's name as a person reads it (`@graft/core`'s `providerDisplayName`, GRA-273), or
+   * `keyring`, which is never drawn.
+   */
   provider?: string;
   /** How the provider connects, when the ask names one: a link provider's ask is a button, never a form. */
   providerConnect?: "form" | "link";
@@ -185,15 +195,15 @@ export type CardData = AskCard | SetupCard;
 /**
  * What the card sends `answer_ask`. The build approval's yes or no; the tool ask's yes or no
  * (GRA-116), which never carries the ask-every-call setting — that is the console's — or its yes
- * for every tool of the integration, with the destructive tick (GRA-237); the scope
- * ask's yes or no, carrying the build choice GRA-75 put on the console's page (GRA-104); the
- * keyless connection's confirm, carrying the same choice (on by default there and here) and, from
- * a card that drew it, the line for the integration's tools (GRA-239, on by default too); or a
- * connection's decline — a link provider's included. Nothing else is accepted, and no field is a
- * secret.
+ * for every tool of the integration, with the destructive choice (GRA-237); the scope
+ * ask's yes or no, carrying the build choice GRA-75 put on the console's page (GRA-104) and, since
+ * the handoff page's *Full access* (GRA-314, GRA-316), the integration's non-destructive tools; the
+ * keyless connection's confirm, carrying the same two (GRA-239); or a connection's decline — a link
+ * provider's included. Nothing else is accepted, and no field is a secret.
  */
 export type AnswerAskAnswer =
   | { allow: boolean; approveBuild?: boolean }
+  | { allow: boolean; approveBuild: boolean; allowVendor: boolean }
   | { allow: true; allowVendor: true; includesDestructive: boolean }
   | { connect: true; approveBuild: boolean; allowVendor?: boolean }
   | { decline: true };
@@ -276,6 +286,7 @@ export function readAskCard(structuredContent: unknown): AskCard | null {
     kind: card.kind as PendingAskKind,
     agentName: card.agentName,
     vendor: card.vendor,
+    ...(typeof card.integrationName === "string" ? { integrationName: card.integrationName } : {}),
     displayName: card.displayName,
     primaryHost: typeof card.primaryHost === "string" ? card.primaryHost : null,
     hosts: card.hosts,

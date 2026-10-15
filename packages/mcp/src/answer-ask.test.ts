@@ -5,6 +5,7 @@ import {
   type FakeLinkProvider,
   FakeLinkProviderError,
 } from "@graft/core/connection/testing/fake-link-provider";
+import type { PendingActionRow } from "@graft/db/repo/pending-action";
 import { createScriptedModel } from "@graft/model";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
@@ -323,9 +324,7 @@ describe("answer_ask on a build ask", () => {
     expect(result.isError).toBeFalsy();
     expect(body).toMatchObject({
       answered: true,
-      sentence: expect.stringContaining(
-        "Allowed. Claude may build tools against Demo Orders (demo)",
-      ),
+      sentence: expect.stringContaining("Allowed. Claude may build tools against Demo Orders:"),
     });
     const row = store.pendingActions.get(card.pendingActionId);
     expect(row?.answer).toEqual({ allow: true, via: "card" });
@@ -435,8 +434,21 @@ describe("answer_ask on a tool ask", () => {
     });
   });
 
+  /** Insert an ask as the repo would, for an active agent of the person; the guard is the repo's. */
+  const insertAsk = async (
+    input: Parameters<typeof deps.pendingAction.insertPendingAction>[2],
+  ): Promise<PendingActionRow> => {
+    const row = await deps.pendingAction.insertPendingAction(
+      deps.db,
+      { personId: PERSON, agentId: input.agentId },
+      input,
+    );
+    if (!row) throw new Error(`no active agent ${input.agentId}`);
+    return row;
+  };
+
   const toolAsk = (agentId: string, askEveryCall = false) =>
-    deps.pendingAction.insertPendingAction(deps.db, {
+    insertAsk({
       id: `pa_tool_${store.newId()}`,
       agentId,
       kind: "tool",
@@ -474,11 +486,14 @@ describe("answer_ask on a tool ask", () => {
     });
   });
 
-  it("records a Deny as the standing no, which holds", async () => {
+  it("records a Decline as the standing no, which holds", async () => {
     const claude = await connect(TOKEN_CLAUDE);
     const row = await toolAsk(CLAUDE);
     const { body } = await answer(claude, row.id, { allow: false });
-    expect(body).toMatchObject({ answered: true, sentence: expect.stringContaining("Denied") });
+    expect(body).toMatchObject({
+      answered: true,
+      sentence: expect.stringContaining("Declined. Claude will not run"),
+    });
     expect(store.approvals.get(`${CLAUDE} tool_1`)).toMatchObject({ decision: "deny" });
     expect(store.pendingActions.get(row.id)?.consumedAt).not.toBeNull();
   });
@@ -555,7 +570,7 @@ describe("answer_ask on a tool ask", () => {
       includesDestructive: false,
     });
     expect(no.body).toMatchObject({ reason: "input_invalid" });
-    const build = await deps.pendingAction.insertPendingAction(deps.db, {
+    const build = await insertAsk({
       id: "pa_build_vendor",
       agentId: CLAUDE,
       kind: "build",
@@ -570,6 +585,15 @@ describe("answer_ask on a tool ask", () => {
       includesDestructive: false,
     });
     expect(onBuild.body).toMatchObject({ reason: "input_invalid" });
+    // The scope ask's Full access shape (GRA-316) answers neither a tool nor a build ask.
+    for (const id of [row.id, build.id]) {
+      const scopeShaped = await answer(claude, id, {
+        allow: true,
+        approveBuild: true,
+        allowVendor: true,
+      });
+      expect(scopeShaped.body).toMatchObject({ reason: "input_invalid" });
+    }
     expect(store.vendorApprovals.size).toBe(0);
   });
 
@@ -617,7 +641,7 @@ describe("answer_ask on a connection ask", () => {
     });
     expect(body).toMatchObject({
       answered: true,
-      sentence: expect.stringContaining("Connected. Open-Meteo (open-meteo) is in Claude's scope"),
+      sentence: expect.stringContaining("Connected. Open-Meteo is in Claude's scope"),
     });
     expect(body.sentence).toContain("may build tools against it");
 
@@ -819,7 +843,7 @@ describe("answer_ask on a scope ask", () => {
     });
     expect(body).toMatchObject({
       answered: true,
-      sentence: expect.stringContaining("Allowed. Delta Books (delta) is in Claude's scope"),
+      sentence: expect.stringContaining("Allowed. Delta Books is in Claude's scope"),
     });
     expect(body.sentence).toContain("may build tools against it");
     expect(store.pendingActions.get(card.pendingActionId)?.answer).toEqual({
@@ -849,6 +873,54 @@ describe("answer_ask on a scope ask", () => {
     );
     const job = await claude.call("acquire", { connectionId: DELTA_CONN, goal: "list books" });
     expect(text(job)).toMatchObject({ jobId: expect.any(String) });
+  });
+
+  /** The handoff page's Full access on the card (GRA-314, GRA-316; ADR 0008 as amended 2026-10-14). */
+  it("records Full access as the build approval and the integration's non-destructive tools, and refuses the destructive choice", async () => {
+    const claude = await connect(TOKEN_CLAUDE);
+    const card = cardOf(await claude.call("request_connection", DELTA));
+    expect(card.vendorTools).toMatchObject({ integrationName: "Delta Books" });
+    const destructive = await answer(claude, card.pendingActionId, {
+      allow: true,
+      allowVendor: true,
+      includesDestructive: true,
+    });
+    expect(destructive.body).toMatchObject({ reason: "input_invalid" });
+    expect(store.pendingActions.get(card.pendingActionId)?.answeredAt).toBeNull();
+
+    const { body } = await answer(claude, card.pendingActionId, {
+      allow: true,
+      approveBuild: true,
+      allowVendor: true,
+    });
+    expect(body.sentence).toContain("may build tools against it");
+    expect(body.sentence).toContain("destructive ones still ask");
+    expect(store.pendingActions.get(card.pendingActionId)?.answer).toEqual({
+      allow: true,
+      approveBuild: true,
+      allowVendor: true,
+      via: "card",
+    });
+    expect(store.buildApprovals.get(`${CLAUDE} ${DELTA_CONN}`)).toBeDefined();
+    expect(store.vendorApprovals.get(`${CLAUDE} delta`)).toMatchObject({
+      includesDestructive: false,
+    });
+    expect(store.vendorApprovals.get(`${OTHER} delta`)).toBeUndefined();
+  });
+
+  it("records Ask me first as neither: in scope, no build approval, no integration allow", async () => {
+    const claude = await connect(TOKEN_CLAUDE);
+    const card = cardOf(await claude.call("request_connection", DELTA));
+    const { body } = await answer(claude, card.pendingActionId, {
+      allow: true,
+      approveBuild: false,
+      allowVendor: false,
+    });
+    expect(body.sentence).not.toContain("may build tools");
+    expect(body.sentence).not.toContain("without asking");
+    expect(store.agentConnections.get(CLAUDE)?.has(DELTA_CONN)).toBe(true);
+    expect(store.buildApprovals.get(`${CLAUDE} ${DELTA_CONN}`)).toBeUndefined();
+    expect(store.vendorApprovals.get(`${CLAUDE} delta`)).toBeUndefined();
   });
 
   it("records an Allow with the choice off: in scope, no build approval, and acquire then asks", async () => {
@@ -1062,9 +1134,10 @@ describe("start_link and ask_status", () => {
     const claude = await connect(TOKEN_CLAUDE);
     const result = await claude.call("request_connection", GMAIL);
     expect(text(result)).toMatchObject({ reason: "awaiting_connection", provider: "broker" });
+    // The card draws the provider's name as a person reads it (GRA-273); the result keeps the id.
     expect(cardOf(result)).toMatchObject({
       kind: "connection",
-      provider: "broker",
+      provider: "Broker",
       providerConnect: "link",
       answerable: false,
       hosts: ["gmail.googleapis.com", "www.googleapis.com"],
@@ -1113,7 +1186,7 @@ describe("start_link and ask_status", () => {
     );
     expect(await status(claude, card.pendingActionId)).toMatchObject({
       state: "answered",
-      sentence: expect.stringContaining("Connected through broker. Gmail (gmail)"),
+      sentence: expect.stringContaining("Connected through Broker. Gmail is in"),
     });
   });
 
@@ -1230,7 +1303,7 @@ describe("start_link and ask_status", () => {
     expect(await status(claude, secret.pendingActionId)).toEqual({
       state: "answered",
       sentence:
-        "Connected. Acme Orders (acme) is in Claude's scope; the credential is stored and never shown again.",
+        "Connected. Acme Orders is in Claude's scope; the credential is stored and never shown again.",
     });
 
     const credential = cardOf(await claude.call("request_credential", { connectionId: CONN }));

@@ -131,6 +131,7 @@ export {
   CREDENTIAL_ASK_KIND,
   type CredentialAskPayload,
   type CredentialRequestInput,
+  coversProposal,
   describeSchemes,
   normaliseProposal,
   PROPOSAL_PROVENANCE_NOTE,
@@ -160,6 +161,7 @@ export {
   HANDOFF_PATH,
   HANDOFF_TOKEN_PARAM,
   type HandoffConfig,
+  type HandoffRefusalReason,
   type HandoffSubject,
   type HandoffVerdict,
   handoffUrl,
@@ -181,6 +183,24 @@ export {
   type ToolListChangedNotifier,
 } from "./notifier";
 export { promotePublished } from "./promote";
+export {
+  DOCS_PROPOSAL_SCHEMES,
+  DOCS_PROPOSAL_STAGES,
+  type DocsProposal,
+  type DocsProposalDeps,
+  type DocsProposalFailure,
+  type DocsProposalFailureReason,
+  type DocsProposalFound,
+  type DocsProposalInput,
+  type DocsProposalInputVerdict,
+  type DocsProposalResult,
+  type DocsProposalStage,
+  type DocsProposalStats,
+  PROPOSAL_DOC_WINDOWS,
+  proposeConnectionFromDocs,
+  readDocsProposalInput,
+  vendorSlugOf,
+} from "./proposal-from-docs";
 export {
   isProviderLinkFallback,
   mintProviderLink,
@@ -256,4 +276,9 @@ export { authoredToolDefinition, META_TOOL_NAMES } from "./tools";
 export { ANSWER_ASK, CARD_NOT_AVAILABLE, readAnswerAskInput } from "./tools/answer-ask";
 export { ASK_STATUS, askState, askStateSentence } from "./tools/ask-status";
 export { START_LINK } from "./tools/start-link";
-export { type ReadWebPage, readWebPage, type WebPageResult } from "./web-page";
+export {
+  type ReadWebPage,
+  type ResolvedAddress,
+  readWebPage,
+  type WebPageResult,
+} from "./web-page";

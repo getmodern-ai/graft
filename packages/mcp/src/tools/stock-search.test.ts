@@ -84,6 +84,12 @@ const CASES: [query: string, tool: string][] = [
   ["create pull request", "github__create-pull-request"],
   // Gmail's (GRA-248), also pinned over Gmail's tools alone in tool-index.test.ts.
   ["search my email", "gmail__search-messages"],
+  // The 2026-10-11 production run's queries (GRA-278), which reached get-message or nothing.
+  ["list my recent emails", "gmail__search-messages"],
+  ["recent emails", "gmail__search-messages"],
+  ["read my email", "gmail__search-messages"],
+  ["show me my 5 most recent emails", "gmail__search-messages"],
+  ["latest emails", "gmail__search-messages"],
   ["read an email", "gmail__get-message"],
   ["read a gmail conversation", "gmail__get-thread"],
   ["list gmail labels", "gmail__list-labels"],

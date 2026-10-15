@@ -42,6 +42,7 @@ const action = {
   answeredAt: null,
   answer: null,
   consumedAt: null,
+  closedReason: null,
   owner: "person" as const,
   createdAt: NOW,
   updatedAt: NOW,
@@ -97,6 +98,7 @@ describe("what the card may answer", () => {
       kind: "build",
       agentName: "Claude",
       vendor: "demo",
+      integrationName: "Demo Orders",
       displayName: "Demo Orders",
       primaryHost: "https://api.demo.example",
       hosts: ["api.demo.example"],
@@ -156,7 +158,7 @@ describe("what the card may answer", () => {
         url,
         payload: proposal({ providerConnect: "link", provider: "broker" }),
       }),
-    ).toMatchObject({ providerConnect: "link", provider: "broker", answerable: false });
+    ).toMatchObject({ providerConnect: "link", provider: "Broker", answerable: false });
   });
 
   it("marks a scope ask answerable, with the row's facts and the provider when it is not the keyring (GRA-104)", () => {
@@ -178,6 +180,7 @@ describe("what the card may answer", () => {
       kind: "scope",
       agentName: "Claude",
       vendor: "gmail",
+      integrationName: "Gmail",
       displayName: "Gmail",
       primaryHost: "https://gmail.googleapis.com",
       hosts: ["gmail.googleapis.com"],
@@ -187,7 +190,12 @@ describe("what the card may answer", () => {
       expiresAt: action.expiresAt.toISOString(),
       url,
       answerable: true,
-      provider: "broker",
+      provider: "Broker",
+      vendorTools: {
+        integrationName: "Gmail",
+        label: expect.stringContaining("Gmail"),
+        description: expect.any(String),
+      },
     });
     expect(
       scopeAskCard({

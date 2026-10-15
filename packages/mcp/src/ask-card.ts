@@ -1,5 +1,12 @@
 import type { AskCard, AskCardTool, AskCardVendorApproval } from "@graft/ask-card/shape";
-import { type ConnectionOutput, takesCredential, vendorToolsOffer } from "@graft/core";
+import {
+  type ConnectionOutput,
+  integrationNameFor,
+  KEYRING_PROVIDER,
+  providerDisplayName,
+  takesCredential,
+  vendorToolsOffer,
+} from "@graft/core";
 import type { PendingActionRow } from "@graft/db/repo/pending-action";
 import type { ConnectionScheme } from "@graft/db/schema/connection";
 import type { Resource, Tool } from "@modelcontextprotocol/sdk/types.js";
@@ -178,6 +185,7 @@ export function approvalAskCard(
     kind: args.kind,
     agentName: args.agentName,
     vendor: connection.vendor,
+    integrationName: integrationNameFor(connection.vendor, connection.displayName),
     displayName: connection.displayName,
     primaryHost: connection.primaryHost,
     hosts: connection.hosts,
@@ -187,7 +195,9 @@ export function approvalAskCard(
     expiresAt: action.expiresAt.toISOString(),
     url: args.url,
     answerable: true,
-    ...(connection.provider !== "keyring" ? { provider: connection.provider } : {}),
+    ...(connection.provider !== KEYRING_PROVIDER
+      ? { provider: providerDisplayName(connection.provider) }
+      : {}),
     ...(args.kind === "tool"
       ? { toolName: args.toolName, tool: args.tool, vendorApproval: args.vendorApproval }
       : {}),
@@ -227,6 +237,7 @@ export function connectionAskCard(args: {
     kind: "connection",
     agentName: args.agentName,
     vendor: payload.vendor,
+    integrationName: integrationNameFor(payload.vendor, payload.displayName),
     displayName: payload.displayName,
     primaryHost: payload.primaryHost,
     hosts: payload.hosts,
@@ -236,7 +247,11 @@ export function connectionAskCard(args: {
     expiresAt: action.expiresAt.toISOString(),
     url: args.url,
     answerable: connectionAskAnswerable(payload),
-    provider: payload.provider,
+    // The keyring's name stays the identifier the card compares against; any other is drawn.
+    provider:
+      payload.provider === KEYRING_PROVIDER
+        ? payload.provider
+        : providerDisplayName(payload.provider),
     providerConnect,
     ...(payload.widens ? { widens: payload.widens } : {}),
     vendorTools: vendorToolsOffer(payload.vendor, payload.displayName),
@@ -260,6 +275,7 @@ export function scopeAskCard(args: {
     kind: "scope",
     agentName: args.agentName,
     vendor: payload.vendor,
+    integrationName: integrationNameFor(payload.vendor, payload.displayName),
     displayName: payload.displayName,
     primaryHost: payload.primaryHost,
     hosts: payload.hosts,
@@ -269,7 +285,12 @@ export function scopeAskCard(args: {
     expiresAt: action.expiresAt.toISOString(),
     url: args.url,
     answerable: true,
-    ...(payload.provider !== "keyring" ? { provider: payload.provider } : {}),
+    ...(payload.provider !== KEYRING_PROVIDER
+      ? { provider: providerDisplayName(payload.provider) }
+      : {}),
+    // *Full access* on the card, as on the handoff page (GRA-314, GRA-316): the scope ask's yes
+    // may carry the integration's non-destructive tools, as the connection confirmation's does.
+    vendorTools: vendorToolsOffer(payload.vendor, payload.displayName),
   };
 }
 
@@ -286,6 +307,7 @@ export function credentialAskCard(args: {
     kind: "credential",
     agentName: args.agentName,
     vendor: payload.vendor,
+    integrationName: integrationNameFor(payload.vendor, payload.connectionName),
     displayName: payload.connectionName,
     primaryHost: null,
     hosts: payload.hosts,

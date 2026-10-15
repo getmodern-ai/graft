@@ -3,10 +3,10 @@ import { useEffect, useRef, useState } from "react";
 import { CodeBlock } from "@/components/code-block";
 import { CheckCircleIcon, ErrorIcon, RefreshIcon, WarningIcon } from "@/components/icons";
 import { Loader } from "@/components/loader";
+import { IntegrationMark } from "@/components/marks";
 import { SetupAppCard } from "@/components/setup/setup-app-card";
 import { SetupDisclosure } from "@/components/setup/setup-disclosure";
 import { SetupFooter } from "@/components/setup/setup-footer";
-import { SetupLogo } from "@/components/setup/setup-logo";
 import { useSetupMutation } from "@/components/setup/use-setup-mutation";
 import { StatusChip } from "@/components/status-chip";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -83,16 +83,23 @@ function ToolRun({
       return;
     }
     setInputProblem(null);
-    run.mutate({ agentId, vendor: tool.vendor, name: tool.name, body: { input: input.input } });
+    // Over the connection Setup made, never another account the tool was bound to before (GRA-276).
+    const connectionId = context.connection?.id;
+    run.mutate({
+      agentId,
+      vendor: tool.vendor,
+      name: tool.name,
+      body: { input: input.input, ...(connectionId ? { connectionId } : {}) },
+    });
   };
 
-  // Run once on arrival only for a tool that takes no input (`runsOnArrival`); a tool with inputs
-  // waits for Run, so its first answer is for the values the person chose.
+  // Run once on arrival when the drawn form already holds everything the run needs
+  // (`runsOnArrival`); a required field nothing fills, or a JSON input, waits for Run.
   const started = useRef(false);
   useEffect(() => {
     if (started.current) return;
     started.current = true;
-    if (runsOnArrival(view)) start();
+    if (runsOnArrival(view, tool)) start();
   });
 
   const answer = run.data;
@@ -143,9 +150,9 @@ function ToolRun({
       >
         <SetupAppCard
           media={
-            <SetupLogo
-              starterId={tool.vendor}
-              url={cachedDirectoryLogo(queryClient, tool.vendor)}
+            <IntegrationMark
+              slug={tool.vendor}
+              logoUrl={cachedDirectoryLogo(queryClient, tool.vendor)}
             />
           }
           name={<code className="font-mono font-normal text-base">{tool.wireName}</code>}
@@ -190,7 +197,7 @@ function ToolRun({
                 code={runResultText(answer.result)}
                 copyLabel="Copy answer"
                 wrap
-                hint="This is what the integration answered, as your harness will see it."
+                hint="This is what the integration answered, as your agent will see it."
               />
             </SetupDisclosure>
           ) : failure?.details ? (
@@ -267,7 +274,7 @@ function ToolRun({
           code={runResultText(answer.result)}
           copyLabel="Copy answer"
           wrap
-          hint="This is what the integration answered, as your harness will see it."
+          hint="This is what the integration answered, as your agent will see it."
         />
       ) : failure ? (
         <FailureNotice
@@ -283,7 +290,7 @@ function ToolRun({
           </Button>
         )}
         <Button type="button" disabled={onward.isPending} onClick={() => onward.mutate(undefined)}>
-          {onward.isPending ? "Continuing…" : "Connect your harness"}
+          {onward.isPending ? "Continuing…" : "Connect your agent"}
         </Button>
       </SetupFooter>
     </form>

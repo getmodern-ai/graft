@@ -12,6 +12,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { agentKeys } from "@/lib/agent-queries";
+import { approvalKeys } from "@/lib/approval-queries";
 import {
   type Connection,
   connectionKeys,
@@ -20,6 +21,7 @@ import {
   toolKeys,
 } from "@/lib/connection-queries";
 import { count } from "@/lib/format";
+import { providerLabel as providerName } from "@/lib/provider-name";
 
 /**
  * Revoke a connection (ADR 0007): the credential and every OAuth secret are cleared, every approval
@@ -50,6 +52,7 @@ export function RevokeConnectionDialog({
       queryClient.invalidateQueries({ queryKey: connectionKeys.all });
       queryClient.invalidateQueries({ queryKey: toolKeys.all });
       queryClient.invalidateQueries({ queryKey: agentKeys.all });
+      queryClient.invalidateQueries({ queryKey: approvalKeys.builds });
       toast.success(`${connection.displayName} is revoked`, {
         description: `${keyring ? "Credential cleared; " : ""}${count(result.approvalsDeleted, "tool approval")}, ${count(
           result.buildApprovalsDeleted,
@@ -62,10 +65,13 @@ export function RevokeConnectionDialog({
       // The revoke stands; what the provider held outside Graft did not let go (ADR 0019). The row
       // records the failure and the card offers Retry release until it succeeds (GRA-59).
       if (!result.providerRelease.released) {
-        toast.warning(`${result.providerRelease.provider} did not release the connection`, {
-          description:
-            "Everything in Graft is revoked. The provider could not be reached to release what it holds; the card says so until Retry release succeeds.",
-        });
+        toast.warning(
+          `${providerName(result.providerRelease.provider)} did not release the connection`,
+          {
+            description:
+              "Everything in Graft is revoked. The provider could not be reached to release what it holds; the card says so until Retry release succeeds.",
+          },
+        );
       }
       onOpenChange(false);
     },

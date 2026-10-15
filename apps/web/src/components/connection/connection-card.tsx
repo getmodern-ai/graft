@@ -1,5 +1,6 @@
 import { takesCredential } from "@graft/core/connection/connection.rules";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { Link } from "@tanstack/react-router";
 import { useState } from "react";
 import { toast } from "sonner";
 import { ConnectionCalls } from "@/components/connection/connection-calls";
@@ -36,6 +37,7 @@ import {
   toolKeys,
 } from "@/lib/connection-queries";
 import { startOAuthConsent } from "@/lib/oauth-consent";
+import { providerLabel as providerName } from "@/lib/provider-name";
 import {
   AWAITING_RECONNECTION_CHIP,
   connectionStatusChips,
@@ -121,14 +123,20 @@ export function ConnectionCard({
     onSuccess: ({ providerRelease }) => {
       queryClient.invalidateQueries({ queryKey: connectionKeys.all });
       if (providerRelease.released) {
-        toast.success(`${providerRelease.provider} released ${connection.displayName}`, {
-          description:
-            "The account is gone at the provider; nothing about it is held anywhere now.",
-        });
+        toast.success(
+          `${providerName(providerRelease.provider)} released ${connection.displayName}`,
+          {
+            description:
+              "The account is gone at the provider; nothing about it is held anywhere now.",
+          },
+        );
       } else {
-        toast.warning(`${providerRelease.provider} still did not release the connection`, {
-          description: "The provider could not be reached; the card keeps offering Retry.",
-        });
+        toast.warning(
+          `${providerName(providerRelease.provider)} still did not release the connection`,
+          {
+            description: "The provider could not be reached; the card keeps offering Retry.",
+          },
+        );
       }
     },
   });
@@ -142,9 +150,10 @@ export function ConnectionCard({
       </>
     ) : !keyring ? (
       <>
-        Revoked <Time iso={connection.revokedAt ?? ""} />. The account at {connection.provider} is
-        forgotten and every approval with it; when an agent asks to connect {connection.vendor}{" "}
-        again, one click through {connection.provider} reconnects it.
+        Revoked <Time iso={connection.revokedAt ?? ""} />. The account at{" "}
+        {providerName(connection.provider)} is forgotten and every approval with it; when an agent
+        asks to connect {connection.vendor} again, one click through{" "}
+        {providerName(connection.provider)} reconnects it.
       </>
     ) : !takesCredential(connection.scheme) ? (
       // A keyless scheme (GRA-66) had no credential to clear and has none to re-enter: Reconnect is
@@ -188,8 +197,9 @@ export function ConnectionCard({
       </>
     ) : !keyring ? (
       <>
-        Connected through {connection.provider}. The account's token is held there, never here;
-        Graft stores only the account's id, and every call relays through {connection.provider}.
+        Connected through {providerName(connection.provider)}. The account's token is held there,
+        never here; Graft stores only the account's id, and every call relays through{" "}
+        {providerName(connection.provider)}.
       </>
     ) : !takesCredential(connection.scheme) ? (
       // A keyless scheme (GRA-66) has no credential to have set: the sentence says so instead of
@@ -241,7 +251,14 @@ export function ConnectionCard({
     <Card>
       <CardHeader>
         <CardTitle className="flex flex-wrap items-center gap-2">
-          {connection.displayName}
+          {/* The integration's page (GRA-315), one per vendor, which lists this connection too. */}
+          <Link
+            to="/integrations/$vendor"
+            params={{ vendor: connection.vendor }}
+            className="rounded-sm hover:underline focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
+          >
+            {connection.displayName}
+          </Link>
           <Badge variant="outline">{connection.vendor}</Badge>
           {keyring ? null : <Badge variant="outline">{providerLabel(connection)}</Badge>}
           <Badge variant="outline">{connection.scheme}</Badge>
@@ -278,11 +295,11 @@ export function ConnectionCard({
         {connection.providerReleaseFailedAt ? (
           <Alert variant="destructive">
             <WarningIcon />
-            <AlertTitle>{connection.provider} still holds this account</AlertTitle>
+            <AlertTitle>{providerName(connection.provider)} still holds this account</AlertTitle>
             <AlertDescription>
               <p>
-                Everything in Graft is revoked, but {connection.provider} could not be asked to
-                release the account when you revoked (
+                Everything in Graft is revoked, but {providerName(connection.provider)} could not be
+                asked to release the account when you revoked (
                 <Time iso={connection.providerReleaseFailedAt} />
                 ). Until it does, the account is still connected there.
               </p>

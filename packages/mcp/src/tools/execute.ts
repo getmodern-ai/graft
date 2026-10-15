@@ -122,7 +122,10 @@ export async function callExecuteTool(
   if ("error" in parsed) return toolRefusal("input_invalid", parsed.error);
   const dryRun = args.dryRun === true;
   const startedAt = Date.now();
-  const record = (outcome: "ok" | "error" | "refused") =>
+  // The line names the connection, which is in scope and not revoked by here, and whether the build
+  // approval was asked once the gate decided (GRA-301; `@graft/db/schema/usage`).
+  let asked: boolean | null = null;
+  const record = (outcome: "ok" | "error" | "refused", reason: string | null = null) =>
     recordUsage(
       ctx,
       scope,
@@ -131,6 +134,9 @@ export async function callExecuteTool(
         outcome,
         dryRun,
         latencyMs: Date.now() - startedAt,
+        reason,
+        asked,
+        connectionId,
       },
       deps.ledger,
     );
@@ -147,14 +153,15 @@ export async function callExecuteTool(
     admitBlobs(deps, scope, null),
   );
   if (!door.ok) {
-    await record("refused");
+    await record("refused", door.refusal.reason);
     return toolError(door.refusal);
   }
   const admitted = door.admission;
   try {
     const gate = await requireBuildApproval(ctx, scope, connectionId, deps, session.channel);
+    asked = gate.asked === true;
     if (!gate.pass) {
-      await record("refused");
+      await record("refused", reasonWord(gate.answer.reason));
       return toolAskResult(session, gate);
     }
 
@@ -198,9 +205,39 @@ export async function callExecuteTool(
     const refused = "error" in outcome && outcome.error === "refused";
     const failed = !refused && "error" in outcome;
     const ok = !refused && !failed && (!("exitCode" in outcome) || outcome.exitCode === 0);
-    await record(refused ? "refused" : ok ? "ok" : "error");
+    await record(refused ? "refused" : ok ? "ok" : "error", executeReason(outcome, refused, ok));
     return refused || failed ? toolError(outcome) : toolResult(outcome);
   } finally {
     door.release();
   }
+}
+
+/**
+ * The ledger's word for how an execute call ended (GRA-301), never the command's output, read off
+ * `describeProcess`'s status before its exit code, since a backing's code can be absent or
+ * misleading for a process that did not finish (Greptile on #244): a refusal's own `reason`; a
+ * quota the record went past, `blob_quota`; a process killed at its limit, `killed`; one still
+ * running when the wait gave up, `still_running` (`RunFailureKind`'s words for the same two); one
+ * that exited with a numeric code other than 0, `exit_nonzero`; one that failed with no code,
+ * `exit_unknown`; no process at all (the sandbox would not open, or the exec threw),
+ * `sandbox_unavailable`. Null on `ok`.
+ */
+export function executeReason(
+  outcome: Record<string, unknown>,
+  refused: boolean,
+  ok: boolean,
+): string | null {
+  if (ok) return null;
+  if (refused) return reasonWord(outcome.reason);
+  if ("blobsRemoved" in outcome) return "blob_quota";
+  if (outcome.status === "killed") return "killed";
+  if (outcome.status === "running") return "still_running";
+  if (!("exitCode" in outcome)) return "sandbox_unavailable";
+  return typeof outcome.exitCode === "number" && outcome.exitCode !== 0
+    ? "exit_nonzero"
+    : "exit_unknown";
+}
+
+function reasonWord(value: unknown): string | null {
+  return typeof value === "string" ? value : null;
 }

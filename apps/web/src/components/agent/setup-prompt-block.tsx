@@ -18,7 +18,8 @@ export function SetupPromptBlock({
   tool,
 }: {
   harness: SetupPromptHarness;
-  agentName: string;
+  /** Absent on Home's checklist for a person with no agent: the prompt keeps "A new agent". */
+  agentName?: string;
   connection?: { displayName: string };
   tool?: { goal: string; wireName?: string };
 }) {
@@ -27,7 +28,7 @@ export function SetupPromptBlock({
     harness,
     mcpUrl: mcpEndpointUrl(origin),
     consoleUrl: origin,
-    agent: { name: agentName },
+    ...(agentName ? { agent: { name: agentName } } : {}),
     ...(connection ? { connection } : {}),
     ...(tool ? { tool } : {}),
   });
@@ -38,7 +39,7 @@ export function SetupPromptBlock({
       code={prompt}
       copyLabel="Copy prompt"
       wrap
-      hint="Paste it into your harness as your first message. It walks the harness through connecting as this agent and holds no token."
+      hint="Paste it into your agent as your first message. It walks the agent through connecting to Graft and holds no token."
     />
   );
 }

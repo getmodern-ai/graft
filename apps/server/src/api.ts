@@ -1,27 +1,51 @@
-import type { SocialProviderName } from "@graft/auth";
+import type { SetFirstPasswordOutcome, SocialProviderName } from "@graft/auth";
+import { MAX_PASSWORD_LENGTH, MIN_PASSWORD_LENGTH } from "@graft/auth/password.rules";
 import {
+  type ActivityDeps,
   type AgentDeps,
+  type AgentScopeToggleOutput,
   type ApprovalDeps,
+  addConnectionToAgentScope,
   answerPendingAction,
+  type ConnectionAccessDeps,
   type ConnectionDeps,
+  type ConnectionOutput,
   createAgent,
+  createIntegrationDeps,
   defaultAcquireJobDeps,
+  defaultActivityDeps,
+  defaultConnectionAccessDeps,
+  defaultIntegrationToolsDeps,
   defaultSetupDeps,
+  defaultStockDeps,
+  defaultSuggestedIntegrationDeps,
   deletePersonModelKey,
   GOAL_MAX_LENGTH,
   getAgent,
+  getAgentActivityStats,
   getAgentScope,
   getConnection,
+  getConnectionAccess,
   getPendingActionForPerson,
   getPersonModelKey,
+  getSetupState,
+  type IntegrationDeps,
   type IntegrationDirectory,
+  type IntegrationTool,
+  type IntegrationToolsDeps,
   isOAuthAuthorizationCode,
   issueConsoleAgentToken,
   type LedgerDeps,
+  listActivity,
   listAgents,
   listApprovals,
+  listBuildApprovals,
   listConnections,
+  listDonePendingActions,
+  listIntegrations,
+  listIntegrationTools,
   listOpenPendingActions,
+  listSuggestedIntegrations,
   listTools,
   listToolVersionOrigins,
   listVendorApprovals,
@@ -33,15 +57,23 @@ import {
   moveSetupOn,
   orNotFound,
   type PendingActionDeps,
+  type PendingActionDoneState,
+  type PendingActionSubject,
   type Principal,
+  pendingActionDoneState,
+  pendingActionFinishedAt,
+  pendingActionIntegrationName,
+  pendingActionSubject,
   planSetup,
   reconnectConnection,
   registerConnection,
   registerConnectionWithCredential,
+  removeConnectionFromAgentScope,
   requirePerson,
   retryProviderRelease,
   revokeAgent,
   revokeApproval,
+  rotateAgentToken,
   type ServiceContext,
   ServiceError,
   type ServiceErrorCode,
@@ -49,23 +81,33 @@ import {
   type SetupDeps,
   type SetupState,
   STARTER_VENDOR_IDS,
+  type StockDeps,
   type StockLineage,
+  type SuggestedIntegration,
+  type SuggestedIntegrationDeps,
   setAgentScope,
+  setApprovalFromConsole,
   setAskEveryCall,
   setConnectionCredential,
   setPersonModelKey,
+  setVendorApprovalDestructive,
   skipSetup,
   startSetup,
   stockLineageOf,
   type ToolDeps,
   updateAgentLimits,
+  validateVendor,
   type WorkingSetDeps,
+  withdrawBuildApproval,
   withdrawVendorApproval,
 } from "@graft/core";
 import type { DbOrTx } from "@graft/db";
+import type { ActivityApprovalSource, ActivityTool } from "@graft/db/repo/activity";
 import type { PendingActionRow } from "@graft/db/repo/pending-action";
 import type { AuthoredToolRow } from "@graft/db/repo/tool";
 import { agentScopeMode } from "@graft/db/schema/agent";
+import type { ApprovalDecision } from "@graft/db/schema/approval";
+import type { PendingActionClosedReason } from "@graft/db/schema/pending-action";
 import { setupHarness } from "@graft/db/schema/setup";
 import type { UsageOutcome } from "@graft/db/schema/usage";
 import type { WorkingSetPromotedBy } from "@graft/db/schema/working-set";
@@ -74,8 +116,10 @@ import {
   type ConnectionRoutingDeps,
   CREDENTIAL_ASK_KIND,
   confirmConnectionAsk,
+  type DocsProposalDeps,
   HANDOFF_TOKEN_PARAM,
   type HandoffConfig,
+  type HandoffRefusalReason,
   handoffUrl,
   type McpDeps,
   notifyAgentsReachingConnection,
@@ -87,15 +131,25 @@ import {
   type ToolListChangedNotifier,
   verifyHandoff,
 } from "@graft/mcp";
-import { executeToolName } from "@graft/mcp/tool-names";
+import { authoredToolName, executeToolName } from "@graft/mcp/tool-names";
 import { type Analytics, NO_ANALYTICS } from "@graft/observability";
 import { AUTH_SCHEMES } from "@graft/proxy";
+import { log } from "evlog";
 import { useLogger } from "evlog/hono";
-import { Hono } from "hono";
+import { type Context, Hono } from "hono";
 import { cors } from "hono/cors";
 import { z } from "zod";
 
 import { trackedRoute } from "./analytics-routes";
+import {
+  type ConnectionAcquireDeps,
+  type ConnectionGoalSuggestions,
+  connectionGoalSuggestions,
+  listConnectionJobs,
+  startConnectionAcquire,
+} from "./connection-acquire";
+import { createConnectionProposalStore } from "./connection-proposals";
+import { type ConsoleConnectDeps, connectFromConsole, recordFullAccess } from "./console-connect";
 import {
   createStarterDirectory,
   directoryProposal,
@@ -104,6 +158,7 @@ import {
   withStarter,
 } from "./directory";
 import { createMcpConsentRoutes, type McpOAuthServerOptions } from "./mcp-oauth";
+import { type ModelDeployment, NO_MODEL_DEPLOYMENT } from "./model";
 import { beginConsent, createOAuthRoutes, type OAuthOptions } from "./oauth";
 import { createOriginGuard } from "./origin-guard";
 import {
@@ -146,8 +201,29 @@ import {
   SETUP_PROMPT_PATH,
   setupPromptCors,
 } from "./setup-prompt";
+import {
+  readyMadeChoice,
+  type SetupStockRouteDeps,
+  setupReadyMadeTools,
+  takePlannedStock,
+} from "./setup-stock";
 import { runAgentTool } from "./tool-run";
 
+export type {
+  ConnectionAcquireJob,
+  ConnectionAcquireJobs,
+  ConnectionGoalSuggestions,
+} from "./connection-acquire";
+export type {
+  ConnectionProposalAvailability,
+  ConnectionProposalStarted,
+  ConnectionProposalState,
+} from "./connection-proposals";
+export type {
+  ConnectAccess,
+  ConsoleConnectProposal,
+  ConsoleConnectResult,
+} from "./console-connect";
 export type {
   SetupDirectoryEntry,
   SetupDirectoryHome,
@@ -159,7 +235,23 @@ export type {
   SetupGoalSuggestions,
 } from "./setup-build";
 export type { SetupFinishOutput, SetupToolContext } from "./setup-finish";
+export type { SetupReadyMade } from "./setup-stock";
 export type { AgentToolRunOutput } from "./tool-run";
+
+/** `GET /api/integrations/suggested`'s answer (GRA-305): newest ask first, at most twelve. */
+export type IntegrationSuggestions = { suggestions: SuggestedIntegration[] };
+
+/**
+ * The second segments under `/api/integrations` that are routes of their own (GRA-305): a route
+ * keyed by a vendor slug at that position cannot reach a vendor slugged one of these.
+ */
+export const INTEGRATION_RESERVED_SEGMENTS = ["directory", "suggested"] as const;
+
+/**
+ * `GET /me/model` (GRA-297): the deployment's model as `model.ts` chose it at boot, and whether
+ * this person has a key of their own. The console's Model row reads it.
+ */
+export type ModelOutput = ModelDeployment & { personKey: boolean };
 
 /**
  * The person's JSON API — the routes the console (GRA-26) will call, a plain Hono app for now (GRA-1
@@ -208,7 +300,19 @@ export type { AgentToolRunOutput } from "./tool-run";
 export type AuthHandle = {
   handler: (request: Request) => Promise<Response>;
   getSession: (headers: Headers) => Promise<SessionLike>;
+  /**
+   * `@graft/auth`'s `setFirstPassword` over the session's headers (GRA-298), behind
+   * `POST /me/password`. Optional so a harness that never sets a password binds nothing; absent,
+   * the route refuses saying so.
+   */
+  setFirstPassword?: (headers: Headers, newPassword: string) => Promise<SetFirstPasswordOutcome>;
 };
+
+/** `POST /me/password`'s body: the new password, held to Better Auth's lengths (GRA-298). */
+const setPasswordBody = z.object({
+  newPassword: z.string().min(MIN_PASSWORD_LENGTH).max(MAX_PASSWORD_LENGTH),
+});
+export type SetPasswordBody = z.input<typeof setPasswordBody>;
 
 /**
  * How a person may sign in at this deployment (GRA-81): email and password always, and the
@@ -232,10 +336,41 @@ export type ApiDeps = {
   /** The person's own model key (GRA-31, ADR 0014) — the vault's encrypt half rides inside. */
   modelKey: ModelKeyDeps;
   /**
+   * The integrations list's four reads (GRA-291). Optional, and the real reads under
+   * `connection.providers` when absent; a suite that reaches `/integrations` passes fakes.
+   */
+  integration?: IntegrationDeps;
+  /**
    * The person's Setup record (ADR 0024; GRA-204). Optional, and `defaultSetupDeps` when absent,
    * so a harness that never reaches `/setup` binds nothing; a suite that does passes fakes.
    */
   setup?: SetupDeps;
+  /**
+   * The integration page's access view (GRA-296). Optional, and `defaultConnectionAccessDeps` when
+   * absent, so a harness that never reads it binds nothing.
+   */
+  connectionAccess?: ConnectionAccessDeps;
+  /**
+   * An integration's tools read (GRA-293): the toolbox, the stock catalogue and the ledger's last
+   * run per tool. Optional, and `defaultIntegrationToolsDeps` when absent.
+   */
+  integrationTools?: IntegrationToolsDeps;
+  /**
+   * The stock catalogue's reads (ADR 0025), for Setup's ready-made tools (GRA-276). Optional, and
+   * `defaultStockDeps` when absent, as `setup` is; a suite that offers ready-made tools passes the
+   * fake catalogue its tool source copies from.
+   */
+  stock?: StockDeps;
+  /**
+   * "Your agents asked for these" (GRA-305; ADR 0001 as amended 2026-10-14). Optional, and
+   * `defaultSuggestedIntegrationDeps` when absent, as `setup` is.
+   */
+  suggested?: SuggestedIntegrationDeps;
+  /**
+   * The console's activity and the agent page's figures (GRA-308). Optional, and
+   * `defaultActivityDeps` when absent, as `setup` is.
+   */
+  activity?: ActivityDeps;
 };
 
 export type ApiOptions = {
@@ -289,8 +424,9 @@ export type ApiOptions = {
    */
   connectionRouting?: ConnectionRoutingDeps;
   /**
-   * The integration directory Setup's integration step searches (`directory.ts`; ADR 0001 as
-   * amended 2026-10-10): the private package's, bound by `index.ts` from `Backings.directory`.
+   * The integration directory Setup's integration step and the console's Integrations screen
+   * search (`directory.ts`; ADR 0001 as amended 2026-10-10 and 2026-10-14): the private package's,
+   * bound by `index.ts` from `Backings.directory`.
    * Absent, the starters this deployment connects (`createStarterDirectory`).
    */
   directory?: IntegrationDirectory;
@@ -303,11 +439,23 @@ export type ApiOptions = {
    */
   acquire?: SetupAcquireDeps;
   /**
+   * This deployment's model as a person may read it (GRA-297; `model.ts`'s `ModelDeployment`),
+   * which `GET /me/model` answers. `index.ts` binds `createModel`'s; absent, no fixed model and no
+   * router, as a laptop that configured none.
+   */
+  model?: ModelDeployment;
+  /**
    * The MCP endpoint's deps, for the console's run of an authored tool (GRA-208; ADR 0024;
    * `tool-run.ts`), which runs exactly what a first-class call over `/mcp` runs. `index.ts` binds
    * `mcp`; absent, the run route refuses with a sentence saying so.
    */
   run?: McpDeps;
+  /**
+   * The model and the page reader a connection proposal from an API's docs runs on (GRA-299,
+   * Flow C; `connection-proposals.ts`): `acquire`'s, so the same model check gates both.
+   * `index.ts` binds `mcp`; absent, the flow answers unavailable with the variables to set.
+   */
+  connectionProposal?: DocsProposalDeps;
   /**
    * The rate-limit seam's backing (GRA-149; `rate-limit.ts`), for the two doors under `/api`:
    * `sign_in` over Better Auth's writes and `api` over this app's mutations. `createServer` hands
@@ -324,7 +472,11 @@ export type ApiOptions = {
 export type PendingActionCard = {
   id: string;
   agentId: string;
-  agent: { id: string; name: string } | null;
+  /**
+   * The asking agent, with the MCP client it connected through (ADR 0018) so the handoff page can
+   * draw its harness's mark (GRA-314); `clientName` is null for a static-token agent.
+   */
+  agent: { id: string; name: string; clientName: string | null } | null;
   kind: string;
   payload: Record<string, unknown>;
   expiresAt: Date;
@@ -336,11 +488,35 @@ export type PendingActionCard = {
 };
 
 /**
+ * A finished ask as the console's Done list shows it (GRA-292): the card less its link, which a
+ * finished ask has no use for, plus how it finished and when (`@graft/core`'s
+ * `pendingActionDoneState` and `pendingActionFinishedAt`), the revoke that closed it if one did,
+ * and what it was about (`pendingActionSubject`), so a Change action reads the approval standing
+ * now through `/approvals` or `/vendor-approvals` rather than the answer recorded here.
+ */
+export type DonePendingActionCard = Omit<PendingActionCard, "url"> & {
+  state: PendingActionDoneState;
+  closedReason: PendingActionClosedReason | null;
+  finishedAt: Date;
+  subject: PendingActionSubject;
+};
+
+/** `GET /pending-actions?state=done`'s answer: a page, and where the next starts (null on the last). */
+export type DonePendingActionsOutput = {
+  pendingActions: DonePendingActionCard[];
+  nextCursor: string | null;
+};
+
+/** `GET /pending-actions`' `state`: `open` (the inbox, and the default) or `done`. */
+const pendingActionsState = z.enum(["open", "done"]).default("open");
+
+/**
  * The person's answer to a `tool`, `build` or `scope` ask: `allow`; for a tool ask, whether it
  * should ask every call from now on (ADR 0008 as amended 2026-09-15), and whether the yes is for
  * every tool of the tool's integration, destructive ones only with `includesDestructive` (ADR 0008
  * as amended 2026-10-09; GRA-237); for a scope ask, whether the agent may also build against the
- * connection (GRA-75's choice, GRA-104's card). Absent fields leave the setting where it stands
+ * connection (GRA-75's choice, GRA-104's card) and, with `allowVendor`, run the integration's
+ * non-destructive tools without asking (the handoff page's Full access, GRA-314). Absent fields leave the setting where it stands
  * and grant nothing.
  */
 const answerBody = z.object({
@@ -351,15 +527,42 @@ const answerBody = z.object({
   includesDestructive: z.boolean().optional(),
 });
 const askEveryCallBody = z.object({ on: z.boolean() });
+const approvalDecisionBody = z.object({ decision: z.enum(["allow", "deny"]) });
+const vendorApprovalPatch = z.object({ includesDestructive: z.boolean() });
+
+/**
+ * The answer the console sets outright for one agent and tool (ADR 0008 as amended 2026-10-14;
+ * GRA-302), `PUT /agents/:id/approvals/:toolId`; the console imports this rather than writing it.
+ */
+export type ApprovalDecisionBody = z.input<typeof approvalDecisionBody>;
+/** An integration's standing approval widened or narrowed, `PATCH /agents/:id/vendor-approvals/:vendor`. */
+export type VendorApprovalPatchBody = z.input<typeof vendorApprovalPatch>;
 
 /** The answer's wire shape, as the console posts it — the console imports this rather than writing it again. */
 export type AnswerBody = z.input<typeof answerBody>;
 
 /** How a handoff verdict lands on the wire: the reason word rides in `details`. */
-const HANDOFF_REFUSAL_CODE: Record<"tampered" | "expired" | "consumed", ServiceErrorCode> = {
+const HANDOFF_REFUSAL_CODE: Record<HandoffRefusalReason, ServiceErrorCode> = {
   tampered: "FORBIDDEN",
   expired: "GONE",
   consumed: "CONFLICT",
+  closed: "GONE",
+};
+
+/**
+ * `details` on a refused link read (`GET /pending-actions/:id?t=`). For an ask that expired or that
+ * a revoke closed (GRA-314), the agent's name, the integration and when it asked ride beside the
+ * reason, so the page can say "Hermes asked 24 hours ago": the read is the owning person's, the
+ * row found under them, so nothing reaches anyone the Done list would not show it to. A forged or
+ * spent link carries the reason alone.
+ */
+export type HandoffRefusalDetails = {
+  reason: HandoffRefusalReason;
+  closedReason?: PendingActionClosedReason;
+  kind?: string;
+  agentName?: string | null;
+  integrationName?: string | null;
+  askedAt?: Date;
 };
 
 const agentBody = z.object({
@@ -446,6 +649,17 @@ const setupTaskBody = z.strictObject({
 export type SetupTaskBody = z.input<typeof setupTaskBody>;
 
 /**
+ * `POST /setup/stock` (GRA-276): a ready-made tool, by its wire name, chosen instead of a task to
+ * build, on the tool screen (saved, and the starter connected, as `/setup/task` does) or the task
+ * step (taken at once). `discardJob` as the task route's.
+ */
+const setupStockBody = z.strictObject({
+  tool: z.string().trim().min(1).max(200),
+  discardJob: z.boolean().optional(),
+});
+export type SetupStockBody = z.input<typeof setupStockBody>;
+
+/**
  * `POST /setup/back` (GRA-215): the step to return the record to, from the rail or the footer's
  * *Back*; `moveSetupBack` admits only a step the record completed and holds what for.
  */
@@ -467,10 +681,29 @@ const setupNextBody = z.union([
 export type SetupNextBody = z.input<typeof setupNextBody>;
 
 /**
+ * `POST /connections/:id/acquire` (GRA-303): the agent the person picked before Create, and the
+ * goal as they accepted or typed it, `acquire`'s bound.
+ */
+const connectionAcquireBody = z.strictObject({
+  agentId: z.string().min(1),
+  goal: z.string().trim().min(1).max(GOAL_MAX_LENGTH),
+});
+/** The Create's wire shape, as the console posts it. */
+export type ConnectionAcquireBody = z.input<typeof connectionAcquireBody>;
+
+/**
  * `POST /agents/:id/tools/:vendor/:name/run` (GRA-208): the tool's input, which the run holds to
  * the tool's own schema; absent, an empty object, for a tool that takes none.
  */
-const toolRunBody = z.strictObject({ input: z.unknown().optional() });
+const toolRunBody = z.strictObject({
+  input: z.unknown().optional(),
+  /**
+   * The connection to run over (GRA-276, Greptile on #218): Setup's result step names the record's,
+   * so a tool the person already held bound to another account runs over the one just connected.
+   * Held to the agent's scope, and for a stock copy to its hosts, as `run_tool`'s is.
+   */
+  connectionId: z.string().min(1).max(200).optional(),
+});
 /** The run's wire shape, as the console posts it. */
 export type ToolRunBody = z.input<typeof toolRunBody>;
 
@@ -500,10 +733,43 @@ const registrationBody = z.object({
   hosts: z.array(z.string()).optional(),
 });
 
+/** ADR 0008 as amended 2026-10-14: what the connect dialog's access choice records (`console-connect.ts`). */
+const connectAccess = z.enum(["full", "ask"]);
+
 const connectionBody = registrationBody.extend({
   /** With it, the connection is registered with its credential in one transaction (GRA-28's Add connection). */
   credential: credentialFields.optional(),
+  /** The console connect's form (GRA-304): `full` records the in-scope agents' approvals with the row. */
+  access: connectAccess.optional(),
 });
+
+/** The add-connection form's wire shape, as the console posts it. */
+export type ConnectionBody = z.input<typeof connectionBody>;
+
+/**
+ * `POST /connect` (GRA-304): a directory entry by `slug`, read again from the directory, or a whole
+ * proposal in `request_connection`'s shape, and the access chosen; strict, so both is refused.
+ */
+const connectBody = z.union([
+  z.object({ slug: z.string().min(1).max(200), access: connectAccess.optional() }).strict(),
+  z
+    .object({
+      proposal: z.object({
+        vendor: z.string(),
+        displayName: z.string().optional(),
+        primaryHost: z.string(),
+        hosts: z.array(z.string()).optional(),
+        scheme: z.string(),
+        schemeConfig: z.record(z.string(), z.unknown()).optional(),
+        docsUrl: z.string().optional(),
+      }),
+      access: connectAccess.optional(),
+    })
+    .strict(),
+]);
+
+/** The console connect's wire shape, as the console posts it. */
+export type ConnectBody = z.input<typeof connectBody>;
 
 const credentialBody = z.object({ fields: credentialFields });
 
@@ -532,6 +798,17 @@ const credentialSubmitBody = z.object({ credential: credentialFields });
 export type ConnectionSubmitBody = z.input<typeof connectionSubmitBody>;
 /** The link button's wire shape, as the console posts it. */
 export type LinkStartBody = z.input<typeof linkStartBody>;
+
+/**
+ * `POST /connection-proposals` (GRA-299): the integration's name as the person typed it and the
+ * link to its API docs they pasted, judged by `readDocsProposalInput` before anything is read.
+ */
+const connectionProposalBody = z.strictObject({
+  name: z.string(),
+  docsUrl: z.string(),
+});
+/** The start's wire shape, as the console posts it. */
+export type ConnectionProposalBody = z.input<typeof connectionProposalBody>;
 
 const modelKeyBody = z.object({
   provider: z.string(),
@@ -630,6 +907,25 @@ export type ToolboxToolOutput = ToolOutput & {
   versions: ToolVersionOutput[];
 };
 
+/**
+ * One build approval on the agent's page (ADR 0008 as amended 2026-09-18; GRA-295): the connection
+ * `acquire` may work against without asking, the integration it names, and when it was granted.
+ */
+export type BuildApprovalOutput = {
+  connectionId: string;
+  vendor: string;
+  displayName: string;
+  grantedAt: Date;
+};
+
+/**
+ * `GET /integrations/:vendor/tools` (GRA-293): the integration page's Tools tab. The person's tools
+ * of the vendor that have a current version and the stock tools they hold none of the name of, each
+ * with its last run across the person's agents (dry runs and refusals not counted), the most
+ * recently run first (`@graft/core`'s `listIntegrationTools`).
+ */
+export type IntegrationToolsOutput = { tools: IntegrationTool[] };
+
 /** One promoted tool in an agent's working set, with the tool — the console's working-set view (ADR 0003). */
 export type WorkingSetEntryOutput = {
   toolId: string;
@@ -639,6 +935,100 @@ export type WorkingSetEntryOutput = {
   promotedBy: WorkingSetPromotedBy;
   tool: ToolOutput;
 };
+
+/** The tool an activity row names: its wire name, and its description while the tool's row stands. */
+export type ActivityToolOutput = {
+  /** Null for a meta-tool, an `execute__<id>` tool or a tool whose row is gone. */
+  id: string | null;
+  wireName: string;
+  description: string | null;
+};
+
+type ActivityRowOutputBase = {
+  /** Unique across the stream's kinds; stable for a row, so a list keys on it. */
+  key: string;
+  at: Date;
+  agent: { id: string; name: string };
+  /** The integration's slug; null where nothing recorded it (a line before GRA-301). */
+  vendor: string | null;
+  connectionId: string | null;
+};
+
+/**
+ * One call in the person's activity (GRA-308), from the usage ledger: how it ended in the
+ * ledger's words (`reason`, `asked`; their meanings are `@graft/db`'s `schema/usage.ts`).
+ */
+export type ActivityRunOutput = ActivityRowOutputBase & {
+  kind: "run";
+  id: string;
+  tool: ActivityToolOutput;
+  outcome: UsageOutcome;
+  reason: string | null;
+  asked: boolean | null;
+  latencyMs: number;
+  dryRun: boolean;
+};
+
+/**
+ * One answer in the person's activity (GRA-308): a tool's standing answer (`source: "tool"`), an
+ * integration's standing approval (`vendor`), or an answered ask of any kind but a tool's (`ask`),
+ * whose answer is its standing row (`@graft/db`'s `repo/activity.ts` says why).
+ */
+export type ActivityApprovalOutput = ActivityRowOutputBase & {
+  kind: "approval";
+  source: ActivityApprovalSource;
+  pendingActionId: string | null;
+  tool: ActivityToolOutput | null;
+  decision: ApprovalDecision | null;
+  includesDestructive: boolean | null;
+  askKind: string | null;
+  answer: Record<string, unknown> | null;
+};
+
+export type ActivityRowOutput = ActivityRunOutput | ActivityApprovalOutput;
+
+/** `GET /activity`'s answer: a page, newest first, and where the next starts (null on the last). */
+export type ActivityOutput = {
+  rows: ActivityRowOutput[];
+  nextCursor: string | null;
+};
+
+/** `GET /agents/:id/stats`' answer: the last seven days' runs, and the last run with its tool. */
+export type AgentStatsOutput = {
+  since: Date;
+  runs: number;
+  ranWithoutAsking: number;
+  approved: number;
+  lastRun: { at: Date; tool: ActivityToolOutput; outcome: UsageOutcome } | null;
+};
+
+/**
+ * A row's tool as the console names it: the wire name the ledger stored for a run, or the tool's
+ * own for an approval, which records none; the description while the tool's row stands.
+ */
+function activityToolOutput(
+  wireName: string | null,
+  tool: ActivityTool | null,
+): ActivityToolOutput {
+  return {
+    id: tool?.id ?? null,
+    wireName: wireName ?? (tool ? authoredToolName(tool.vendor, tool.name) : ""),
+    description: tool?.description ?? null,
+  };
+}
+
+/** `GET /activity`'s query. Booleans are the strings `true` and `false`, as a URL carries them. */
+const activityQuery = z.object({
+  agentId: z.string().max(200).optional(),
+  vendor: z.string().max(200).optional(),
+  connectionId: z.string().max(200).optional(),
+  outcome: z.string().max(50).optional(),
+  kind: z.string().max(50).optional(),
+  includeMetaTools: z.enum(["true", "false"]).optional(),
+  includeDryRuns: z.enum(["true", "false"]).optional(),
+  cursor: z.string().max(1000).optional(),
+  limit: z.coerce.number().optional(),
+});
 
 /**
  * One recent call against a connection's vendor, from the ledger (GRA-26). The proxy's wide events
@@ -739,6 +1129,7 @@ export function createApi(options: ApiOptions): Hono {
     tool: toolDeps,
     ledger: ledgerDeps,
   } = options.deps;
+  const activityDeps = options.deps.activity ?? defaultActivityDeps;
 
   /**
    * The setup prompt is read from other origins with no credentials (`setup-prompt.ts`), so its path
@@ -959,7 +1350,9 @@ export function createApi(options: ApiOptions): Hono {
     return {
       id: row.id,
       agentId: row.agentId,
-      agent: agent ? { id: agent.id, name: agent.name } : null,
+      agent: agent
+        ? { id: agent.id, name: agent.name, clientName: agent.connectedVia?.clientName ?? null }
+        : null,
       kind: row.kind,
       payload: row.payload,
       expiresAt: row.expiresAt,
@@ -988,6 +1381,23 @@ export function createApi(options: ApiOptions): Hono {
     return c.json({ modelKey: await getPersonModelKey(ctx, principal, modelKeyDeps) });
   });
 
+  /**
+   * What answers this person's `acquire` jobs (GRA-297): the deployment's fixed model, whether a
+   * key of their own would be used (ADR 0014; `model.ts`), and whether they have one. A route of
+   * its own rather than a field on `/me/model-key`, whose three verbs are one row's: the
+   * deployment's half is boot configuration, not the person's row, and the key routes keep
+   * answering the row alone. Neither half carries a key or the operator's model ids.
+   */
+  api.get("/me/model", async (c) => {
+    const principal = await principalOf(c.req.raw.headers);
+    const key = await getPersonModelKey(ctx, principal, modelKeyDeps);
+    const model: ModelOutput = {
+      ...(options.model ?? NO_MODEL_DEPLOYMENT),
+      personKey: key !== null,
+    };
+    return c.json({ model });
+  });
+
   api.put("/me/model-key", async (c) => {
     const principal = await principalOf(c.req.raw.headers);
     const body = await parseBody(c.req.raw, modelKeyBody);
@@ -997,6 +1407,29 @@ export function createApi(options: ApiOptions): Hono {
   api.delete("/me/model-key", async (c) => {
     const principal = await principalOf(c.req.raw.headers);
     return c.json({ deleted: await deletePersonModelKey(ctx, principal, modelKeyDeps) });
+  });
+
+  /**
+   * A first password for a person who signed up with Google or GitHub (GRA-298; ADR 0020), so the
+   * email door opens for them too. Better Auth keeps this server-only, so it is here, behind the
+   * session and the origin check; a person who already holds a password is refused 409 and changes
+   * it at Better Auth's own `/change-password` with the current one. The lengths are checked
+   * before Better Auth is asked, so the refusal is this API's shape.
+   */
+  api.post("/me/password", async (c) => {
+    await principalOf(c.req.raw.headers);
+    const body = await parseBody(c.req.raw, setPasswordBody);
+    if (!options.auth.setFirstPassword) {
+      throw new ServiceError("BAD_REQUEST", "This server cannot set a password");
+    }
+    const outcome = await options.auth.setFirstPassword(c.req.raw.headers, body.newPassword);
+    if (outcome === "password_exists") {
+      throw new ServiceError(
+        "CONFLICT",
+        "You already have a password. Change it with your current one instead.",
+      );
+    }
+    return c.json({ set: true });
   });
 
   /**
@@ -1054,6 +1487,22 @@ export function createApi(options: ApiOptions): Hono {
     },
     get acquireRunner() {
       return options.acquire?.acquireRunner;
+    },
+    get stock() {
+      return setupStockDeps;
+    },
+  };
+  /** Setup's ready-made tools (GRA-276; `setup-stock.ts`): the catalogue's reads and the copy. */
+  const setupStockDeps: SetupStockRouteDeps = {
+    setup: setupDeps,
+    agent: agentDeps,
+    connection: connectionDeps,
+    acquireJob: acquireJobDeps,
+    workingSet: workingSetDeps,
+    stock: options.deps.stock ?? defaultStockDeps,
+    // Read at call time, as the model is.
+    get mcp() {
+      return options.run;
     },
   };
   const countStep = (principal: Principal, state: SetupState, step: "connect" | "building") =>
@@ -1125,6 +1574,39 @@ export function createApi(options: ApiOptions): Hono {
     return c.json(body);
   });
 
+  /**
+   * A connection proposal from an API's docs (GRA-299, Flow C): a short job the console starts
+   * and polls, held in this process (`connection-proposals.ts`). The wide events carry the job's
+   * id, status, stage and counts; never the name, the link, the pages or the proposal.
+   */
+  const connectionProposals = createConnectionProposalStore({
+    deps: options.connectionProposal ?? null,
+    onSettled: ({ personId, ...event }) =>
+      log.info({ connectionProposal: { ...event, personId, message: `proposal ${event.status}` } }),
+  });
+
+  api.get("/connection-proposals", async (c) => {
+    const principal = await principalOf(c.req.raw.headers);
+    return c.json(connectionProposals.availability(principal.personId));
+  });
+
+  api.post("/connection-proposals", async (c) => {
+    const principal = await principalOf(c.req.raw.headers);
+    const body = await parseBody(c.req.raw, connectionProposalBody);
+    const started = connectionProposals.start(principal.personId, body);
+    useLogger().set({ connectionProposal: { id: started.id } });
+    return c.json(started);
+  });
+
+  api.get("/connection-proposals/:id", async (c) => {
+    const principal = await principalOf(c.req.raw.headers);
+    const state = connectionProposals.get(principal.personId, c.req.param("id"));
+    useLogger().set({
+      connectionProposal: { id: state.id, status: state.status, stage: state.stage },
+    });
+    return c.json(state);
+  });
+
   /** Build: the build approval, the job, the record on `building`, and the runner woken. */
   api.post("/setup/build", async (c) => {
     const principal = await principalOf(c.req.raw.headers);
@@ -1186,19 +1668,21 @@ export function createApi(options: ApiOptions): Hono {
   });
 
   /**
-   * Setup v2's integration directory (`directory.ts`): the first view (`SetupDirectoryHome`) and a
-   * search (`SetupDirectoryPage`), both reads. The backing is the private package's when it has one
-   * and the starters this deployment connects otherwise.
+   * The integration directory (`directory.ts`): the first view (`SetupDirectoryHome`) and a search
+   * (`SetupDirectoryPage`), both reads. The backing is the private package's when it has one and
+   * the starters this deployment connects otherwise. One handler each, mounted twice: under
+   * `/setup` for Setup v2's integration step, and under `/integrations` for the console's
+   * Integrations screen, search and home (ADR 0001 as amended 2026-10-14), with the same answers.
    */
   const starterDirectory = createStarterDirectory(() => listSetupVendors(connectionDeps.providers));
-  const setupDirectory = () => options.directory ?? starterDirectory;
+  const integrationDirectory = () => options.directory ?? starterDirectory;
 
-  api.get("/setup/directory", async (c) => {
+  const directoryHome = async (c: Context) => {
     await principalOf(c.req.raw.headers);
-    return c.json(await setupDirectoryHome(setupDirectory()));
-  });
+    return c.json(await setupDirectoryHome(integrationDirectory()));
+  };
 
-  api.get("/setup/directory/search", async (c) => {
+  const directorySearch = async (c: Context) => {
     await principalOf(c.req.raw.headers);
     const query = c.req.query("q") ?? "";
     const category = c.req.query("category");
@@ -1207,13 +1691,41 @@ export function createApi(options: ApiOptions): Hono {
     const cursor = c.req.query("cursor");
     const limit = Number.parseInt(c.req.query("limit") ?? "", 10);
     return c.json(
-      await searchSetupDirectory(setupDirectory(), {
+      await searchSetupDirectory(integrationDirectory(), {
         query: query.slice(0, 200),
         ...(category ? { category: category.slice(0, 100) } : {}),
         ...(cursor ? { cursor: cursor.slice(0, 500) } : {}),
         limit: Number.isFinite(limit) ? limit : 24,
       }),
     );
+  };
+
+  api.get("/setup/directory", directoryHome);
+  api.get("/setup/directory/search", directorySearch);
+
+  // `directory` and `suggested` are fixed second segments under `/integrations`
+  // (`INTEGRATION_RESERVED_SEGMENTS`), registered ahead of any `/integrations/:vendor…` route,
+  // which Hono tries in registration order. A vendor slugged either word keeps every route of
+  // three segments or more (`/integrations/directory/tools`); only a bare `/integrations/:vendor`
+  // would be shadowed, and a route of that shape is to refuse the two words itself.
+  api.get("/integrations/directory", directoryHome);
+  api.get("/integrations/directory/search", directorySearch);
+
+  /**
+   * "Your agents asked for these" (GRA-305; ADR 0001 as amended 2026-10-14): the integrations the
+   * person's agents asked to connect and the person has not, with the asking agent and the ask's
+   * age, and the directory's mark where it has one (`IntegrationSuggestions`).
+   */
+  api.get("/integrations/suggested", async (c) => {
+    const principal = await principalOf(c.req.raw.headers);
+    const suggestions = await listSuggestedIntegrations(
+      ctx,
+      principal,
+      integrationDirectory(),
+      options.deps.suggested ?? defaultSuggestedIntegrationDeps,
+    );
+    useLogger().set({ suggested: { count: suggestions.length } });
+    return c.json({ suggestions } satisfies IntegrationSuggestions);
   });
 
   api.post("/setup/starter", async (c) => {
@@ -1229,7 +1741,7 @@ export function createApi(options: ApiOptions): Hono {
     // Which integration the task is for, never the task's words (the person's own sentence).
     useLogger().set({ setup: { slug: body.slug ?? null, taskLength: body.goal.length } });
     if (body.slug) {
-      const entry = await setupDirectory().get(body.slug);
+      const entry = await integrationDirectory().get(body.slug);
       if (!entry) throw new ServiceError("NOT_FOUND", "The directory has no such integration");
       const starterId = withStarter(entry).starterId;
       if (starterId) {
@@ -1286,6 +1798,67 @@ export function createApi(options: ApiOptions): Hono {
     );
   });
 
+  /** The ready-made tools the tool step offers for a starter (`SetupReadyMade`); none for another. */
+  api.get("/setup/stock", async (c) => {
+    await principalOf(c.req.raw.headers);
+    const starterId = (c.req.query("starterId") ?? "").slice(0, 100);
+    return c.json(await setupReadyMadeTools(ctx, starterId, setupStockDeps));
+  });
+
+  /**
+   * A ready-made tool chosen instead of a task to build (GRA-276): judged against the offer, saved
+   * beside the task it does, the starter connected as the task route connects it, and taken at once
+   * when the record stands on the task step with its connection; otherwise when the connection
+   * lands (`buildPlannedSetup`). A row in the mutation table as the goal step, with `readyMade`.
+   */
+  api.post("/setup/stock", async (c) => {
+    const principal = await principalOf(c.req.raw.headers);
+    const body = await parseBody(c.req.raw, setupStockBody);
+    useLogger().set({ setup: { stockTool: body.tool } });
+    const before = await getSetupState(ctx, principal, setupDeps, agentDeps);
+    const entry = await readyMadeChoice(ctx, principal, before, body.tool, setupStockDeps);
+    // Saved only onto the record the choice was judged against (Greptile on #218).
+    let state = await planSetup(
+      ctx,
+      principal,
+      {
+        goal: entry.goal,
+        stockTool: entry.tool,
+        expected: {
+          step: before.step,
+          starterId: before.setup?.starterId ?? null,
+          connectionId: before.setup?.connectionId ?? null,
+        },
+      },
+      setupDeps,
+      agentDeps,
+    );
+    const starterId = state.setup?.starterId;
+    if (state.step === "vendor" && starterId && state.setup) {
+      const connecting = await connectSetupVendor(
+        ctx,
+        principal,
+        {
+          starterId,
+          ...(body.discardJob ? { discardJob: true } : {}),
+          plannedAt: state.setup.updatedAt,
+        },
+        setupConnectDeps(),
+      );
+      if (connecting.connected) countStep(principal, connecting.state, "connect");
+      state = connecting.state;
+    }
+    if (state.step !== "goal") return c.json(state);
+    return c.json(
+      await takePlannedStock(
+        ctx,
+        principal,
+        { discardJob: body.discardJob, stockTool: entry.tool },
+        setupStockDeps,
+      ),
+    );
+  });
+
   api.post("/setup/connect", async (c) => {
     const principal = await principalOf(c.req.raw.headers);
     const body = await parseBody(c.req.raw, setupConnectBody);
@@ -1328,7 +1901,7 @@ export function createApi(options: ApiOptions): Hono {
 
   api.get("/agents", async (c) => {
     const principal = await principalOf(c.req.raw.headers);
-    return c.json({ agents: await listAgents(ctx, principal, agentDeps) });
+    return c.json(await listAgents(ctx, principal, agentDeps));
   });
 
   api.post("/agents", async (c) => {
@@ -1371,7 +1944,7 @@ export function createApi(options: ApiOptions): Hono {
 
   /**
    * The static token of an agent **awaiting its harness** (ADR 0024; GRA-208), for Setup's finish
-   * step and *Connect a harness* on such an agent, answered once, `201 { agent, token }`, as
+   * step and *Connect an agent* on such an agent, answered once, `201 { agent, token }`, as
    * `POST /agents` answers. For the agent Setup runs as, while Setup is not completed and no client
    * holds the agent, a **replacement** (ADR 0024 as amended 2026-09-25): the finish step held the
    * only plaintext, so a reload lost it, and the new hash replaces the old one, which stops
@@ -1385,6 +1958,19 @@ export function createApi(options: ApiOptions): Hono {
       await issueConsoleAgentToken(ctx, principal, c.req.param("id"), setupDeps, agentDeps),
       201,
     );
+  });
+
+  /**
+   * Rotate an active static-token agent's token (ADR 0007 as amended 2026-10-14; GRA-306),
+   * answered once, `201 { agent, token }` as the issue above answers: the old token is refused from
+   * the next request on. An agent a client connected, one awaiting its harness (the issue route
+   * above gives its first token) and a revoked one are `409 agent_token_not_rotatable`, another
+   * person's a 404 (`rotateAgentToken`).
+   */
+  api.post("/agents/:id/token/rotate", async (c) => {
+    const principal = await principalOf(c.req.raw.headers);
+    await parseBody(c.req.raw, z.object({}), { emptyIs: {} });
+    return c.json(await rotateAgentToken(ctx, principal, c.req.param("id"), agentDeps), 201);
   });
 
   /**
@@ -1408,6 +1994,7 @@ export function createApi(options: ApiOptions): Hono {
         { agentId: c.req.param("id"), vendor: c.req.param("vendor"), name: c.req.param("name") },
         body.input ?? {},
         { agent: agentDeps, tool: toolDeps, workingSet: workingSetDeps, mcp: options.run },
+        body.connectionId ? { connectionId: body.connectionId } : {},
       ),
     );
   });
@@ -1497,10 +2084,81 @@ export function createApi(options: ApiOptions): Hono {
     return c.json({ changes });
   });
 
+  /**
+   * The agent page's figures (GRA-308): its runs over the last seven days, how many ran without
+   * asking and how many were approved, and its last run with the tool (`AgentStatsOutput`). A
+   * revoked agent's still answer, as its history does; another person's agent is a 404.
+   */
+  api.get("/agents/:id/stats", async (c) => {
+    const principal = await principalOf(c.req.raw.headers);
+    const agent = orNotFound(
+      await getAgent(ctx, principal, c.req.param("id"), agentDeps),
+      "Agent not found",
+    );
+    const stats = await getAgentActivityStats(
+      ctx,
+      { personId: principal.personId, agentId: agent.id },
+      activityDeps,
+    );
+    const output: AgentStatsOutput = {
+      since: stats.since,
+      runs: stats.runs,
+      ranWithoutAsking: stats.ranWithoutAsking,
+      approved: stats.approved,
+      lastRun: stats.lastRun
+        ? {
+            at: stats.lastRun.at,
+            tool: activityToolOutput(stats.lastRun.toolName, stats.lastRun.tool),
+            outcome: stats.lastRun.outcome,
+          }
+        : null,
+    };
+    return c.json(output);
+  });
+
+  /**
+   * The agent's build approvals, one per connection, for the agent's page to list and withdraw
+   * (ADR 0008 as amended 2026-09-18). Granted only from an answer (the build ask, a connection's
+   * `approveBuild`, Setup's Build), never here. A revoked agent's still answer, as its history does.
+   */
+  api.get("/agents/:id/build-approvals", async (c) => {
+    const principal = await principalOf(c.req.raw.headers);
+    const agent = orNotFound(
+      await getAgent(ctx, principal, c.req.param("id"), agentDeps),
+      "Agent not found",
+    );
+    const rows = await listBuildApprovals(
+      ctx,
+      { personId: principal.personId, agentId: agent.id },
+      approvalDeps,
+    );
+    const buildApprovals: BuildApprovalOutput[] = rows.map((row) => ({
+      connectionId: row.connectionId,
+      vendor: row.vendor,
+      displayName: row.displayName,
+      grantedAt: row.grantedAt,
+    }));
+    return c.json({ buildApprovals });
+  });
+
+  /** Withdraw one: the agent's next `acquire` against the connection asks again. */
+  api.delete("/agents/:id/build-approvals/:connectionId", async (c) => {
+    const principal = await principalOf(c.req.raw.headers);
+    const scope = { personId: principal.personId, agentId: c.req.param("id") };
+    const row = orNotFound(
+      await withdrawBuildApproval(ctx, scope, c.req.param("connectionId"), approvalDeps),
+      "No build approval for this connection and agent",
+    );
+    return c.json({ buildApproval: { agentId: row.agentId, connectionId: row.connectionId } });
+  });
+
   api.put("/agents/:id/scope", async (c) => {
     const principal = await principalOf(c.req.raw.headers);
     const body = await parseBody(c.req.raw, scopeBody);
-    return c.json(await setAgentScope(ctx, principal, c.req.param("id"), body, agentDeps));
+    const result = await setAgentScope(ctx, principal, c.req.param("id"), body, agentDeps);
+    // After the commit, so a session re-fetching on the notification lists the new scope's tools.
+    options.notifier?.changed(result.agent.id);
+    return c.json(result);
   });
 
   /**
@@ -1538,9 +2196,47 @@ export function createApi(options: ApiOptions): Hono {
     return c.json({ tools: answer });
   });
 
+  /**
+   * One integration's tools, by vendor slug (GRA-293): the toolbox's and stock's, with the last run
+   * of each. A slug the person has nothing of and stock has nothing of answers an empty list, not a
+   * 404, since an integration need not be connected for its stock tools to be listed.
+   */
+  api.get("/integrations/:vendor/tools", async (c) => {
+    const principal = await principalOf(c.req.raw.headers);
+    const vendor = c.req.param("vendor");
+    const problem = validateVendor(vendor);
+    if (problem) throw new ServiceError("BAD_REQUEST", problem);
+    const answer: IntegrationToolsOutput = {
+      tools: await listIntegrationTools(
+        ctx,
+        principal,
+        vendor,
+        options.deps.integrationTools ?? defaultIntegrationToolsDeps,
+      ),
+    };
+    return c.json(answer);
+  });
+
   api.get("/connections", async (c) => {
     const principal = await principalOf(c.req.raw.headers);
     return c.json({ connections: await listConnections(ctx, principal, connectionDeps) });
+  });
+
+  /**
+   * The integrations list (GRA-291): one row per vendor the person holds a live connection of, with
+   * its connections and their states, the active agents whose scope reaches any of them, the live
+   * tool count, the last call and the worst connection's reason for needing the person
+   * (`@graft/core`'s `IntegrationOutput`). Four statements whatever the person holds.
+   */
+  api.get("/integrations", async (c) => {
+    const principal = await principalOf(c.req.raw.headers);
+    const integrations = await listIntegrations(
+      ctx,
+      principal,
+      { executeToolName },
+      options.deps.integration ?? createIntegrationDeps(connectionDeps.providers),
+    );
+    return c.json({ integrations });
   });
 
   /**
@@ -1564,11 +2260,58 @@ export function createApi(options: ApiOptions): Hono {
       options.notifier,
     );
 
+  /** The console connect's seams (`console-connect.ts`): the directory is Setup's. */
+  const consoleConnect: ConsoleConnectDeps = {
+    connection: connectionDeps,
+    agent: agentDeps,
+    approval: approvalDeps,
+    directory: integrationDirectory,
+    handoff,
+    authUrl: options.authUrl ?? null,
+    notifier: options.notifier,
+  };
+
+  /**
+   * The person connects an integration with no agent asking (GRA-304; ADR 0006 as amended
+   * 2026-10-14): `ConsoleConnectResult` says whether it is connected, the keyring's form to show
+   * (then `POST /connections` with the same `access`), or a link provider's link to open, whose
+   * return lands on `/link/callback` with `connectId`. Counted from its answer's kinds.
+   */
+  api.post("/connect", async (c) => {
+    const principal = await principalOf(c.req.raw.headers);
+    const body = await parseBody(c.req.raw, connectBody);
+    const result = await connectFromConsole(ctx, principal, body, consoleConnect);
+    if (result.kind === "link") {
+      (options.analytics ?? NO_ANALYTICS).capture({
+        distinctId: principal.personId,
+        event: "provider_link_started",
+        properties: { provider: result.provider, via: "connect" },
+      });
+    } else if (result.kind === "form" && result.fallback) {
+      (options.analytics ?? NO_ANALYTICS).capture({
+        distinctId: principal.personId,
+        event: "provider_link_fell_back",
+        properties: { provider: result.fallback.provider, via: "connect" },
+      });
+    }
+    return c.json(result, result.kind === "connected" && result.created ? 201 : 200);
+  });
+
   api.post("/connections", async (c) => {
     const principal = await principalOf(c.req.raw.headers);
-    const { credential, ...registration } = await parseBody(c.req.raw, connectionBody);
+    const { credential, access, ...registration } = await parseBody(c.req.raw, connectionBody);
+    // The console connect's access choice (GRA-304; ADR 0008 as amended 2026-10-14), recorded with
+    // the row for the agents whose scope reaches it now.
+    const withAccess = async (scoped: ServiceContext, connection: ConnectionOutput) => {
+      if (access === "full") await recordFullAccess(scoped, principal, connection, consoleConnect);
+    };
     if (!credential) {
-      const connection = await registerConnection(ctx, principal, registration, connectionDeps);
+      const connection = await ctx.db.transaction(async (tx) => {
+        const scoped: ServiceContext = { db: tx };
+        const made = await registerConnection(scoped, principal, registration, connectionDeps);
+        await withAccess(scoped, made);
+        return made;
+      });
       await announceConnection(principal, connection.id);
       return c.json({ connection }, 201);
     }
@@ -1582,6 +2325,7 @@ export function createApi(options: ApiOptions): Hono {
         { ...registration, credential },
         connectionDeps,
       );
+      await withAccess(scoped, connection);
       const consent = await consentFor(scoped, principal, connection.id, connection.scheme, null);
       return consent
         ? { connection: consent.connection, authorizeUrl: consent.authorizeUrl }
@@ -1682,6 +2426,128 @@ export function createApi(options: ApiOptions): Hono {
   });
 
   /**
+   * Which agents may use the connection and what each may run without asking (GRA-296): every
+   * active agent of the person's with its scope, its last call against the vendor and its answers
+   * for the vendor's tools, the vendor and this connection (`ConnectionAccess`). One read for the
+   * integration page's Agents view, in a fixed number of statements, rather than the agent-scoped
+   * approval reads once per agent. 404 for a connection that is not the person's.
+   */
+  api.get("/connections/:id/access", async (c) => {
+    const principal = await principalOf(c.req.raw.headers);
+    const access = orNotFound(
+      await getConnectionAccess(
+        ctx,
+        principal,
+        c.req.param("id"),
+        options.deps.connectionAccess ?? defaultConnectionAccessDeps,
+        { executeToolName },
+      ),
+      "Connection not found",
+    );
+    return c.json({ access });
+  });
+
+  /**
+   * An integration's page gets a new tool (GRA-303; ADR 0024 as amended 2026-10-14;
+   * `connection-acquire.ts`). Create is the picked agent's build approval and starts its job, in
+   * `ConnectionAcquireJob`'s shape; the list finds the connection's recent jobs after a reload,
+   * and each is polled through `GET /agents/:id/acquire-jobs/:jobId`. The chips share Setup's memo,
+   * so the model is asked once per person and connection whichever screen asks.
+   */
+  const connectionAcquireDeps: ConnectionAcquireDeps = {
+    agent: agentDeps,
+    connection: connectionDeps,
+    approval: approvalDeps,
+    acquireJob: acquireJobDeps,
+    // Read at call time, as Setup's are: `index.ts` binds the runner after this is built.
+    get model() {
+      return options.acquire?.model ?? null;
+    },
+    get acquireRunner() {
+      return options.acquire?.acquireRunner;
+    },
+  };
+
+  api.post("/connections/:id/acquire", async (c) => {
+    const principal = await principalOf(c.req.raw.headers);
+    const body = await parseBody(c.req.raw, connectionAcquireBody);
+    const job = await startConnectionAcquire(
+      ctx,
+      principal,
+      { connectionId: c.req.param("id"), ...body },
+      connectionAcquireDeps,
+    );
+    return c.json(job, 201);
+  });
+
+  api.get("/connections/:id/acquire-jobs", async (c) => {
+    const principal = await principalOf(c.req.raw.headers);
+    return c.json(
+      await listConnectionJobs(ctx, principal, c.req.param("id"), connectionAcquireDeps),
+    );
+  });
+
+  api.get("/connections/:id/goal-suggestions", async (c) => {
+    const principal = await principalOf(c.req.raw.headers);
+    const { suggestions, build, outcome, error, cached, dropped } = await connectionGoalSuggestions(
+      ctx,
+      principal,
+      c.req.param("id"),
+      {
+        ...connectionAcquireDeps,
+        goalSuggestions,
+      },
+    );
+    useLogger().set({
+      goalSuggestions: {
+        outcome,
+        count: suggestions.length,
+        ...(dropped ? { dropped } : {}),
+        ...(cached ? { cached } : {}),
+        ...(error ? { error } : {}),
+      },
+    });
+    const body: ConnectionGoalSuggestions = { suggestions, build };
+    return c.json(body);
+  });
+
+  /**
+   * One connection turned on or off for one agent (GRA-294): the integration page's *Agents with
+   * access* and the agent page's per-integration switch, each a single write under the agent's
+   * row lock, so two toggles never race the way a read-modify-write of `PUT /agents/:id/scope`
+   * does. Another person's agent or connection is a 404 from the service. Both answer
+   * `AgentScopeToggleOutput`; a removal from an agent on `all` narrows it to `listed` and says so
+   * in `materialised`. A grant to an agent on `all` changes nothing and tells nobody; otherwise
+   * the agent's session is told after the commit, as the agent page's scope write is.
+   */
+  api.put("/connections/:id/agents/:agentId", async (c) => {
+    const principal = await principalOf(c.req.raw.headers);
+    const result = await addConnectionToAgentScope(
+      ctx,
+      principal,
+      c.req.param("agentId"),
+      c.req.param("id"),
+      agentDeps,
+    );
+    if (result.agent.scopeMode === "listed") options.notifier?.changed(result.agent.id);
+    const answer: AgentScopeToggleOutput = { ...result, materialised: false };
+    return c.json(answer);
+  });
+
+  api.delete("/connections/:id/agents/:agentId", async (c) => {
+    const principal = await principalOf(c.req.raw.headers);
+    const answer: AgentScopeToggleOutput = await removeConnectionFromAgentScope(
+      ctx,
+      principal,
+      c.req.param("agentId"),
+      c.req.param("id"),
+      agentDeps,
+    );
+    options.notifier?.changed(answer.agent.id);
+    return c.json(answer);
+  });
+
+  /**
    * The credential's one way in (ADR 0006): the console posts the fields here over TLS, the
    * service encrypts them, and the answer is the row's public shape — `credentialSetAt` and no
    * more. The same route re-enters a rotated credential.
@@ -1760,20 +2626,136 @@ export function createApi(options: ApiOptions): Hono {
     return c.json(result);
   });
 
-  /** The console's inbox: every open action across the person's agents, newest first, each with its link. */
+  /**
+   * The person's activity (GRA-308): runs and answers across every agent of theirs, newest first,
+   * `limit` at a time from `cursor` (`ActivityOutput`). Home, an agent's page, an integration's
+   * Activity tab and the Activity screen are this one read with `agentId`, `vendor`,
+   * `connectionId`, `outcome` or `kind`; meta-tool calls and dry runs come back only with
+   * `includeMetaTools=true` and `includeDryRuns=true`. A filter naming another person's agent,
+   * vendor or connection matches nothing rather than refusing, since the statement is under the
+   * person whatever it names. `GET /connections/:id/usage` stays until its screen moves.
+   */
+  api.get("/activity", async (c) => {
+    const principal = await principalOf(c.req.raw.headers);
+    const query = activityQuery.safeParse(c.req.query());
+    if (!query.success) {
+      throw new ServiceError("BAD_REQUEST", "The activity query does not match its shape", {
+        details: { issues: query.error.issues },
+      });
+    }
+    const { includeMetaTools, includeDryRuns, cursor, limit, ...filters } = query.data;
+    const page = await listActivity(
+      ctx,
+      principal,
+      {
+        ...filters,
+        includeMetaTools: includeMetaTools === "true",
+        includeDryRuns: includeDryRuns === "true",
+        cursor: cursor ?? null,
+        limit: limit ?? null,
+      },
+      activityDeps,
+    );
+    const output: ActivityOutput = {
+      rows: page.rows.map((row): ActivityRowOutput => {
+        const base = {
+          key: row.position.key,
+          at: row.at,
+          agent: { id: row.agentId, name: row.agentName },
+          vendor: row.vendor,
+          connectionId: row.connectionId,
+        };
+        if (row.kind === "run") {
+          return {
+            ...base,
+            kind: "run",
+            id: row.id,
+            tool: activityToolOutput(row.toolName, row.tool),
+            outcome: row.outcome,
+            reason: row.reason,
+            asked: row.asked,
+            latencyMs: row.latencyMs,
+            dryRun: row.dryRun,
+          };
+        }
+        return {
+          ...base,
+          kind: "approval",
+          source: row.source,
+          pendingActionId: row.pendingActionId,
+          tool: row.tool ? activityToolOutput(null, row.tool) : null,
+          decision: row.decision,
+          includesDestructive: row.includesDestructive,
+          askKind: row.askKind,
+          answer: row.answer,
+        };
+      }),
+      nextCursor: page.nextCursor,
+    };
+    return c.json(output);
+  });
+
+  /**
+   * The console's inbox: every open action across the person's agents, newest first, each with its
+   * link. `?state=done` is Requests › Done instead (GRA-292): the answered, expired and
+   * revoke-closed asks, newest finish first, `limit` at a time from `cursor`
+   * (`DonePendingActionsOutput`). The agents are read once for the page, revoked ones included.
+   */
   api.get("/pending-actions", async (c) => {
     const principal = await principalOf(c.req.raw.headers);
-    const rows = await listOpenPendingActions(ctx, principal, pendingActionDeps);
-    return c.json({
-      pendingActions: await Promise.all(rows.map((row) => card(row, principal))),
-    });
+    const state = pendingActionsState.safeParse(c.req.query("state"));
+    if (!state.success) {
+      throw new ServiceError("BAD_REQUEST", "state is open or done");
+    }
+    if (state.data === "open") {
+      const rows = await listOpenPendingActions(ctx, principal, pendingActionDeps);
+      return c.json({
+        pendingActions: await Promise.all(rows.map((row) => card(row, principal))),
+      });
+    }
+    const limit = c.req.query("limit");
+    const page = await listDonePendingActions(
+      ctx,
+      principal,
+      { cursor: c.req.query("cursor") ?? null, limit: limit === undefined ? null : Number(limit) },
+      pendingActionDeps,
+    );
+    const agents = new Map(
+      (await listAgents(ctx, principal, agentDeps)).agents.map((agent) => [agent.id, agent]),
+    );
+    const output: DonePendingActionsOutput = {
+      pendingActions: page.rows.map((row) => {
+        const agent = agents.get(row.agentId);
+        return {
+          id: row.id,
+          agentId: row.agentId,
+          agent: agent
+            ? { id: agent.id, name: agent.name, clientName: agent.connectedVia?.clientName ?? null }
+            : null,
+          kind: row.kind,
+          payload: row.payload,
+          expiresAt: row.expiresAt,
+          createdAt: row.createdAt,
+          answeredAt: row.answeredAt,
+          answer: row.answer,
+          consumedAt: row.consumedAt,
+          state: pendingActionDoneState(row),
+          closedReason: row.closedReason,
+          finishedAt: pendingActionFinishedAt(row),
+          subject: pendingActionSubject(row),
+        };
+      }),
+      nextCursor: page.nextCursor,
+    };
+    return c.json(output);
   });
 
   /**
    * Where a handoff link lands (`<console>/pending/<id>?t=…` calls this with the same `t`). The
-   * token is verified against the row — tampered 403, already used 409, expired 410, each naming
-   * its reason in `details` — and the session must be the owning person's too: the link is a
-   * pointer the person carries, never a credential (ADR 0006).
+   * token is verified against the row — tampered 403, already used 409, expired or closed by a
+   * revoke 410, each naming its reason in `details` (`HandoffRefusalDetails`) — and the session
+   * must be the owning person's too: the link is a pointer the person carries, never a credential
+   * (ADR 0006).
    */
   api.get("/pending-actions/:id", async (c) => {
     const principal = await principalOf(c.req.raw.headers);
@@ -1788,9 +2770,21 @@ export function createApi(options: ApiOptions): Hono {
       now: pendingActionDeps.now(),
     });
     if (!verdict.ok) {
-      throw new ServiceError(HANDOFF_REFUSAL_CODE[verdict.reason], verdict.message, {
-        details: { reason: verdict.reason },
-      });
+      const about = verdict.reason === "expired" || verdict.reason === "closed";
+      const agent = about ? await getAgent(ctx, principal, row.agentId, agentDeps) : null;
+      const details: HandoffRefusalDetails = {
+        reason: verdict.reason,
+        ...(verdict.closedReason ? { closedReason: verdict.closedReason } : {}),
+        ...(about
+          ? {
+              kind: row.kind,
+              agentName: agent?.name ?? null,
+              integrationName: pendingActionIntegrationName(row.payload),
+              askedAt: row.createdAt,
+            }
+          : {}),
+      };
+      throw new ServiceError(HANDOFF_REFUSAL_CODE[verdict.reason], verdict.message, { details });
     }
     return c.json({ pendingAction: await card(row, principal) });
   });
@@ -2014,7 +3008,8 @@ export function createApi(options: ApiOptions): Hono {
   /**
    * One agent's standing approvals per integration (ADR 0008 as amended 2026-10-09; GRA-237) —
    * what the agent's page lists beside the per-tool approvals, to withdraw one. Recorded only from
-   * an answer (`POST /pending-actions/:id/answer`, or the ask card's `answer_ask`), never here.
+   * an answer (`POST /pending-actions/:id/answer`, or the ask card's `answer_ask`), never here;
+   * widened or narrowed by `PATCH /agents/:id/vendor-approvals/:vendor` (GRA-302).
    */
   api.get("/vendor-approvals", async (c) => {
     const principal = await principalOf(c.req.raw.headers);
@@ -2028,6 +3023,45 @@ export function createApi(options: ApiOptions): Hono {
     const scope = { personId: principal.personId, agentId: agentIdOf(c.req.query("agentId")) };
     const vendorApproval = orNotFound(
       await withdrawVendorApproval(ctx, scope, c.req.param("vendor"), approvalDeps),
+      "No standing approval for this integration and agent",
+    );
+    return c.json({ vendorApproval });
+  });
+
+  /**
+   * Set one agent's answer for one tool outright, `{ decision: "allow" | "deny" }` (ADR 0008 as
+   * amended 2026-10-14; GRA-302): the integration page's and Requests' Change. For the version the
+   * tool runs now, creating the answer where none stood, and answering the open asks it settles
+   * (`setApprovalFromConsole`). Answers `{ approval, answeredPendingActionIds }`. 400 for a
+   * read-only tool, which never asks; 404 for another person's agent or tool; 409 for a revoked
+   * agent or a tool with no version. Under the agent's path, as the agent routes since GRA-208 are.
+   */
+  api.put("/agents/:id/approvals/:toolId", async (c) => {
+    const principal = await principalOf(c.req.raw.headers);
+    const body = await parseBody(c.req.raw, approvalDecisionBody);
+    const scope = { personId: principal.personId, agentId: c.req.param("id") };
+    return c.json(
+      await setApprovalFromConsole(ctx, scope, c.req.param("toolId"), body.decision, approvalDeps),
+    );
+  });
+
+  /**
+   * Widen one agent's standing approval for an integration to its destructive tools, or narrow it
+   * back, `{ includesDestructive }` (ADR 0008 as amended 2026-10-14; GRA-302). Only one that
+   * stands: 404 when none does, since recording one is an answer's, never this route's.
+   */
+  api.patch("/agents/:id/vendor-approvals/:vendor", async (c) => {
+    const principal = await principalOf(c.req.raw.headers);
+    const body = await parseBody(c.req.raw, vendorApprovalPatch);
+    const scope = { personId: principal.personId, agentId: c.req.param("id") };
+    const vendorApproval = orNotFound(
+      await setVendorApprovalDestructive(
+        ctx,
+        scope,
+        c.req.param("vendor"),
+        body.includesDestructive,
+        approvalDeps,
+      ),
       "No standing approval for this integration and agent",
     );
     return c.json({ vendorApproval });

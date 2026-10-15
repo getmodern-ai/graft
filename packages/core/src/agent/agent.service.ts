@@ -56,7 +56,26 @@ export type AgentOutput = {
   updatedAt: Date;
 };
 
-export type AgentListOutput = AgentOutput & { workingSetCount: number };
+/**
+ * An agent as the console's list draws it (GRA-290): `connectionIds` is the scope as it resolves
+ * under `scopeMode`, as `getAgentScope` answers it, and `lastActiveAt` the agent's last call that
+ * was not a dry run, null for none.
+ */
+export type AgentListOutput = AgentOutput & {
+  workingSetCount: number;
+  connectionIds: string[];
+  lastActiveAt: Date | null;
+};
+
+/**
+ * `GET /api/agents`: every agent of the person's, revoked included, and whether any of them has
+ * ever run a tool for real and had it succeed (the empty Home's checklist): a ledger row that is
+ * not a dry run and answered `ok`, where `lastActiveAt` counts a refused or failed call too. It is
+ * read per agent in the list's own statement and folded here rather than read again: the list
+ * holds every agent the person has, and a ledger row cannot outlive its agent
+ * (`usage_ledger.agent_id` cascades), so "some agent has one" is "the person has one".
+ */
+export type AgentListAnswer = { agents: AgentListOutput[]; hasRunTool: boolean };
 
 export function toAgentOutput(row: AgentRow): AgentOutput {
   return {
@@ -308,7 +327,7 @@ export async function createAgentAwaitingHarness(
 
 /**
  * Issue the static token of an agent **awaiting its harness** (ADR 0024; GRA-208): Setup's finish
- * step for a token harness, and *Connect a harness* on such an agent. The token is in the answer
+ * step for a token harness, and *Connect an agent* on such an agent. The token is in the answer
  * and nowhere else, as `createAgent`'s is. Every other agent is refused, since a second token
  * would orphan the first and an OAuth agent's client holds its own: `NOT_FOUND` for no agent of
  * the person's, `CONFLICT` with `agent_not_awaiting_harness` and a sentence naming why for a
@@ -337,7 +356,7 @@ export async function issueAwaitingAgentToken(
   }
   if (row.tokenHash) {
     throw refuse(
-      `${row.name} already has a token, shown once when it was issued; revoke the agent and create another to get a new one`,
+      `${row.name} already has a token, shown once when it was issued; rotate it to get a new one`,
     );
   }
   const minted = mintAgentToken(deps.randomBytes);
@@ -346,6 +365,56 @@ export async function issueAwaitingAgentToken(
     tokenPrefix: minted.tokenPrefix,
   });
   if (!issued) throw refuse(`${row.name} was connected while its token was being issued`);
+  return { agent: toAgentOutput(issued), token: minted.token };
+}
+
+/**
+ * Rotate the static token of an active agent that has one (ADR 0007 as amended 2026-10-14;
+ * GRA-306): a new token minted and shown once, its hash written over the one read here
+ * (`issueAgentToken`'s `replacing`), so the old token is refused from the next request on, an open
+ * MCP session included, since the door checks the token on every request. `NOT_FOUND` for no agent
+ * of the person's; `CONFLICT` with `agent_token_not_rotatable` and a sentence for a revoked agent,
+ * an agent a client connected (its client holds its own tokens) and an agent awaiting its harness
+ * (it has no token yet, and `issueAwaitingAgentToken` issues the first). Two rotations racing both
+ * read one hash and the write admits one of them; the other is refused rather than orphaning a
+ * token nobody would be shown.
+ */
+export async function rotateAgentToken(
+  ctx: ServiceContext,
+  principal: Principal,
+  agentId: string,
+  deps: AgentDeps,
+): Promise<{ agent: AgentOutput; token: string }> {
+  const row = orNotFound(
+    await deps.findAgent(ctx.db, principal.personId, agentId),
+    "Agent not found",
+  );
+  const refuse = (message: string) =>
+    new ServiceError("CONFLICT", message, {
+      details: { reason: "agent_token_not_rotatable", agentId: row.id },
+    });
+  if (row.revokedAt) throw refuse(`${row.name} is revoked, so its token is not rotated`);
+  if (row.connectedViaClientId) {
+    throw refuse(
+      `${row.name} is connected through ${row.connectedViaClientName ?? "an MCP client"}, which holds its own tokens; there is no token to rotate`,
+    );
+  }
+  if (!row.tokenHash) {
+    throw refuse(`${row.name} has no token yet; issue its first token instead`);
+  }
+  const minted = mintAgentToken(deps.randomBytes);
+  const issued = await deps.issueAgentToken(
+    ctx.db,
+    principal.personId,
+    row.id,
+    { tokenHash: minted.tokenHash, tokenPrefix: minted.tokenPrefix },
+    row.tokenHash,
+  );
+  if (!issued) {
+    throw refuse(
+      `${row.name}'s token changed while it was being rotated (rotated again, revoked or connected); nothing was replaced by this request`,
+    );
+  }
   return { agent: toAgentOutput(issued), token: minted.token };
 }
 
@@ -377,9 +446,15 @@ export async function listAgents(
   ctx: ServiceContext,
   principal: Principal,
   deps: AgentDeps,
-): Promise<AgentListOutput[]> {
+): Promise<AgentListAnswer> {
   const rows = await deps.listAgents(ctx.db, principal.personId);
-  return rows.map((row) => ({ ...toAgentOutput(row), workingSetCount: row.workingSetCount }));
+  const agents = rows.map((row) => ({
+    ...toAgentOutput(row),
+    workingSetCount: row.workingSetCount,
+    connectionIds: row.connectionIds,
+    lastActiveAt: row.lastActiveAt,
+  }));
+  return { agents, hasRunTool: rows.some((row) => row.hasRunTool) };
 }
 
 export async function getAgent(
@@ -414,7 +489,8 @@ export async function updateAgentLimits(
  * Revoke: every token stops resolving at once — the static one because `findAgentByTokenHash`
  * filters on `revoked_at` in the statement, an MCP client's because the door's read joins the same
  * column (ADR 0018) — and the client's token rows are stamped in the same transaction so the record
- * says so. The row and its history stay. Null for no such agent, or one already revoked.
+ * says so, as are the asks it left open, closed with the revoke as their reason (GRA-292). The row
+ * and its history stay. Null for no such agent, or one already revoked.
  */
 export async function revokeAgent(
   ctx: ServiceContext,
@@ -426,11 +502,9 @@ export async function revokeAgent(
   const row = await ctx.db.transaction(async (tx) => {
     const revoked = await deps.revokeAgent(tx, principal.personId, agentId, now);
     if (!revoked) return null;
-    await deps.revokeMcpTokensForAgent(
-      tx,
-      { personId: principal.personId, agentId: revoked.id },
-      now,
-    );
+    const scope = { personId: principal.personId, agentId: revoked.id };
+    await deps.revokeMcpTokensForAgent(tx, scope, now);
+    await deps.closePendingActionsForAgent(tx, scope, now);
     return revoked;
   });
   return row ? toAgentOutput(row) : null;
@@ -527,6 +601,66 @@ export async function addConnectionToAgentScope(
     return {
       agent: toAgentOutput(row),
       connectionIds: await deps.listAgentConnectionIds(tx, scope),
+    };
+  });
+}
+
+/**
+ * What a one-connection scope write answers (`PUT`/`DELETE /api/connections/:id/agents/:agentId`):
+ * the agent, its scope as it now resolves, and whether the write **materialised** an agent on
+ * `all` as `listed` — which also means connections the person makes later no longer reach it, so
+ * the console can say so. Always false for a grant.
+ */
+export type AgentScopeToggleOutput = {
+  agent: AgentOutput;
+  connectionIds: string[];
+  materialised: boolean;
+};
+
+/**
+ * Take one connection out of an agent's scope, keeping the rest — the integration page's *Agents
+ * with access* and the agent page's per-integration switch turned off (GRA-294), the counterpart
+ * of `addConnectionToAgentScope` and taking the same lock first (`findAgentForUpdate`), inside one
+ * transaction, so it serialises with `setAgentScope` and every grant rather than interleaving.
+ * Under `listed`, one delete on the scope's key (`removeAgentConnection`); removing one the list
+ * does not name changes nothing. **Under `all` the scope is materialised** (ADR 0007 as amended
+ * 2026-09-19): the mode becomes `listed` and the list every connection the scope resolved to, read
+ * after the lock, less this one — revoked rows kept, as `setAgentScope`'s materialisation keeps
+ * them, so a reconnection still reaches the agent (GRA-69). The answer's `materialised` says so.
+ * The connection is checked to be the person's under either mode, so a foreign id is `NOT_FOUND`.
+ */
+export async function removeConnectionFromAgentScope(
+  ctx: ServiceContext,
+  principal: Principal,
+  agentId: string,
+  connectionId: string,
+  deps: AgentDeps,
+): Promise<AgentScopeToggleOutput> {
+  return ctx.db.transaction(async (tx) => {
+    const scoped: ServiceContext = { db: tx };
+    const row = orNotFound(
+      await deps.findAgentForUpdate(tx, principal.personId, agentId),
+      "Agent not found",
+    );
+    await assertOwnedConnections(scoped, principal, [connectionId], deps);
+    const scope: AgentScope = { personId: principal.personId, agentId: row.id };
+    if (row.scopeMode === "listed") {
+      await deps.removeAgentConnection(tx, scope, connectionId);
+      return {
+        agent: toAgentOutput(row),
+        connectionIds: await deps.listAgentConnectionIds(tx, scope),
+        materialised: false,
+      };
+    }
+    const rest = (await deps.listScopeConnectionIds(tx, scope)).filter((id) => id !== connectionId);
+    const updated = await deps.updateAgent(tx, principal.personId, row.id, {
+      scopeMode: "listed",
+    });
+    await deps.replaceAgentConnections(tx, scope, rest);
+    return {
+      agent: toAgentOutput(updated ?? { ...row, scopeMode: "listed" }),
+      connectionIds: rest,
+      materialised: true,
     };
   });
 }

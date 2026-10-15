@@ -119,13 +119,35 @@ export function isConnectionUsable(
   connection: ConnectionOutput,
   providers: readonly ProviderDescription[] = DEFAULT_PROVIDERS,
 ): boolean {
-  if (connection.revokedAt !== null) return false;
+  return connectionStateOf(connection, providers) === "connected";
+}
+
+/**
+ * Where a connection stands, one word: `connected` exactly when `isConnectionUsable` says so, and
+ * otherwise the first reason it is not, in the order that function asks. `provider_unavailable` is
+ * a row whose provider this deployment no longer enables, which the person cannot fix from here.
+ */
+export type ConnectionState =
+  | "connected"
+  | "revoked"
+  | "provider_unavailable"
+  | "awaiting_credential"
+  | "awaiting_consent"
+  | "consent_required";
+
+export function connectionStateOf(
+  connection: ConnectionOutput,
+  providers: readonly ProviderDescription[] = DEFAULT_PROVIDERS,
+): ConnectionState {
+  if (connection.revokedAt !== null) return "revoked";
   const provider = providers.find((candidate) => candidate.name === connection.provider);
-  if (!provider) return false;
-  if (provider.connect.kind !== "form") return true;
+  if (!provider) return "provider_unavailable";
+  if (provider.connect.kind !== "form") return "connected";
   // A `none` connection holds no credential and is usable from registration (GRA-66).
-  if (connection.credentialSetAt === null && takesCredential(connection.scheme)) return false;
-  return connection.oauth === null || connection.oauth.status === "connected";
+  if (connection.credentialSetAt === null && takesCredential(connection.scheme)) {
+    return "awaiting_credential";
+  }
+  return connection.oauth === null ? "connected" : connection.oauth.status;
 }
 
 /**
@@ -509,6 +531,13 @@ export type ConnectThroughProviderInput = {
   hosts?: readonly string[];
   /** The provider's reference for what the person connected — a broker's account id — as `complete` answered it. */
   ref: string;
+  /**
+   * The id the row takes, when the caller names one: the console connect's record id (GRA-304),
+   * so a landing repeated finds the row by that id alone and two landings cannot insert two. Named,
+   * the row is always a new one and no released row is reconnected in place, whose id would not
+   * be the record's; the console connect grants no listed agent anything either way.
+   */
+  id?: string;
 };
 
 /**
@@ -574,12 +603,14 @@ export async function connectThroughProvider(
   // provider let go (`recordProviderRelease`), and still set while the release is outstanding. The
   // hosts need not match (GRA-122; the header): the row is a candidate when the provider covers the
   // union of its hosts and the proposal's, and the most recently revoked candidate is the one.
-  const released = await releasedRowFor(
-    await deps.listConnections(ctx.db, principal.personId),
-    provider,
-    input.vendor,
-    hostSet.hosts,
-  );
+  const released = input.id
+    ? null
+    : await releasedRowFor(
+        await deps.listConnections(ctx.db, principal.personId),
+        provider,
+        input.vendor,
+        hostSet.hosts,
+      );
   const claimed = () =>
     new ServiceError(
       "CONFLICT",
@@ -613,7 +644,7 @@ export async function connectThroughProvider(
   let row: ConnectionRow;
   try {
     row = await deps.insertConnection(ctx.db, {
-      id: deps.newId(),
+      id: input.id ?? deps.newId(),
       personId: principal.personId,
       provider: provider.name,
       providerRef: input.ref,

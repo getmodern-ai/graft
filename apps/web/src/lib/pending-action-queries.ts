@@ -4,10 +4,11 @@ import type {
   CredentialAskPayload,
   ScopeAskPayload,
 } from "@graft/mcp/connection-request";
-import type { AnswerBody, PendingActionCard } from "@graft/server/api";
-import { queryOptions } from "@tanstack/react-query";
+import type { AnswerBody, DonePendingActionsOutput, PendingActionCard } from "@graft/server/api";
+import { infiniteQueryOptions, type QueryClient, queryOptions } from "@tanstack/react-query";
 
 import { api, type Jsonified } from "./api";
+import { handoffReadIsQuiet } from "./handoff-page";
 
 /**
  * Pending actions and handoffs as the console sees them (ADR 0006, ADR 0008), on GRA-23's routes
@@ -95,6 +96,8 @@ export type PendingAnswer = AnswerBody;
 
 export const pendingKeys = {
   all: ["pending-actions"] as const,
+  /** Under `all`, so every invalidation of the inbox refreshes Done too. Two parts, never a link read's three. */
+  done: ["pending-actions", "done"] as const,
   one: (id: string) => ["pending-actions", id] as const,
 };
 
@@ -102,6 +105,20 @@ export const pendingKeys = {
 export const pendingActionsQuery = queryOptions({
   queryKey: pendingKeys.all,
   queryFn: () => api<{ pendingActions: PendingAction[] }>("/pending-actions"),
+});
+
+/**
+ * Requests > Done (GRA-292's read; GRA-312): the finished asks, newest finish first, a page at a
+ * time by the server's opaque cursor, which "Show older" follows.
+ */
+export const donePendingActionsQuery = infiniteQueryOptions({
+  queryKey: pendingKeys.done,
+  queryFn: ({ pageParam }) =>
+    api<Jsonified<DonePendingActionsOutput>>(
+      `/pending-actions?state=done${pageParam ? `&cursor=${encodeURIComponent(pageParam)}` : ""}`,
+    ),
+  initialPageParam: null as string | null,
+  getNextPageParam: (page) => page.nextCursor,
 });
 
 /**
@@ -123,12 +140,79 @@ export const pendingActionQuery = (id: string, token: string) =>
     // tabs in one day (GRA-164). The page's own answer path updates the cache without a refetch.
     refetchOnWindowFocus: false,
     refetchOnReconnect: false,
+    // The page draws every refusal itself and a Retry cannot reopen a link (GRA-334).
+    meta: { quietError: handoffReadIsQuiet },
   });
 
+/** Whether a query key is a link read (`pendingActionQuery`) rather than the list. */
+export function isLinkReadKey(queryKey: readonly unknown[], id?: string): boolean {
+  return (
+    queryKey.length === 3 &&
+    queryKey[0] === pendingKeys.all[0] &&
+    (id === undefined || queryKey[1] === id)
+  );
+}
+
+/**
+ * The answer route's record: the row, not the card, so only the answer's own fields are read off
+ * it (`recordApprovalAnswer` in `@graft/mcp`'s `ask-answer.ts`).
+ */
+export type AnswerRecord = {
+  pendingAction: Pick<PendingAction, "answeredAt" | "answer" | "consumedAt">;
+};
+
 export function answerPendingAction(id: string, answer: PendingAnswer) {
-  return api<{ pendingAction: PendingAction }>(
-    `/pending-actions/${encodeURIComponent(id)}/answer`,
-    { method: "POST", body: answer },
+  return api<AnswerRecord>(`/pending-actions/${encodeURIComponent(id)}/answer`, {
+    method: "POST",
+    body: answer,
+  });
+}
+
+/**
+ * After an answer through the answer route: the link reads of this ask take the recorded answer
+ * from the reply, and every other pending read is refetched. A link read is never refetched here,
+ * because the answer route consumes a tool ask's answer in the same transaction and the agent
+ * takes the rest, so the read would answer `409 consumed` for an answer just given (GRA-334).
+ */
+export function settleAnsweredAsk(queryClient: QueryClient, id: string, record: AnswerRecord) {
+  const { answeredAt, answer, consumedAt } = record.pendingAction;
+  queryClient.setQueriesData<{ pendingAction: PendingAction }>(
+    { queryKey: pendingKeys.one(id) },
+    (current) =>
+      current
+        ? { pendingAction: { ...current.pendingAction, answeredAt, answer, consumedAt } }
+        : current,
+  );
+  void queryClient.invalidateQueries({
+    queryKey: pendingKeys.all,
+    predicate: (query) => !isLinkReadKey(query.queryKey, id),
+  });
+}
+
+/**
+ * The cached ask settled as connected, for a flow whose answer the server records out of this
+ * page's sight: an OAuth callback, a link provider's return, a credential's consent. Once the agent
+ * takes the answer every read is `409 consumed`, so without this the handoff page's fallback
+ * (`handoffAnswered`) would know nothing of the connection it just made (Greptile on #250).
+ */
+export function settleConnectedAsk(
+  queryClient: QueryClient,
+  id: string,
+  connectionId: string,
+  now: Date = new Date(),
+) {
+  queryClient.setQueriesData<{ pendingAction: PendingAction }>(
+    { queryKey: pendingKeys.one(id) },
+    (current) =>
+      current && current.pendingAction.answeredAt === null
+        ? {
+            pendingAction: {
+              ...current.pendingAction,
+              answeredAt: now.toISOString(),
+              answer: { connectionId },
+            },
+          }
+        : current,
   );
 }
 

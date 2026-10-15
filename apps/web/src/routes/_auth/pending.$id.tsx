@@ -1,49 +1,59 @@
 import { askAnsweredMessage } from "@graft/core/connection/card.rules";
+import { pendingActionIntegrationName } from "@graft/core/pending-action/pending-action.rules";
 import { useQuery } from "@tanstack/react-query";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import * as React from "react";
 
-import { AuthHeader } from "@/components/auth/auth-header";
-import { CheckCircleIcon, DangerousIcon, InfoIcon } from "@/components/icons";
+import { GraftWordmark } from "@/components/graft-wordmark";
+import {
+  CheckIcon,
+  ChevronRightIcon,
+  DangerousIcon,
+  HourglassIcon,
+  InfoIcon,
+} from "@/components/icons";
 import { Loader } from "@/components/loader";
 import { PendingActionCard } from "@/components/pending/pending-action-card";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
-import {
-  Empty,
-  EmptyDescription,
-  EmptyHeader,
-  EmptyMedia,
-  EmptyTitle,
-} from "@/components/ui/empty";
-import { ApiError } from "@/lib/api";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   afterAnswer,
-  HANDOFF_ANSWERED,
   HANDOFF_CLOSE_CHECK_MS,
   HANDOFF_CLOSE_MS,
+  type HandoffRefusal,
+  handoffAnswered,
   handoffTitle,
+  handoffView,
 } from "@/lib/handoff-page";
 import { announceConsent } from "@/lib/oauth-consent";
-import { pendingActionQuery, pendingActionsQuery } from "@/lib/pending-action-queries";
+import {
+  type PendingAction,
+  pendingActionQuery,
+  pendingActionsQuery,
+} from "@/lib/pending-action-queries";
 
 /**
  * Where a handoff URL lands (ADR 0006): `/pending/<id>?t=<token>`, the shape `@graft/mcp`'s
  * `handoff.ts` builds. The server verifies the token against the row and the session against the
- * owner; a tampered, expired or already-used link is a refusal page that answers nothing, and the
- * action is shown only when the link is the one Graft issued for it. Without a token — a deep link
- * followed by hand — the action is read from the person's open list instead.
+ * owner; a tampered, expired, closed or already-used request is a refusal page that answers
+ * nothing, and the action is shown only when the URL is the one Graft issued for it. Without a
+ * token — a deep link followed by hand — the action is read from the person's open list instead.
  *
  * **A focused page, not the console** (GRA-144; ADR 0006 as amended 2026-09-21). This route sits
  * under the guard (`_auth`, so a signed-out visit signs in and comes back) but outside the shell
- * (`_auth/_shell`): a person who was in a terminal or a chat a moment ago sees one ask under the
- * mark, with the console one link away, and nothing else. The console's own inbox is the list at
- * `/pending`, which renders every open ask inline with the chrome and never navigates here.
+ * (`_auth/_shell`): a person who was in a terminal or a chat a moment ago sees one request under
+ * the mark, with the console one button away, and nothing else. The console's own list is
+ * `/pending`, which renders every open ask inline with the chrome and never navigates here. Every
+ * kind draws its `focused` layout (GRA-314, frames 03c to 03e): the agent's and the integration's
+ * marks, the question, *Full access / Ask me first* or how much a tool's yes allows. A secret is
+ * still typed here and nowhere else (ADR 0004).
  *
- * Once answered, a link visit closes itself (`lib/handoff-page.ts` decides): the card popup tells
- * its opener first, at this origin, under `from=card` (GRA-118; `card.rules.ts`); a tab the person
- * opened by hand cannot be closed by script, so a page still up a moment later shows the answered
- * state instead. A console visit goes back to the list, as it always did.
+ * Once answered, a handoff visit closes itself (`lib/handoff-page.ts` decides): the card popup
+ * tells its opener first, at this origin, under `from=card` (GRA-118; `card.rules.ts`); a tab the
+ * person opened by hand cannot be closed by script, so a page still up a moment later shows the
+ * answered page instead (frame 10c, GRA-287's sixth decision). A console visit goes back to the
+ * list, as it always did.
  */
 export const Route = createFileRoute("/_auth/pending/$id")({
   validateSearch: (search: Record<string, unknown>): { t?: string; from?: "card" } => ({
@@ -56,28 +66,6 @@ export const Route = createFileRoute("/_auth/pending/$id")({
   component: PendingActionRoute,
 });
 
-/** The refusal's headline by the server's `details.reason`, else by its status. */
-function handoffRefusal(error: unknown): { title: string; message: string } {
-  if (error instanceof ApiError) {
-    const reason =
-      typeof error.details === "object" && error.details !== null && "reason" in error.details
-        ? String((error.details as { reason: unknown }).reason)
-        : null;
-    const title =
-      reason === "tampered"
-        ? "This link is not one Graft issued"
-        : reason === "expired"
-          ? "This link has expired"
-          : reason === "consumed"
-            ? "This link was already used"
-            : error.status === 404
-              ? "There is no such pending action"
-              : "This link cannot be opened";
-    return { title, message: error.message };
-  }
-  return { title: "This link cannot be opened", message: "Could not reach the server." };
-}
-
 function PendingActionRoute() {
   const { id } = Route.useParams();
   const search = Route.useSearch();
@@ -85,6 +73,8 @@ function PendingActionRoute() {
   const fromCard = from === "card";
   const navigate = useNavigate();
   const [closeRefused, setCloseRefused] = React.useState(false);
+  // Set once this page's answer succeeded: a later read refused as consumed is that answer taken.
+  const [answeredHere, setAnsweredHere] = React.useState(false);
 
   const byLink = useQuery({ ...pendingActionQuery(id, t ?? ""), enabled: t !== undefined });
   const fromList = useQuery({ ...pendingActionsQuery, enabled: t === undefined });
@@ -100,8 +90,9 @@ function PendingActionRoute() {
   }, [action?.agent?.name]);
 
   // The card stays on screen and re-reads as settled, so the person sees the sentence before the
-  // page goes; a browser that refuses to close a hand-opened tab leaves the answered state instead.
+  // page goes; a browser that refuses to close a hand-opened tab leaves the answered page instead.
   const onAnswered = () => {
+    setAnsweredHere(true);
     const next = afterAnswer(search);
     if (next.kind === "back-to-list") {
       void navigate({ to: "/pending" });
@@ -124,32 +115,49 @@ function PendingActionRoute() {
 
   let content: React.ReactNode;
   if (closeRefused) {
-    content = <Answered />;
+    content = <Answered action={action} />;
   } else if (t !== undefined) {
-    content = byLink.isPending ? (
-      <Loader />
-    ) : byLink.error || !action ? (
-      <Refusal {...handoffRefusal(byLink.error)} />
-    ) : (
-      <PendingActionCard action={action} onAnswered={onAnswered} />
-    );
+    const view = handoffView({
+      pending: byLink.isPending,
+      error: byLink.error,
+      action,
+      answeredHere,
+    });
+    content =
+      view.kind === "loading" ? (
+        <Loader />
+      ) : view.kind === "answered" ? (
+        <Answered action={action} />
+      ) : view.kind === "refused" ? (
+        <Refusal kind={view.refusal} title={view.title} message={view.message} />
+      ) : (
+        <PendingActionCard action={view.action} onAnswered={onAnswered} layout="focused" />
+      );
   } else if (fromList.isPending) {
     content = <Loader />;
   } else if (!action) {
     content = (
       <Refusal
-        title="This ask is no longer open"
+        kind="refused"
+        title="This request is no longer open"
         message="It was answered, expired, or belongs to another account."
       />
     );
   } else {
-    content = <PendingActionCard action={action} onAnswered={onAnswered} />;
+    content = <PendingActionCard action={action} onAnswered={onAnswered} layout="focused" />;
   }
 
   return (
-    <main className="flex min-h-svh flex-col">
-      <AuthHeader />
-      <div className="mx-auto flex w-full max-w-3xl flex-1 flex-col gap-4 p-4 md:p-6">
+    <main className="flex min-h-svh flex-col bg-muted/30">
+      <header className="flex h-14 shrink-0 items-center px-4 md:px-6">
+        <GraftWordmark className="h-5" />
+        <div className="flex-1" />
+        <Button variant="ghost" size="sm" nativeButton={false} render={<Link to="/" />}>
+          Open Graft
+          <ChevronRightIcon />
+        </Button>
+      </header>
+      <div className="mx-auto flex w-full max-w-[520px] flex-1 flex-col justify-center gap-4 px-4 pt-4 pb-16">
         {fromCard && action && !closeRefused ? (
           <Alert>
             <InfoIcon />
@@ -161,56 +169,102 @@ function PendingActionRoute() {
           </Alert>
         ) : null}
         {content}
-        {!closeRefused ? (
-          <p className="text-center text-muted-foreground text-sm">
-            <Link to="/pending" className="underline underline-offset-4">
-              Every pending action, in the console
-            </Link>
-          </p>
-        ) : null}
       </div>
     </main>
   );
 }
 
-/** The link visit's end when the browser would not close the tab: done, and where the record is. */
-function Answered() {
+/** The frames' centred card for a page with one thing to say: an icon, a title, a sentence. */
+function StatusCard({
+  icon,
+  title,
+  message,
+  children,
+}: {
+  icon: React.ReactNode;
+  title: string;
+  message: string;
+  children?: React.ReactNode;
+}) {
   return (
-    <Empty className="mx-auto h-full max-w-md px-4">
-      <EmptyHeader>
-        <EmptyMedia variant="icon">
-          <CheckCircleIcon />
-        </EmptyMedia>
-        <EmptyTitle>{HANDOFF_ANSWERED.title}</EmptyTitle>
-        <EmptyDescription>{HANDOFF_ANSWERED.message}</EmptyDescription>
-      </EmptyHeader>
-      <Button variant="outline" nativeButton={false} render={<Link to="/pending" />}>
-        Open Pending actions
-      </Button>
-    </Empty>
+    <Card className="w-full gap-5 p-6 md:p-8">
+      <CardHeader className="flex flex-col items-center gap-4 px-0 text-center">
+        <span
+          aria-hidden="true"
+          className="flex size-10 items-center justify-center rounded-full bg-muted text-foreground [&_svg]:size-4"
+        >
+          {icon}
+        </span>
+        <div className="flex flex-col gap-1.5">
+          <CardTitle className="text-balance text-lg">{title}</CardTitle>
+          <CardDescription className="text-balance text-sm">{message}</CardDescription>
+        </div>
+      </CardHeader>
+      <CardContent className="flex flex-col gap-3 px-0">{children}</CardContent>
+    </Card>
   );
 }
 
 /**
- * The refusal page: what the link was, why it does not open, and that nothing was answered. The
- * frame and voice are `RouteNotFound`'s — the server's sentence, then the reassurance after the
- * dash — with the server's own full stop lifted so the two read as one sentence.
+ * The handoff visit's end when the browser would not close the tab (frame 10c): what the answer
+ * did, where to go next, the access the answer recorded with Change beside it, and Open Graft.
  */
-function Refusal({ title, message }: { title: string; message: string }) {
+function Answered({ action }: { action: PendingAction | undefined }) {
+  const answered = handoffAnswered(
+    action
+      ? {
+          kind: action.kind,
+          agentName: action.agent?.name ?? null,
+          integrationName: pendingActionIntegrationName(action.payload),
+          answer: action.answer,
+        }
+      : null,
+  );
   return (
-    <Empty className="mx-auto h-full max-w-md px-4">
-      <EmptyHeader>
-        <EmptyMedia variant="icon">
-          <DangerousIcon />
-        </EmptyMedia>
-        <EmptyTitle>{title}</EmptyTitle>
-        <EmptyDescription>
-          {message.replace(/\.$/, "")} — nothing has been approved or declined.
-        </EmptyDescription>
-      </EmptyHeader>
-      <Button variant="outline" nativeButton={false} render={<Link to="/pending" />}>
-        See every pending action
+    <StatusCard icon={<CheckIcon />} title={answered.title} message={answered.message}>
+      {answered.access && action ? (
+        <div className="flex items-center gap-2 rounded-lg bg-muted/50 py-1.5 pr-1.5 pl-3 text-muted-foreground text-xs">
+          <span className="flex-1">{answered.access}</span>
+          <Button
+            variant="ghost"
+            size="sm"
+            nativeButton={false}
+            render={<Link to="/agents/$agentId" params={{ agentId: action.agentId }} />}
+          >
+            Change
+          </Button>
+        </div>
+      ) : null}
+      <Button variant="outline" nativeButton={false} render={<Link to="/" />}>
+        Open Graft
       </Button>
-    </Empty>
+    </StatusCard>
+  );
+}
+
+/**
+ * The refusal page (frame 10d for an expired or closed request): what the request was and why it
+ * does not open. The sentence is `handoffRefusal`'s, which says nothing was answered only where
+ * that is true.
+ */
+function Refusal({
+  kind,
+  title,
+  message,
+}: {
+  kind: HandoffRefusal["kind"];
+  title: string;
+  message: string;
+}) {
+  return (
+    <StatusCard
+      icon={kind === "expired" ? <HourglassIcon /> : <DangerousIcon />}
+      title={title}
+      message={message}
+    >
+      <Button variant="outline" nativeButton={false} render={<Link to="/pending" />}>
+        See open requests
+      </Button>
+    </StatusCard>
   );
 }

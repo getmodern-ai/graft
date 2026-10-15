@@ -27,8 +27,14 @@ export type AnalyticsEvent =
   // The console, at the API's mutation routes
   | "agent_created"
   | "agent_revoked"
+  // An active static-token agent's token rotated in the console (GRA-306). No property: the token
+  // and its prefix are never an event's.
+  | "agent_token_rotated"
   | "mcp_client_consented"
   | "connection_created"
+  // The console connect, with no agent asking (GRA-304): `kind` (connected | form | link),
+  // `access` (full | ask), and `created` (whether a row was made at once).
+  | "connection_started"
   | "connection_confirmed"
   | "credential_entered"
   | "connection_revoked"
@@ -36,6 +42,9 @@ export type AnalyticsEvent =
   | "scope_changed"
   | "model_key_set"
   | "model_key_removed"
+  // A first password for a social-only account (GRA-298), at `POST /me/password`. No properties.
+  // A change of an existing one is Better Auth's own route and is not counted.
+  | "password_set"
   // Setup (ADR 0024; GRA-204), at its routes: the start, on the harness step, and the skip. Property
   // `harness`: the harness picked, or null when Setup adopted an agent that already existed or was
   // skipped before a harness was picked. `setup_step_completed` (GRA-206) carries `step` too, the
@@ -76,6 +85,11 @@ export type AnalyticsEvent =
   // was never a blob, and junk under an agent the database no longer holds (GRA-195) is cleared
   // without one too, since there is no person to name.
   | "blob_swept"
+  // An `acquire` job the console started outside Setup (GRA-303; ADR 0024 as amended 2026-10-14),
+  // at `POST /connections/:id/acquire`: `job_id` and `agent_id`, never the goal. An agent's own
+  // start is its `tool_called`, and Setup's is `setup_step_completed` with `step: goal`; every job's
+  // end is `acquire_completed` or `acquire_failed` below, whoever started it.
+  | "acquire_started"
   | "acquire_completed"
   | "acquire_failed";
 

@@ -8,21 +8,33 @@ import { toast } from "sonner";
 import { OpenInNewIcon, WarningIcon } from "@/components/icons";
 import {
   AskCard,
+  type AskLayout,
   type AskOrigin,
   Hosts,
   ProposalSource,
   useAnswerAsk,
 } from "@/components/pending/ask-card";
 import { BuildApprovalItem } from "@/components/pending/build-approval-item";
+import { ChoiceCards } from "@/components/pending/choice-cards";
 import { VendorToolsItem } from "@/components/pending/vendor-tools-item";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
+import {
+  type AccessChoice,
+  accessChoiceSent,
+  accessLegend,
+  accessOptions,
+  DEFAULT_ACCESS_CHOICE,
+} from "@/lib/access-choice";
 import { agentKeys } from "@/lib/agent-queries";
 import { ApiError, api } from "@/lib/api";
+import { approvalKeys } from "@/lib/approval-queries";
 import { connectedSettledSentence, connectedToastDescription } from "@/lib/ask-answered-copy";
+import { connectionChoicesSent, connectionChoicesShown } from "@/lib/connection-choices";
 import { type Connection, connectionKeys } from "@/lib/connection-queries";
+import { proposalLead, proposalSummary } from "@/lib/handoff-copy";
 import { openConsentPopup } from "@/lib/oauth-consent";
 import {
   type Ask,
@@ -30,6 +42,7 @@ import {
   isOpen,
   type PendingAction,
   pendingKeys,
+  settleConnectedAsk,
 } from "@/lib/pending-action-queries";
 import {
   awaitLink,
@@ -58,18 +71,23 @@ import { providerLabel } from "@/lib/provider-name";
  * until the return — and the server signs it into the link's state, so the return records it with
  * the connection it makes. The line for the integration's tools under it (GRA-239; the amendment
  * of 2026-10-09), on by default, rides the same state and is recorded on the same return.
+ * Setup's compact card draws the tools line too and not the build choice, and sends only what it
+ * draws (`lib/connection-choices.ts`, GRA-274).
  */
 export function ProviderLinkAskCard({
   ask,
   onAnswered,
   origin = "agent",
   setupFooter,
+  layout = "card",
 }: {
   ask: Extract<Ask, { kind: "connection-link" }>;
   onAnswered?: () => void;
   /** Setup's connect step passes `setup`: no model provenance (`ask-card.tsx`, `AskOrigin`). */
   origin?: AskOrigin;
   setupFooter?: React.ReactNode;
+  /** The handoff page's `focused` (GRA-314): *Full access / Ask me first* for the two lines. */
+  layout?: AskLayout;
 }) {
   const { action, payload } = ask;
   const queryClient = useQueryClient();
@@ -77,11 +95,18 @@ export function ProviderLinkAskCard({
   const [state, setState] = useState<LinkState>({ phase: "idle" });
   const [approveBuild, setApproveBuild] = useState(true);
   const [allowVendor, setAllowVendor] = useState(true);
+  const [access, setAccess] = useState<AccessChoice>(DEFAULT_ACCESS_CHOICE);
   const stop = useRef<AbortController | null>(null);
-  const provider = payload.provider;
+  const provider = providerLabel(payload.provider);
   const target = payload.providerTarget ?? null;
   const agentName = action.agent?.name ?? "the agent";
   const integrationName = integrationNameFor(payload.vendor, payload.displayName);
+  // What the link carries: a line the card does not draw is never sent as a yes (GRA-274).
+  const shown = connectionChoicesShown({ origin });
+  const sent =
+    layout === "focused"
+      ? accessChoiceSent(access, shown)
+      : connectionChoicesSent(shown, { approveBuild, allowVendor });
 
   const settleAndRefresh = useCallback(
     (outcome: LinkOutcome, message: string, connectionId: string | null) => {
@@ -89,14 +114,17 @@ export function ProviderLinkAskCard({
       queryClient.invalidateQueries({ queryKey: pendingKeys.all });
       queryClient.invalidateQueries({ queryKey: connectionKeys.all });
       queryClient.invalidateQueries({ queryKey: agentKeys.all });
+      queryClient.invalidateQueries({ queryKey: approvalKeys.vendorsOfAgent(action.agentId) });
+      queryClient.invalidateQueries({ queryKey: approvalKeys.buildsOfAgent(action.agentId) });
       if (outcome === "connected") {
+        if (connectionId) settleConnectedAsk(queryClient, action.id, connectionId);
         toast.success(`${payload.displayName} is connected through ${provider}`, {
           description: connectedToastDescription({
             origin,
             agentName,
-            approveBuild,
+            approveBuild: sent.approveBuild,
             provider,
-            ...(allowVendor ? { vendorTools: integrationName } : {}),
+            ...(sent.allowVendor ? { vendorTools: integrationName } : {}),
           }),
         });
         onAnswered?.();
@@ -105,11 +133,13 @@ export function ProviderLinkAskCard({
     },
     [
       queryClient,
+      action.id,
+      action.agentId,
       payload.displayName,
       provider,
       agentName,
-      approveBuild,
-      allowVendor,
+      sent.approveBuild,
+      sent.allowVendor,
       integrationName,
       onAnswered,
       origin,
@@ -117,12 +147,12 @@ export function ProviderLinkAskCard({
   );
 
   const start = useMutation({
-    mutationFn: () => startProviderLink(action.id, { approveBuild, allowVendor }),
+    mutationFn: () => startProviderLink(action.id, sent),
     onSuccess: async (started) => {
       if ("fallback" in started) {
         // The provider could not start its sign-in and the ask is the keyring's form now
         // (GRA-147): re-read it, and this card gives way to the form in place.
-        toast.message(`${started.provider} could not start the sign-in`, {
+        toast.message(`${providerLabel(started.provider)} could not start the sign-in`, {
           description: `${payload.displayName} is connected on Graft's own page instead. The form is below.`,
         });
         await queryClient.invalidateQueries({ queryKey: pendingKeys.all });
@@ -140,7 +170,7 @@ export function ProviderLinkAskCard({
       setState({ phase: "running" });
       const { outcome, message, connectionId } = await awaitLink({
         popup,
-        pendingActionId: action.id,
+        match: action.id,
         isSettled: () => readSettled(action, payload),
         signal: controller.signal,
       });
@@ -175,9 +205,84 @@ export function ProviderLinkAskCard({
           footer: setupFooter,
         }}
       >
+        {shown.allowVendor ? (
+          <VendorToolsItem
+            id={`ask-${action.id}-allow-vendor`}
+            integrationName={integrationName}
+            checked={allowVendor}
+            onCheckedChange={setAllowVendor}
+            disabled={busy}
+          />
+        ) : null}
         {state.phase === "idle" ? null : (
           <LinkStatus state={state} provider={providerName} onCancel={cancel} />
         )}
+      </AskCard>
+    );
+  }
+
+  if (layout === "focused") {
+    const asker = action.agent?.name ?? "Your agent";
+    return (
+      <AskCard
+        action={action}
+        title={null}
+        settled={(recorded) =>
+          typeof recorded?.connectionId === "string"
+            ? connectedSettledSentence({ origin, provider })
+            : "Declined. Nothing was connected; the agent is told so."
+        }
+        approveLabel={running ? "Waiting for the sign-in" : `Sign in with ${payload.displayName}`}
+        pending={busy}
+        onAnswer={(allow) => (allow ? start.mutate() : decline.mutate({ allow: false }))}
+        focused={{
+          vendor: payload.vendor,
+          integrationName,
+          question: `Connect ${payload.displayName} for ${asker}?`,
+          lead: proposalLead({
+            agentName: asker,
+            integrationName,
+            docsUrl: payload.docsUrl,
+            finish: "link",
+            provider,
+          }),
+          summary: proposalSummary({
+            primaryHost: payload.primaryHost,
+            scheme: payload.scheme,
+            integrationName,
+            docsUrl: payload.docsUrl,
+            provider,
+          }),
+          details: {
+            label: "Details",
+            content: (
+              <>
+                <ProposalSource
+                  origin={origin}
+                  agentName={action.agent?.name ?? null}
+                  note={payload.note}
+                  docsUrl={payload.docsUrl}
+                />
+                <p className="text-muted-foreground text-xs">
+                  The account's token stays with {provider}, and Graft stores only the account's id
+                  and relays every call for this connection through {provider}. Nothing is typed
+                  here, and nothing secret is stored in Graft. It reaches{" "}
+                  <Hosts hosts={payload.hosts} />.
+                </p>
+              </>
+            ),
+          },
+        }}
+      >
+        <ChoiceCards
+          id={`ask-${action.id}-access`}
+          legend={accessLegend(asker)}
+          options={accessOptions(asker, integrationName)}
+          value={access}
+          onValueChange={setAccess}
+          disabled={busy}
+        />
+        <LinkStatus state={state} provider={provider} onCancel={cancel} />
       </AskCard>
     );
   }
@@ -216,7 +321,12 @@ export function ProviderLinkAskCard({
       pending={busy}
       onAnswer={(allow) => (allow ? start.mutate() : decline.mutate({ allow: false }))}
     >
-      <ProposalSource origin={origin} note={payload.note} docsUrl={payload.docsUrl} />
+      <ProposalSource
+        origin={origin}
+        agentName={action.agent?.name ?? null}
+        note={payload.note}
+        docsUrl={payload.docsUrl}
+      />
 
       <dl className="grid gap-x-6 gap-y-1 text-sm sm:grid-cols-[auto_1fr]">
         <dt className="text-muted-foreground">Primary host</dt>

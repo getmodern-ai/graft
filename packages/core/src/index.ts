@@ -30,6 +30,14 @@ export {
   TRACE_READ_LIMIT,
   TRACE_TEXT_MAX_LENGTH,
 } from "./acquire-job/acquire-job.service";
+export {
+  CONNECTION_ACQUIRE_JOBS_LIMIT,
+  CONNECTION_ACQUIRE_JOBS_WINDOW_MS,
+  type ConsoleAcquireDeps,
+  listConnectionAcquireJobs,
+  type StartConsoleAcquireInput,
+  startConsoleAcquire,
+} from "./acquire-job/console-acquire.service";
 export { withoutNul } from "./acquire-job/json-safe";
 export {
   GENERIC_SECRET_FIELD_NAMES,
@@ -40,15 +48,30 @@ export {
   redactValue,
   secretFieldNamesFor,
 } from "./acquire-job/redaction";
+export { type ActivityDeps, defaultActivityDeps } from "./activity/activity.deps";
+export {
+  ACTIVITY_PAGE,
+  type ActivityInput,
+  type ActivityPage,
+  AGENT_STATS_WINDOW_DAYS,
+  type AgentActivityStats,
+  decodeActivityCursor,
+  encodeActivityCursor,
+  getAgentActivityStats,
+  listActivity,
+  MAX_ACTIVITY_PAGE,
+} from "./activity/activity.service";
 export { type AgentDeps, defaultAgentDeps } from "./agent/agent.deps";
 export {
   type ActiveAgentScope,
   AGENT_NAME_MAX_LENGTH,
   type AgentConnectedViaOutput,
   type AgentLimitsPatch,
+  type AgentListAnswer,
   type AgentListOutput,
   type AgentOutput,
   type AgentScopeMode,
+  type AgentScopeToggleOutput,
   addConnectionToAgentScope,
   type CreateAgentForClientInput,
   type CreateAgentInput,
@@ -62,7 +85,9 @@ export {
   issueAwaitingAgentToken,
   listActiveAgentScopes,
   listAgents,
+  removeConnectionFromAgentScope,
   revokeAgent,
+  rotateAgentToken,
   type SetAgentScopeInput,
   setAgentScope,
   toAgentOutput,
@@ -83,6 +108,7 @@ export {
   type AskedVersion,
   allowVendor,
   allowVendorWhenConnecting,
+  type ConsoleApprovalResult,
   decideToolCall,
   getApproval,
   getBuildApproval,
@@ -90,10 +116,15 @@ export {
   grantBuildApproval,
   isForVersion,
   listApprovals,
+  listBuildApprovals,
   listVendorApprovals,
   revokeApproval,
+  SETTING_ANSWER_VIA,
   setApproval,
+  setApprovalFromConsole,
   setAskEveryCall,
+  setVendorApprovalDestructive,
+  withdrawBuildApproval,
   withdrawVendorApproval,
 } from "./approval/approval.service";
 export {
@@ -173,11 +204,14 @@ export {
   validateIssuedCredentialFields,
   validateSchemeConfig,
   validateVendor,
+  vendorSlugOf,
 } from "./connection/connection.rules";
 export {
   type ConnectionOutput,
+  type ConnectionState,
   type ConnectThroughProviderInput,
   completeOAuthConsent,
+  connectionStateOf,
   connectThroughProvider,
   getConnection,
   isConnectionUsable,
@@ -204,6 +238,16 @@ export {
   widenKeylessConnectionHosts,
   widenProviderConnectionHosts,
 } from "./connection/connection.service";
+export {
+  type ConnectionAccessDeps,
+  defaultConnectionAccessDeps,
+} from "./connection/connection-access.deps";
+export {
+  type AgentConnectionAccess,
+  type ConnectionAccess,
+  type ConnectionAccessToolApproval,
+  getConnectionAccess,
+} from "./connection/connection-access.service";
 export {
   DIRECTORY_PAGE_LIMIT,
   type DirectoryCategory,
@@ -238,10 +282,14 @@ export {
   readLinkCallbackSearch,
 } from "./connection/link.rules";
 export {
+  type ConsoleLinkStatePayload,
+  type ConsoleLinkStateVerdict,
   LINK_STATE_TTL_MS,
   type LinkStatePayload,
   type LinkStateVerdict,
+  signConsoleLinkState,
   signLinkState,
+  verifyConsoleLinkState,
   verifyLinkState,
 } from "./connection/link-state";
 export {
@@ -294,11 +342,22 @@ export {
   type ProviderLinkStart,
   type ProviderLinkStarted,
   type ProviderResolution,
+  providerDisplayName,
   providerFor,
   providerLinkOf,
   providerListProblem,
   providerNamed,
 } from "./connection/provider";
+export {
+  defaultSuggestedIntegrationDeps,
+  listSuggestedIntegrations,
+  SUGGESTED_INTEGRATIONS_LIMIT,
+  SUGGESTED_LOGO_TIMEOUT_MS,
+  type SuggestedAskState,
+  type SuggestedIntegration,
+  type SuggestedIntegrationDeps,
+  suggestedAskState,
+} from "./connection/suggested.service";
 export type { ServiceContext } from "./context";
 export {
   HTTP_STATUS_BY_CODE,
@@ -307,6 +366,15 @@ export {
   ServiceError,
   type ServiceErrorCode,
 } from "./errors";
+export { createIntegrationDeps, type IntegrationDeps } from "./integration/integration.deps";
+export {
+  type IntegrationAgentOutput,
+  type IntegrationAttentionReason,
+  type IntegrationConnectionOutput,
+  type IntegrationOutput,
+  listIntegrations,
+  worstAttention,
+} from "./integration/integration.service";
 export { isKebabCase } from "./kebab-case";
 export { defaultLedgerDeps, type LedgerDeps } from "./ledger/ledger.deps";
 export {
@@ -398,14 +466,28 @@ export {
   type PendingActionDeps,
 } from "./pending-action/pending-action.deps";
 export {
+  type PendingActionDoneState,
+  type PendingActionSubject,
+  pendingActionDoneState,
+  pendingActionFinishedAt,
+  pendingActionIntegrationName,
+  pendingActionSubject,
+} from "./pending-action/pending-action.rules";
+export {
   answerPendingAction,
   type CreatePendingActionInput,
   consumePendingAction,
   createPendingAction,
   DEFAULT_PENDING_ACTION_TTL_MS,
+  DONE_PENDING_ACTIONS_PAGE,
+  type DonePendingActionsPage,
+  decodeDoneCursor,
+  encodeDoneCursor,
   getPendingAction,
   getPendingActionForPerson,
+  listDonePendingActions,
   listOpenPendingActions,
+  MAX_DONE_PENDING_ACTIONS_PAGE,
   MAX_PENDING_ACTION_TTL_MS,
 } from "./pending-action/pending-action.service";
 export {
@@ -417,6 +499,14 @@ export {
   type SetupHarnessKind,
   setupHarnessOf,
 } from "./setup/harness";
+export {
+  type ReadyMadeCatalogueEntry,
+  readyMadeKey,
+  readyMadeWireName,
+  SETUP_READY_MADE_MAX,
+  type SetupReadyMadeTool,
+  setupReadyMade,
+} from "./setup/ready-made";
 export { defaultSetupDeps, type SetupDeps } from "./setup/setup.deps";
 export {
   type AgentHarnessFields,
@@ -456,12 +546,15 @@ export {
   type SetupOutput,
   type SetupPlanMove,
   type SetupState,
+  type SetupStockDeps,
+  type SetupStockTool,
   type StartSetupAgentInput,
   type StartSetupBuildInput,
   type StartSetupInput,
   skipSetup,
   startSetup,
   startSetupBuild,
+  takeSetupStockTool,
   toSetupOutput,
 } from "./setup/setup.service";
 export {
@@ -480,6 +573,7 @@ export {
   type SetupVendorOption,
   STARTER_VENDOR_IDS,
   STARTER_VENDORS,
+  type StarterReadyMade,
   type StarterRunInput,
   type StarterTask,
   type StarterVendor,
@@ -535,6 +629,15 @@ export {
   requirePerson,
   type SessionLike,
 } from "./tenancy";
+export {
+  defaultIntegrationToolsDeps,
+  type IntegrationToolsDeps,
+} from "./tool/integration-tools.deps";
+export {
+  type IntegrationTool,
+  type IntegrationToolLastRun,
+  listIntegrationTools,
+} from "./tool/integration-tools.service";
 export { defaultToolDeps, type ToolDeps } from "./tool/tool.deps";
 export {
   activateToolVersion,

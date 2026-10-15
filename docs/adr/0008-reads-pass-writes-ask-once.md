@@ -188,3 +188,28 @@ the reviewed table beside the reads, `packages/proxy/src/destructive-endpoints.t
 and voids, Slack's `chat.delete`, Gmail's `batchDelete`), judged by `isDestructiveRequest` in the
 same module for the check's `destructive` annotation and the dry-run preview's label; a relative
 path matches an entry under any base path, so the check errs toward destructive.
+
+## Amendment 2026-10-14: the console's answers, and access chosen when connecting
+
+Decided by Aleks (GRA-283), for the console redesign (GRA-282 to GRA-331).
+
+- **A tool's ask leads with the integration.** Its Allow menu offers "every <integration> tool",
+  "just <tool>", Deny and the full request, with the first pre-selected, as the connection
+  confirmation already pre-ticks it (2026-10-09). It never includes destructive tools unless the
+  person picks the line that says so; on a destructive tool's ask that line is the only
+  integration-wide choice, since the narrower one would not cover the tool asked about.
+- **There is no allow for one call.** "Just this once" is not offered, here or on the card: every
+  allow is a standing one, as the 2026-09-15 amendment says, and a person who wants to be asked
+  again sets the tool to ask every time.
+- **The console may set an answer outright**, per agent: allow or deny a tool for the version it
+  runs now (the 2026-10-09 rules on versions hold), withdraw it, widen an integration's allow to
+  its destructive tools or narrow it back. It is the person's answer, given on Graft's page (ADR
+  0004, ADR 0006). There is still no setting of a tool for every agent at once: an integration's
+  page summarises the agents' answers and is edited per agent.
+- **Access chosen when the person connects with no agent asking.** The connect dialog offers
+  "Full access" (every agent that can use the new connection gets its build approval and an allow
+  for every non-destructive tool of the integration) or "Ask me first" (nothing recorded, so each
+  agent asks as before). It records the same rows the connection confirmation does, for the agents
+  in scope at that moment; an agent that gains the connection later asks.
+
+**Unchanged.** Reads never ask. A tool set to ask every call keeps asking whatever else stands.

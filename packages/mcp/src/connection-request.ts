@@ -215,11 +215,13 @@ export type ScopeAskPayload = {
 };
 
 /**
- * What the console records on a `scope` ask (GRA-104): the person's yes or no, and whether they
- * left the build choice on. Recorded verbatim, as a tool ask's answer is — the connection is the
- * payload's, not the answer's — and read by `readScopeAnswer`.
+ * What the console records on a `scope` ask (GRA-104): the person's yes or no, whether they
+ * left the build choice on, and whether the yes also allows the integration's tools, destructive
+ * ones left out (the handoff page's *Full access*, GRA-314; ADR 0008 as amended 2026-10-14).
+ * Recorded verbatim, as a tool ask's answer is — the connection is the payload's, not the
+ * answer's — and read by `readScopeAnswer`.
  */
-export type ScopeAnswer = { allow: boolean; approveBuild?: boolean };
+export type ScopeAnswer = { allow: boolean; approveBuild?: boolean; allowVendor?: boolean };
 
 /**
  * What the console records on either action once the secret is in the vault: the connection the
@@ -229,7 +231,7 @@ export type ScopeAnswer = { allow: boolean; approveBuild?: boolean };
 export type ConnectionAnswer = { connectionId: string };
 
 export const PROPOSAL_PROVENANCE_NOTE =
-  "This proposal was written by the agent's model from the documentation it read. Check the hosts and the documentation link before entering a secret: the credential will be sent to every host listed, and to nothing else.";
+  "The agent proposed this connection, from documentation it read or from a ready-made tool's details. Check the hosts and the documentation link before entering a secret: the credential will be sent to every host listed, and to nothing else.";
 
 /**
  * What every awaiting answer says about the build approval (GRA-75; ADR 0008, amendment of
@@ -244,7 +246,7 @@ export const BUILD_APPROVAL_ON_THE_PAGE =
 
 /** The same provenance for a link provider's ask, where nothing is entered and the calls are relayed (GRA-59). */
 export const LINK_PROVENANCE_NOTE =
-  "This proposal was written by the agent's model from the documentation it read. Check the hosts and the documentation link before connecting: calls for this connection will be relayed to every host listed, and to nothing else.";
+  "The agent proposed this connection, from documentation it read or from a ready-made tool's details. Check the hosts and the documentation link before connecting: calls for this connection will be relayed to every host listed, and to nothing else.";
 
 /** What either tool answers once the connection can be called through — and nothing about a secret. */
 export type Connected = {
@@ -351,6 +353,7 @@ export function readScopeAnswer(answer: Record<string, unknown> | null | undefin
   return {
     allow: answer?.allow === true,
     ...(typeof answer?.approveBuild === "boolean" ? { approveBuild: answer.approveBuild } : {}),
+    ...(typeof answer?.allowVendor === "boolean" ? { allowVendor: answer.allowVendor } : {}),
   };
 }
 
@@ -1090,7 +1093,7 @@ function awaitConnectionAsk(
 
 /** The provenance sentence on a widening ask (GRA-167): the row is the person's; the hosts are the model's. */
 const WIDENING_NOTE =
-  "The added hosts were proposed by the agent's model from the documentation it read, or from where the vendor sent its calls. The connection itself is one you already made. Check the added hosts before confirming: calls for this connection will reach every host listed, and nothing else.";
+  "The added hosts were proposed by the agent, from documentation it read, a ready-made tool's details, or where the integration sent its calls. The connection itself is one you already made. Check the added hosts before confirming: calls for this connection will reach every host listed, and nothing else.";
 
 /**
  * The widening ask (GRA-167; ADR 0006 as amended 2026-09-22): a `connection` ask whose payload is

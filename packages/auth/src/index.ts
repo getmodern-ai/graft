@@ -11,6 +11,8 @@ import {
 import { betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
 
+import { MAX_PASSWORD_LENGTH, MIN_PASSWORD_LENGTH } from "./password.rules";
+
 /**
  * `@graft/auth` — the **person**'s account (CONTEXT.md, ADR 0007), on Better Auth over drizzle.
  *
@@ -190,6 +192,9 @@ export function createAuth(options: CreateAuthOptions) {
       : {}),
     emailAndPassword: {
       enabled: true,
+      // Better Auth's defaults, named in `password.rules.ts` so the console's fields read the same.
+      minPasswordLength: MIN_PASSWORD_LENGTH,
+      maxPasswordLength: MAX_PASSWORD_LENGTH,
       /**
        * Registering opens no session until the address is verified — GRA-94, amending ADR 0020.
        *
@@ -383,6 +388,13 @@ export function createAuth(options: CreateAuthOptions) {
          */
         enabled: true,
         requireLocalEmailVerified: true,
+        /**
+         * A provider linked from Settings by a signed-in person may carry another address
+         * (GRA-287 item 8; ADR 0020 as amended 2026-10-14). Better Auth reads this only on the
+         * explicit link, whose state names the session's person, never on a sign-in, so it adds
+         * no way into an account the person does not already hold.
+         */
+        allowDifferentEmails: true,
       },
     },
     advanced: {
@@ -404,3 +416,41 @@ export type Auth = ReturnType<typeof createAuth>;
 
 /** A resolved session — what `auth.api.getSession` answers, null when no cookie names a live one. */
 export type Session = NonNullable<Awaited<ReturnType<Auth["api"]["getSession"]>>>;
+
+export { CREDENTIAL_PROVIDER_ID, MAX_PASSWORD_LENGTH, MIN_PASSWORD_LENGTH } from "./password.rules";
+
+/** What `setFirstPassword` answers: the password stored, or one already there and left alone. */
+export type SetFirstPasswordOutcome = "set" | "password_exists";
+
+/**
+ * Give the session's person a password when they have none: a person who signed up with Google or
+ * GitHub (GRA-298; ADR 0020). Better Auth's `setPassword` is server-only, since over HTTP a stolen
+ * session could add a way in knowing nothing else; the console reaches it through
+ * `POST /api/me/password`, behind the session and the origin check. Better Auth itself refuses a
+ * person whose credential account already holds a password (`PASSWORD_ALREADY_SET`), and that is
+ * the rule here: such a person changes it with the current one (`/change-password`) and never sets
+ * over it. A credential row with no password, which Better Auth fills in, holds none. Any other
+ * refusal, a bad length or no session, is thrown as Better Auth threw it.
+ */
+export async function setFirstPassword(
+  auth: Auth,
+  headers: Headers,
+  newPassword: string,
+): Promise<SetFirstPasswordOutcome> {
+  try {
+    await auth.api.setPassword({ headers, body: { newPassword } });
+    return "set";
+  } catch (error) {
+    if (betterAuthCode(error) === "PASSWORD_ALREADY_SET") return "password_exists";
+    throw error;
+  }
+}
+
+/** The code on a Better Auth `APIError`'s body, read by shape so no error class is imported. */
+function betterAuthCode(error: unknown): string | null {
+  if (!error || typeof error !== "object" || !("body" in error)) return null;
+  const body = (error as { body?: unknown }).body;
+  if (!body || typeof body !== "object" || !("code" in body)) return null;
+  const code = (body as { code?: unknown }).code;
+  return typeof code === "string" ? code : null;
+}

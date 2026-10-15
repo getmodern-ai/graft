@@ -4,7 +4,14 @@ import type { BetterAuthOptions, GenericEndpointContext } from "better-auth";
 import { drizzle } from "drizzle-orm/node-postgres";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { createAuth, sessionCookieAttributes } from "./index";
+import {
+  type Auth,
+  createAuth,
+  MAX_PASSWORD_LENGTH,
+  MIN_PASSWORD_LENGTH,
+  sessionCookieAttributes,
+  setFirstPassword,
+} from "./index";
 
 /**
  * The configuration, as Better Auth reads it back — no database is opened, because drizzle's pool
@@ -61,6 +68,7 @@ describe("createAuth", () => {
     expect(options.account?.accountLinking).toEqual({
       enabled: true,
       requireLocalEmailVerified: true,
+      allowDifferentEmails: true,
     });
     expect(options.account?.accountLinking?.trustedProviders).toBeUndefined();
   });
@@ -374,5 +382,53 @@ describe("createAuth", () => {
 
   it("answers no session for a request with no cookie", async () => {
     await expect(auth.api.getSession({ headers: new Headers() })).resolves.toBeNull();
+  });
+});
+
+describe("the password", () => {
+  it("is held to the lengths the console's fields read (GRA-298)", () => {
+    expect(auth.options.emailAndPassword?.minPasswordLength).toBe(MIN_PASSWORD_LENGTH);
+    expect(auth.options.emailAndPassword?.maxPasswordLength).toBe(MAX_PASSWORD_LENGTH);
+  });
+
+  /** Better Auth's own refusal is the rule; the Postgres suite drives the real one end to end. */
+  describe("setFirstPassword", () => {
+    const fake = (setPassword: () => Promise<unknown>) =>
+      ({ api: { setPassword } }) as unknown as Auth;
+
+    it("answers set when Better Auth stores it", async () => {
+      const setPassword = vi.fn(async () => ({ status: true }));
+      await expect(setFirstPassword(fake(setPassword), new Headers(), "long-enough")).resolves.toBe(
+        "set",
+      );
+      expect(setPassword).toHaveBeenCalledWith({
+        headers: expect.any(Headers),
+        body: { newPassword: "long-enough" },
+      });
+    });
+
+    it("answers password_exists when the person already holds one, never setting over it", async () => {
+      const refused = Object.assign(new Error("User already has a password set"), {
+        body: { code: "PASSWORD_ALREADY_SET" },
+      });
+      await expect(
+        setFirstPassword(
+          fake(async () => Promise.reject(refused)),
+          new Headers(),
+          "long-enough",
+        ),
+      ).resolves.toBe("password_exists");
+    });
+
+    it("throws any other refusal as Better Auth threw it", async () => {
+      const refused = Object.assign(new Error("Unauthorized"), { body: { code: "UNAUTHORIZED" } });
+      await expect(
+        setFirstPassword(
+          fake(async () => Promise.reject(refused)),
+          new Headers(),
+          "long-enough",
+        ),
+      ).rejects.toBe(refused);
+    });
   });
 });

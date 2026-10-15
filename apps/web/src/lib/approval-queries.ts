@@ -1,4 +1,10 @@
+import type { ConsoleApprovalResult } from "@graft/core";
 import type { ApprovalRow, VendorApprovalRow } from "@graft/db/repo/approval";
+import type {
+  ApprovalDecisionBody,
+  BuildApprovalOutput,
+  VendorApprovalPatchBody,
+} from "@graft/server/api";
 import { queryOptions } from "@tanstack/react-query";
 
 import { api, type Jsonified } from "./api";
@@ -18,6 +24,9 @@ export type VendorApproval = Jsonified<VendorApprovalRow>;
 export const approvalKeys = {
   ofAgent: (agentId: string) => ["approvals", agentId] as const,
   vendorsOfAgent: (agentId: string) => ["vendor-approvals", agentId] as const,
+  /** Every agent's build approvals: a revoke deletes them across agents (ADR 0007). */
+  builds: ["build-approvals"] as const,
+  buildsOfAgent: (agentId: string) => ["build-approvals", agentId] as const,
 };
 
 export const vendorApprovalsQuery = (agentId: string) =>
@@ -37,6 +46,28 @@ export function withdrawVendorApproval(agentId: string, vendor: string) {
   );
 }
 
+/**
+ * An agent's build approval for one connection (ADR 0008 as amended 2026-09-18; GRA-295): `acquire`
+ * works against it without asking. Withdrawing makes the next `acquire` ask again.
+ */
+export type BuildApproval = Jsonified<BuildApprovalOutput>;
+
+export const buildApprovalsQuery = (agentId: string) =>
+  queryOptions({
+    queryKey: approvalKeys.buildsOfAgent(agentId),
+    queryFn: () =>
+      api<{ buildApprovals: BuildApproval[] }>(
+        `/agents/${encodeURIComponent(agentId)}/build-approvals`,
+      ),
+  });
+
+export function withdrawBuildApproval(agentId: string, connectionId: string) {
+  return api<{ buildApproval: { agentId: string; connectionId: string } }>(
+    `/agents/${encodeURIComponent(agentId)}/build-approvals/${encodeURIComponent(connectionId)}`,
+    { method: "DELETE" },
+  );
+}
+
 export const approvalsQuery = (agentId: string) =>
   queryOptions({
     queryKey: approvalKeys.ofAgent(agentId),
@@ -48,6 +79,34 @@ export function setApprovalAskEveryCall(agentId: string, toolId: string, on: boo
   return api<{ approval: Approval }>(
     `/approvals/${encodeURIComponent(toolId)}/ask-every-call?agentId=${encodeURIComponent(agentId)}`,
     { method: "PUT", body: { on } },
+  );
+}
+
+/**
+ * Set one agent's answer for one tool outright, for the version it runs now (ADR 0008 as amended
+ * 2026-10-14; GRA-302); the server answers the open asks it settles. The ask-every-call setting
+ * stays as it stood.
+ */
+export function setApprovalDecision(
+  agentId: string,
+  toolId: string,
+  decision: ApprovalDecisionBody["decision"],
+) {
+  return api<Jsonified<ConsoleApprovalResult>>(
+    `/agents/${encodeURIComponent(agentId)}/approvals/${encodeURIComponent(toolId)}`,
+    { method: "PUT", body: { decision } satisfies ApprovalDecisionBody },
+  );
+}
+
+/** Widen a standing approval for an integration to its tools that delete, or narrow it back (GRA-302). */
+export function setVendorApprovalDestructive(
+  agentId: string,
+  vendor: string,
+  includesDestructive: boolean,
+) {
+  return api<{ vendorApproval: VendorApproval }>(
+    `/agents/${encodeURIComponent(agentId)}/vendor-approvals/${encodeURIComponent(vendor)}`,
+    { method: "PATCH", body: { includesDestructive } satisfies VendorApprovalPatchBody },
   );
 }
 

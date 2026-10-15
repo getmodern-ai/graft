@@ -20,7 +20,22 @@ export type UsageInput = {
   outcome: UsageOutcome;
   dryRun?: boolean;
   latencyMs: number;
+  /**
+   * The word a `refused` or `error` line ended on (a refusal's `reason`, a failure's kind), never
+   * a message; absent on `ok`. The column's comment in `@graft/db/schema/usage` has the vocabulary.
+   */
+  reason?: string | null;
+  /** Whether this call put an approval ask or took the answer to one; absent when it never reached the gate. */
+  asked?: boolean | null;
+  /** The connection the call resolved to; absent when it ended before one was. */
+  connectionId?: string | null;
 };
+
+/**
+ * A reason is a snake_case word from a fixed vocabulary, so a sentence, a vendor's body or anything
+ * a call carried cannot reach the column by mistake (GRA-301).
+ */
+const REASON_WORD = /^[a-z][a-z0-9_]{0,63}$/;
 
 export async function recordUsage(
   ctx: ServiceContext,
@@ -34,6 +49,16 @@ export async function recordUsage(
   if (input.toolName.trim().length === 0) {
     throw new ServiceError("BAD_REQUEST", "A ledger line names the tool that was called");
   }
+  const reason = input.reason ?? null;
+  if (reason !== null && !REASON_WORD.test(reason)) {
+    throw new ServiceError(
+      "BAD_REQUEST",
+      "A ledger line's reason is a snake_case word, never a message",
+    );
+  }
+  if (reason !== null && input.outcome === "ok") {
+    throw new ServiceError("BAD_REQUEST", "A line that ended ok carries no reason");
+  }
   return deps.insertUsage(ctx.db, {
     id: deps.newId(),
     agentId: scope.agentId,
@@ -43,6 +68,9 @@ export async function recordUsage(
     outcome: input.outcome,
     dryRun: input.dryRun ?? false,
     latencyMs: Math.round(input.latencyMs),
+    reason,
+    asked: input.asked ?? null,
+    connectionId: input.connectionId ?? null,
     createdAt: deps.now(),
   });
 }

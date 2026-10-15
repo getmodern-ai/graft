@@ -3,6 +3,7 @@ import { and, asc, eq, exists, getTableColumns, inArray, isNull, or, sql } from 
 import type { DbOrTx } from "../index";
 import { agent, agentConnection, type NewAgent } from "../schema/agent";
 import { connection } from "../schema/connection";
+import { usageLedger } from "../schema/usage";
 import { workingSet } from "../schema/working-set";
 import type { AgentScope } from "./scope";
 
@@ -14,7 +15,18 @@ import type { AgentScope } from "./scope";
  */
 
 export type AgentRow = typeof agent.$inferSelect;
-export type AgentListRow = AgentRow & { workingSetCount: number };
+/**
+ * An agent as the console's list draws it: the row, the size of its working set, its scope as it
+ * resolves under its mode (`listScopeConnectionIds`'s rule), the moment of its last call that was
+ * not a dry run whatever its outcome, null for an agent that has made none, and whether it has ever
+ * had a call that was not a dry run succeed (GRA-290).
+ */
+export type AgentListRow = AgentRow & {
+  workingSetCount: number;
+  connectionIds: string[];
+  lastActiveAt: Date | null;
+  hasRunTool: boolean;
+};
 export type AgentPatch = Partial<
   Pick<AgentRow, "name" | "workingSetCap" | "idleWindowDays" | "scopeMode">
 >;
@@ -94,13 +106,62 @@ export async function findAgentForUpdate(
   return row ?? null;
 }
 
-/** Every agent of a person, revoked ones included, oldest first. */
+/**
+ * Every agent of a person, revoked ones included, oldest first, in **one statement** whatever the
+ * number of agents (GRA-290): each figure is a subquery correlated to the person-scoped agent row.
+ * The scope is `listScopeConnectionIds`'s rule per row (ADR 0007 as amended 2026-09-19): every
+ * connection of the person's, named by the parameter and not only through the agent, when the row
+ * is on `all`, and its list's when it is on `listed`, revoked connections included on both. The
+ * last activity skips dry runs, which `acquire`'s job makes on the agent's behalf, and counts a
+ * refused or failed call as activity; `hasRunTool` counts only a call that answered `ok`. Both are
+ * read off `usage_ledger_agent_id_created_at_idx`.
+ */
 export async function listAgents(db: DbOrTx, personId: string): Promise<AgentListRow[]> {
+  const scope = db
+    .select({
+      // Qualified by hand: drizzle renders a column bare in a one-table select, and inside this
+      // subquery a bare "id" would read as the innermost table's only by Postgres's scoping rule.
+      ids: sql`coalesce(array_agg("connection"."id" order by "connection"."id"), '{}')`,
+    })
+    .from(connection)
+    .where(
+      and(
+        eq(connection.personId, personId),
+        or(
+          eq(agent.scopeMode, "all"),
+          inArray(
+            connection.id,
+            db
+              .select({ connectionId: agentConnection.connectionId })
+              .from(agentConnection)
+              .where(eq(agentConnection.agentId, agent.id)),
+          ),
+        ),
+      ),
+    );
+  const lastActive = db
+    .select({ at: sql`max("usage_ledger"."created_at")` })
+    .from(usageLedger)
+    .where(and(eq(usageLedger.agentId, agent.id), eq(usageLedger.dryRun, false)));
+  const ranOk = db
+    .select({ id: usageLedger.id })
+    .from(usageLedger)
+    .where(
+      and(
+        eq(usageLedger.agentId, agent.id),
+        eq(usageLedger.dryRun, false),
+        eq(usageLedger.outcome, "ok"),
+      ),
+    );
   return db
     .select({
       ...getTableColumns(agent),
-      // The count follows the person-scoped agent in this statement (ADR 0007).
+      // Each figure follows the person-scoped agent in this statement (ADR 0007).
       workingSetCount: db.$count(workingSet, eq(workingSet.agentId, agent.id)),
+      connectionIds: sql<string[]>`${scope}`,
+      // A bare subquery loses the column's mapping; `timestamp` without a zone needs it back.
+      lastActiveAt: sql<Date | null>`${lastActive}`.mapWith(usageLedger.createdAt),
+      hasRunTool: exists(ranOk).mapWith(Boolean),
     })
     .from(agent)
     .where(eq(agent.personId, personId))
@@ -331,6 +392,55 @@ export async function listAgentIdsForConnection(
   return rows.map((row) => row.id);
 }
 
+/** One pair of an active agent and a live connection its scope reaches, with what the console names the agent by. */
+export type AgentReachRow = {
+  agentId: string;
+  agentName: string;
+  connectedViaClientName: string | null;
+  connectionId: string;
+};
+
+/**
+ * Every pair of the person's **active** agents and **live** connections where the agent's scope
+ * reaches the connection, in one statement: `listAgentIdsForConnection`'s rule — an agent on `all`,
+ * or one whose list names the row (ADR 0007 as amended 2026-09-19) — over every connection at once,
+ * for the integrations list's "used by" (GRA-291). Both sides under the person in the statement; a
+ * revoked agent or a revoked connection answers no pair.
+ */
+export async function listActiveAgentReach(db: DbOrTx, personId: string): Promise<AgentReachRow[]> {
+  return db
+    .select({
+      agentId: agent.id,
+      agentName: agent.name,
+      connectedViaClientName: agent.connectedViaClientName,
+      connectionId: connection.id,
+    })
+    .from(agent)
+    .innerJoin(
+      connection,
+      and(
+        eq(connection.personId, personId),
+        isNull(connection.revokedAt),
+        or(
+          eq(agent.scopeMode, "all"),
+          exists(
+            db
+              .select({ agentId: agentConnection.agentId })
+              .from(agentConnection)
+              .where(
+                and(
+                  eq(agentConnection.agentId, agent.id),
+                  eq(agentConnection.connectionId, connection.id),
+                ),
+              ),
+          ),
+        ),
+      ),
+    )
+    .where(and(eq(agent.personId, personId), isNull(agent.revokedAt)))
+    .orderBy(asc(agent.createdAt), asc(agent.id), asc(connection.id));
+}
+
 /**
  * Add one connection to the scope, idempotently: `INSERT … ON CONFLICT DO NOTHING` on the table's
  * `(agent_id, connection_id)` primary key, so two grants of the same connection leave one row and a
@@ -348,6 +458,27 @@ export async function addAgentConnection(
     .insert(agentConnection)
     .values({ agentId: scope.agentId, connectionId })
     .onConflictDoNothing();
+}
+
+/**
+ * Take one connection out of the list: one `DELETE` under the pair and the connection, so a
+ * mis-scoped call removes nothing and a removal beside a grant of another connection loses neither
+ * (GRA-294) — never a read of the list and a rewrite of the whole. Removing a connection the list
+ * does not name changes nothing.
+ */
+export async function removeAgentConnection(
+  db: DbOrTx,
+  scope: AgentScope,
+  connectionId: string,
+): Promise<void> {
+  await db
+    .delete(agentConnection)
+    .where(
+      and(
+        inArray(agentConnection.agentId, scopedAgentIds(db, scope)),
+        eq(agentConnection.connectionId, connectionId),
+      ),
+    );
 }
 
 /**

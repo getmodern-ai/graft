@@ -242,6 +242,19 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
+/* The one line the frame holds while the tool call is in flight (GRA-335): a fixed height, so the
+ * frame is that tall from the first paint, before any font has loaded. */
+.ask-waiting {
+  margin: 0;
+  height: 28px;
+  line-height: 28px;
+  font-size: 13px;
+  color: var(--muted-foreground);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 /* Cando's card anatomy: a bordered surface, a header, a body of rows, a footer of actions. */
 .ask {
   display: flex;
@@ -323,16 +336,46 @@ body {
   user-select: all;
 }
 
-/* A labelled control with a sentence beside it — the console's `Item` with a checkbox. */
-.ask-choice {
+/* The handoff page's choice cards (GRA-316; the console's `ChoiceCards`): a legend, then one
+ * framed label per option with the radio, its title and its consequence; the checked one tinted. */
+.ask-choices {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  min-width: 0;
+}
+
+.ask-choices legend {
+  margin: 0 0 8px;
+  padding: 0;
+  color: var(--muted-foreground);
+  font-size: 13px;
+}
+
+.ask-option {
   display: flex;
   align-items: flex-start;
-  gap: 10px;
-  margin: 0;
+  gap: 12px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: calc(var(--radius) - 2px);
   cursor: pointer;
 }
 
-.ask-choice input {
+.ask-option:has(input:checked) {
+  background: var(--custom-bg-primary-5);
+  border-color: var(--custom-border-primary-checked);
+}
+
+.ask-option:has(input:disabled) {
+  cursor: default;
+  opacity: 0.7;
+}
+
+.ask-option input {
   margin: 3px 0 0;
   width: 16px;
   height: 16px;
@@ -340,22 +383,64 @@ body {
   flex: none;
 }
 
-.ask-choice span {
-  color: var(--foreground);
+.ask-option-words {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
 }
 
-/* The sentence under a choice's label (GRA-237's destructive tick): muted, on its own line. */
-.ask-choice span.ask-choice-hint {
-  display: block;
+.ask-option-title {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  font-weight: 500;
+}
+
+.ask-option-hint {
   color: var(--muted-foreground);
-  font-size: 0.875em;
+  font-size: 12px;
 }
 
+/* The two answers side by side, as on the handoff page; a lone button keeps its own width. */
 .ask-actions {
   display: flex;
   flex-wrap: wrap;
   justify-content: flex-end;
   gap: 8px;
+}
+
+.ask-actions > .ask-button:not(:only-child) {
+  flex: 1 1 0;
+}
+
+/* The summary line and the facts behind a native disclosure, under a divider (GRA-316). */
+.ask-footer {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+
+.ask-summary {
+  margin: 0;
+  color: var(--muted-foreground);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.ask-details > summary {
+  width: fit-content;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+/* Two classes' weight, so it outranks the `margin: 0` each child sets for itself. */
+.ask-details > * + :not(summary) {
+  margin-top: 12px;
 }
 
 /* Cando's Button: default is the primary fill, secondary the muted surface; 36px tall. */

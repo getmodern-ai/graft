@@ -9,6 +9,7 @@ import {
   listAgents,
   listAllActiveAgents,
   listScopeConnectionIds,
+  removeAgentConnection,
   replaceAgentConnections,
   revokeAgent,
   setAgentConnectedVia,
@@ -16,6 +17,7 @@ import {
 } from "@graft/db/repo/agent";
 import { findConnectionsByIds } from "@graft/db/repo/connection";
 import { findAgentByMcpAccessTokenHash, revokeMcpTokensForAgent } from "@graft/db/repo/mcp-oauth";
+import { closePendingActionsForAgent } from "@graft/db/repo/pending-action";
 
 /**
  * The agent module's test seam: the repositories it reads and writes, the clock and the id source.
@@ -37,11 +39,15 @@ export type AgentDeps = {
   revokeAgent: typeof revokeAgent;
   /** Revoking an agent revokes every token an MCP client holds for it (ADR 0018), in the same transaction. */
   revokeMcpTokensForAgent: typeof revokeMcpTokensForAgent;
+  /** And closes every ask it left open, recording the revoke as why (GRA-292). */
+  closePendingActionsForAgent: typeof closePendingActionsForAgent;
   /** The consent naming an existing agent records which client it was connected from (ADR 0018). */
   setAgentConnectedVia: typeof setAgentConnectedVia;
   replaceAgentConnections: typeof replaceAgentConnections;
   /** The one-connection grant, idempotent on the scope's key — never a read and a rewrite of the list. */
   addAgentConnection: typeof addAgentConnection;
+  /** The one-connection removal, one delete on the scope's key — the grant's counterpart (GRA-294). */
+  removeAgentConnection: typeof removeAgentConnection;
   /** The list under `listed` — what a scope write edits; the scope as read is `listScopeConnectionIds`. */
   listAgentConnectionIds: typeof listAgentConnectionIds;
   /** The scope resolved for either mode in one statement (ADR 0007 as amended 2026-09-19) — what `getAgentScope` answers. */
@@ -67,9 +73,11 @@ export const defaultAgentDeps: AgentDeps = {
   updateAgent,
   revokeAgent,
   revokeMcpTokensForAgent,
+  closePendingActionsForAgent,
   setAgentConnectedVia,
   replaceAgentConnections,
   addAgentConnection,
+  removeAgentConnection,
   listAgentConnectionIds,
   listScopeConnectionIds,
   findConnectionsByIds,

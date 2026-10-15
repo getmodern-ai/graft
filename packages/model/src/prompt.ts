@@ -55,7 +55,9 @@ is not — it costs a turn and nothing else; \`give_up\` ends the job with your 
 \`proceed\` are admitted only after \`proof\`, and \`proceed\` only when every read passed.
 
 The draft: \`name\` kebab-case; \`description\` for the person, plain language, under 500 characters;
-\`inputSchemaJson\` a JSON Schema object (type "object", properties, required) as JSON text;
+\`inputSchemaJson\` a JSON Schema object (type "object", properties, required) as JSON text, where
+a property with a \`default\` is left out of \`required\` and the module applies the default
+itself (\`input.limit ?? 10\`), since nothing fills it in;
 \`files\` with \`index.ts\` always — a TypeScript ES module whose default export is
 \`async (input: Input, ctx: Context) => …\`, erasable syntax only — plus a \`package.json\` only when
 you declare a package; \`testInputJson\` an input the dry run uses, as JSON text; \`proofReads\` the reads that

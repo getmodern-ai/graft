@@ -96,8 +96,9 @@ export type SetupNavigationFields = {
 /**
  * Whether the record holds what a step shows, so the step can be returned to (GRA-215): the harness
  * and the vendor always; the connect step once an ask or a connection is named; the goal once a
- * connection is; the building step once a job is; the result once a tool is. The finish is never a
- * step to go back to, since only `completed` lies beyond it and a completed Setup does not move.
+ * connection is; the building step once a job is; the result once a tool is, built or ready-made
+ * (GRA-276: a ready-made tool reaches it with no job). The finish is never a step to go back to,
+ * since only `completed` lies beyond it and a completed Setup does not move.
  * The result is the one step a record passes without holding: *Continue while it runs* goes from
  * the building step straight to the finish, and the result is not there to return to until the tool
  * lands.
@@ -117,7 +118,7 @@ export function setupStepReachable(
     case "building":
       return record.acquireJobId !== null;
     case "result":
-      return record.acquireJobId !== null && record.toolId !== null;
+      return record.toolId !== null;
     default:
       return false;
   }
