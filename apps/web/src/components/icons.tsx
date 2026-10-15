@@ -38,11 +38,41 @@ export function AddIcon(props: IconProps) {
   );
 }
 
+/** Material Symbols `apps`, filled. */
+export function AppsIcon(props: IconProps) {
+  return (
+    <MaterialSymbol
+      d="M179-179q-19-19-19-47t19-47q19-19 47-19t47 19q19 19 19 47t-19 47q-19 19-47 19t-47-19Zm254 0q-19-19-19-47t19-47q19-19 47-19t47 19q19 19 19 47t-19 47q-19 19-47 19t-47-19Zm254 0q-19-19-19-47t19-47q19-19 47-19t47 19q19 19 19 47t-19 47q-19 19-47 19t-47-19ZM179-433q-19-19-19-47t19-47q19-19 47-19t47 19q19 19 19 47t-19 47q-19 19-47 19t-47-19Zm254 0q-19-19-19-47t19-47q19-19 47-19t47 19q19 19 19 47t-19 47q-19 19-47 19t-47-19Zm254 0q-19-19-19-47t19-47q19-19 47-19t47 19q19 19 19 47t-19 47q-19 19-47 19t-47-19ZM179-687q-19-19-19-47t19-47q19-19 47-19t47 19q19 19 19 47t-19 47q-19 19-47 19t-47-19Zm254 0q-19-19-19-47t19-47q19-19 47-19t47 19q19 19 19 47t-19 47q-19 19-47 19t-47-19Zm254 0q-19-19-19-47t19-47q19-19 47-19t47 19q19 19 19 47t-19 47q-19 19-47 19t-47-19Z"
+      {...props}
+    />
+  );
+}
+
 /** Material Symbols `arrow_back`, filled. */
 export function ArrowBackIcon(props: IconProps) {
   return (
     <MaterialSymbol
       d="m274-450 248 248-42 42-320-320 320-320 42 42-248 248h526v60H274Z"
+      {...props}
+    />
+  );
+}
+
+/** Material Symbols `arrow_forward`, filled. */
+export function ArrowForwardIcon(props: IconProps) {
+  return (
+    <MaterialSymbol
+      d="M686-450H160v-60h526L438-758l42-42 320 320-320 320-42-42 248-248Z"
+      {...props}
+    />
+  );
+}
+
+/** Material Symbols `block`, filled. */
+export function BlockIcon(props: IconProps) {
+  return (
+    <MaterialSymbol
+      d="M324-111.5Q251-143 197-197t-85.5-127Q80-397 80-480t31.5-156Q143-709 197-763t127-85.5Q397-880 480-880t156 31.5Q709-817 763-763t85.5 127Q880-563 880-480t-31.5 156Q817-251 763-197t-127 85.5Q563-80 480-80t-156-31.5ZM699-220q11-9 21.5-18.86Q731-248.73 740-260L260-740q-11.27 9-21.14 19.5Q229-710 220-699l479 479Z"
       {...props}
     />
   );
@@ -178,6 +208,26 @@ export function ExtensionIcon(props: IconProps) {
   );
 }
 
+/** Material Symbols `filter_list`, filled. */
+export function FilterListIcon(props: IconProps) {
+  return (
+    <MaterialSymbol
+      d="M400-240v-60h160v60H400ZM240-450v-60h480v60H240ZM120-660v-60h720v60H120Z"
+      {...props}
+    />
+  );
+}
+
+/** Material Symbols `help`, filled. */
+export function HelpIcon(props: IconProps) {
+  return (
+    <MaterialSymbol
+      d="M511-258q11-11 11-27t-11-27q-11-11-27-11t-27 11q-11 11-11 27t11 27q11 11 27 11t27-11Zm-62-135h59q0-26 6.5-47.5T555-490q31-26 44-51t13-55q0-53-34.5-85T486-713q-49 0-86.5 24.5T345-621l53 20q11-28 33-43.5t52-15.5q34 0 55 18.5t21 47.5q0 22-13 41.5T508-512q-30 26-44.5 51.5T449-393Zm31 313q-82 0-155-31.5t-127.5-86Q143-252 111.5-325T80-480q0-83 31.5-156t86-127Q252-817 325-848.5T480-880q83 0 156 31.5T763-763q54 54 85.5 127T880-480q0 82-31.5 155T763-197.5q-54 54.5-127 86T480-80Z"
+      {...props}
+    />
+  );
+}
+
 /** Material Symbols `history`, filled. */
 export function HistoryIcon(props: IconProps) {
   return (
@@ -186,6 +236,11 @@ export function HistoryIcon(props: IconProps) {
       {...props}
     />
   );
+}
+
+/** Material Symbols `home`, filled. */
+export function HomeIcon(props: IconProps) {
+  return <MaterialSymbol d="M160-120v-480l320-240 320 240v480H560v-280H400v280H160Z" {...props} />;
 }
 
 /** Material Symbols `hourglass`, filled. */

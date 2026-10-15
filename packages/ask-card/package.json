@@ -10,6 +10,9 @@
     },
     "./shape": {
       "default": "./src/shape.ts"
+    },
+    "./copy": {
+      "default": "./src/copy.ts"
     }
   },
   "scripts": {

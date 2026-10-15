@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  ACTIVITY_ANSWER_CHIP,
+  ACTIVITY_OUTCOME_CHIP,
   AGENT_STATUS_CHIP,
+  ANSWER_CHIP,
   APPROVAL_DECISION_CHIP,
   AWAITING_CLIENT_SECRET_CHIP,
   AWAITING_RECONNECTION_CHIP,
@@ -10,10 +13,16 @@ import {
   CONNECTION_STATUS_CHIP,
   connectionStatusChips,
   DRY_RUN_CHIP,
+  EMAIL_STATUS_CHIP,
   MODEL_KEY_STATUS_CHIP,
+  MODEL_STATUS_CHIP,
   NO_PASSING_VERSION_CHIP,
+  RECONNECT_CHIP,
+  SIGN_IN_ACCOUNT_CHIP,
   type StatusChip,
+  TOOL_ACCESS_CHIP,
   TOOL_ANNOTATION_CHIP,
+  toolAccessChip,
   toolAnnotationChip,
   VENDOR_APPROVAL_DESTRUCTIVE_CHIP,
   WORKING_SET_CHANGE_CHIP,
@@ -24,14 +33,23 @@ const EVERY_CHIP: StatusChip[] = [
   ...Object.values(CONNECTION_STATUS_CHIP),
   AWAITING_CLIENT_SECRET_CHIP,
   AWAITING_RECONNECTION_CHIP,
+  RECONNECT_CHIP,
   ...Object.values(CALL_OUTCOME_CHIP),
+  ...Object.values(ACTIVITY_OUTCOME_CHIP),
+  ...Object.values(ACTIVITY_ANSWER_CHIP),
   DRY_RUN_CHIP,
   NO_PASSING_VERSION_CHIP,
+  SIGN_IN_ACCOUNT_CHIP,
   ...Object.values(APPROVAL_DECISION_CHIP),
+  ...Object.values(ANSWER_CHIP),
   ...Object.values(VENDOR_APPROVAL_DESTRUCTIVE_CHIP),
   ...Object.values(WORKING_SET_CHANGE_CHIP),
   ...Object.values(MODEL_KEY_STATUS_CHIP),
+  ...Object.values(EMAIL_STATUS_CHIP),
+  SIGN_IN_ACCOUNT_CHIP,
+  ...Object.values(MODEL_STATUS_CHIP),
   ...Object.values(TOOL_ANNOTATION_CHIP),
+  ...Object.values(TOOL_ACCESS_CHIP),
 ];
 
 describe("status chips", () => {
@@ -61,6 +79,13 @@ describe("status chips", () => {
       label: "Ask first",
     });
     expect(MODEL_KEY_STATUS_CHIP.set.variant).toBe("success");
+    expect(EMAIL_STATUS_CHIP.verified.variant).toBe("success");
+    expect(SIGN_IN_ACCOUNT_CHIP.variant).toBe("success");
+    expect(MODEL_STATUS_CHIP.included.variant).toBe("success");
+    expect(MODEL_STATUS_CHIP.own_key.variant).toBe("success");
+    // GRA-318: an answer under which the agent runs without asking.
+    expect(ANSWER_CHIP.always.variant).toBe("success");
+    expect(ANSWER_CHIP.allowed.variant).toBe("success");
   });
 
   it("gives the refused states the destructive tone", () => {
@@ -69,6 +94,28 @@ describe("status chips", () => {
     expect(CONNECTION_STATUS_CHIP.consent_required.variant).toBe("destructive");
     expect(CALL_OUTCOME_CHIP.error.variant).toBe("destructive");
     expect(APPROVAL_DECISION_CHIP.deny.variant).toBe("destructive");
+    expect(MODEL_STATUS_CHIP.needs_key.variant).toBe("destructive");
+    expect(MODEL_STATUS_CHIP.unconfigured.variant).toBe("destructive");
+    expect(ANSWER_CHIP.denied.variant).toBe("destructive");
+  });
+
+  // GRA-319: a run is an event that ended, so the neutral tone; a failure is still destructive.
+  it("draws an activity run as Ran, Failed or Blocked", () => {
+    expect(ACTIVITY_OUTCOME_CHIP).toEqual({
+      ok: { variant: "secondary", label: "Ran" },
+      error: { variant: "destructive", label: "Failed" },
+      refused: { variant: "outline", label: "Blocked" },
+    });
+  });
+
+  // GRA-330: an answer is a moment too, in a run's tones.
+  it("draws an activity answer as Allowed, Connected, Denied or Declined", () => {
+    expect(ACTIVITY_ANSWER_CHIP).toEqual({
+      allowed: { variant: "secondary", label: "Allowed" },
+      connected: { variant: "secondary", label: "Connected" },
+      denied: { variant: "outline", label: "Denied" },
+      declined: { variant: "outline", label: "Declined" },
+    });
   });
 
   it("gives the waiting states the outline tone", () => {
@@ -78,7 +125,17 @@ describe("status chips", () => {
     expect(AWAITING_RECONNECTION_CHIP.variant).toBe("outline");
     expect(NO_PASSING_VERSION_CHIP.variant).toBe("outline");
     expect(MODEL_KEY_STATUS_CHIP.unset.variant).toBe("outline");
+    expect(EMAIL_STATUS_CHIP.unverified.variant).toBe("outline");
     expect(AGENT_STATUS_CHIP.awaiting_harness.variant).toBe("outline");
+    expect(ANSWER_CHIP.asks_next_time.variant).toBe("outline");
+  });
+
+  // Person-facing copy says agent, never harness (CONTEXT.md, *Harness*; GRA-332).
+  it("names no harness in any agent chip", () => {
+    expect(AGENT_STATUS_CHIP.awaiting_harness.label).toBe("Not connected yet");
+    for (const chip of Object.values(AGENT_STATUS_CHIP)) {
+      expect(chip.label.toLowerCase()).not.toContain("harness");
+    }
   });
 
   it("keeps the three tool annotations visually distinct", () => {
@@ -90,6 +147,16 @@ describe("status chips", () => {
     // The check never emits both, but were it to, read-only is what lets a call pass unasked, so
     // it is the one to show.
     expect(toolAnnotationChip(true, true)).toBe(TOOL_ANNOTATION_CHIP["read-only"]);
+  });
+
+  // GRA-287 item 9: a destructive tool says "Can delete".
+  it("words a tool's access as the integration page draws it", () => {
+    const access = (readOnlyHint: boolean, destructiveHint: boolean) =>
+      toolAccessChip({ readOnlyHint, destructiveHint });
+    expect(access(true, false)).toBe(TOOL_ACCESS_CHIP.read);
+    expect(access(false, false)).toBe(TOOL_ACCESS_CHIP.changes);
+    expect(access(false, true)).toBe(TOOL_ACCESS_CHIP.deletes);
+    expect(access(true, true)).toBe(TOOL_ACCESS_CHIP.read);
   });
 
   it("reads an agent's status off its revocation, its token and its client", () => {

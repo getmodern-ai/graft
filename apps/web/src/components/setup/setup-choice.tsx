@@ -10,7 +10,7 @@ export type SetupChoiceOption<T extends string> = {
   description?: React.ReactNode;
   /** Beside the label: a chip, a badge. */
   aside?: React.ReactNode;
-  /** The mark in the card's top left (`SetupLogo`). */
+  /** The mark in the card's top left (`IntegrationMark` or `HarnessMark`). */
   media?: React.ReactNode;
   /** Drawn dashed and on the muted band, as the frames draw *Anything else*. */
   dashed?: boolean;

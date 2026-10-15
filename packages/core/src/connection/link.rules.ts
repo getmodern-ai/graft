@@ -56,6 +56,12 @@ export type LinkCallbackOutcome = {
   pendingActionId: string | null;
   connectionId: string | null;
   message: string;
+  /**
+   * The console connect's record (GRA-304; ADR 0006 as amended 2026-10-14) when the link was
+   * started from the console with no agent asking, so `pendingActionId` is null and the page that
+   * opened the popup matches the outcome on this instead. Absent for a link that answers an ask.
+   */
+  connectId?: string | null;
 };
 
 export type LinkCallbackMessage = LinkCallbackOutcome & { type: "graft:link" };
@@ -90,6 +96,7 @@ export function linkCallbackRedirect(
   const query = new URLSearchParams({ status: outcome.status });
   if (outcome.pendingActionId !== null) query.set("pendingActionId", outcome.pendingActionId);
   if (outcome.connectionId !== null) query.set("connectionId", outcome.connectionId);
+  if (outcome.connectId) query.set("connectId", outcome.connectId);
   query.set("message", outcome.message);
   if (options.fromCard) query.set(FROM_CARD_PARAM, FROM_CARD);
   return `${base}${LINK_CONSOLE_CALLBACK_PATH}?${query}`;
@@ -108,6 +115,7 @@ export function readLinkCallbackSearch(search: Record<string, unknown>): LinkCal
     pendingActionId: typeof search.pendingActionId === "string" ? search.pendingActionId : null,
     connectionId: typeof search.connectionId === "string" ? search.connectionId : null,
     message: typeof search.message === "string" ? search.message : "",
+    ...(typeof search.connectId === "string" ? { connectId: search.connectId } : {}),
   };
 }
 

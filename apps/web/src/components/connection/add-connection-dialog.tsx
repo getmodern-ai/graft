@@ -1,5 +1,5 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { toast } from "sonner";
 
 import { ConnectionFormFields, HostsNotice } from "@/components/connection/connection-form";
@@ -36,21 +36,38 @@ import { connectionKeys, createConnection } from "@/lib/connection-queries";
  * `onConnected` is for a caller that takes the connection on (Setup's *Another integration*, GRA-206):
  * it is handed the connection's id once it can be called, the consent included, in place of the
  * toast that points at the agent's page.
+ *
+ * `initialDraft` and `access` are Discover's (GRA-322): the keyring's form `POST /api/connect`
+ * answered, pre-filled from its proposal, and the access the person chose before it (ADR 0008 as
+ * amended 2026-10-14), posted with the credential. The draft is taken each time the dialog opens.
  */
 export function AddConnectionDialog({
   open,
   onOpenChange,
   onConnected,
+  initialDraft,
+  access,
+  title = "Add a connection",
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  onConnected?: (connectionId: string) => void;
+  /** Handed the saved connection's id and vendor, as the server wrote them (the slug may have been edited). */
+  onConnected?: (connectionId: string, vendor: string) => void;
+  initialDraft?: ConnectionDraft;
+  access?: "full" | "ask";
+  title?: string;
 }) {
   const queryClient = useQueryClient();
-  const [draft, setDraft] = useState<ConnectionDraft>(() => emptyDraft());
+  const [draft, setDraft] = useState<ConnectionDraft>(() => initialDraft ?? emptyDraft());
   const [errors, setErrors] = useState<DraftErrors>({});
-  const connected = (connectionId: string, displayName: string) => {
-    if (onConnected) onConnected(connectionId);
+  // The pre-fill is taken as the dialog opens, never while the person types into it.
+  const [wasOpen, setWasOpen] = useState(open);
+  if (open !== wasOpen) {
+    setWasOpen(open);
+    if (open && initialDraft) setDraft(initialDraft);
+  }
+  const connected = (connectionId: string, displayName: string, vendor: string) => {
+    if (onConnected) onConnected(connectionId, vendor);
     else {
       toast.success(`${displayName} is connected`, {
         description: "Add it to an agent's scope on the agent's page to let that agent use it.",
@@ -58,13 +75,17 @@ export function AddConnectionDialog({
     }
     close();
   };
+  // The vendor the server saved, for the consent's callback, which hands back only the id.
+  const savedVendor = useRef<string | null>(null);
   const consent = useOAuthConsent({
-    onConnected: (connectionId) => connected(connectionId, draft.displayName),
+    onConnected: (connectionId) =>
+      connected(connectionId, draft.displayName, savedVendor.current ?? draft.vendor),
   });
 
   const create = useMutation({
     mutationFn: createConnection,
     onSuccess: ({ connection, authorizeUrl }) => {
+      savedVendor.current = connection.vendor;
       queryClient.invalidateQueries({ queryKey: connectionKeys.all });
       if (authorizeUrl) {
         toast.message(`${connection.displayName}'s client is saved`, {
@@ -73,7 +94,7 @@ export function AddConnectionDialog({
         void consent.run(authorizeUrl, connection);
         return;
       }
-      connected(connection.id, connection.displayName);
+      connected(connection.id, connection.displayName, connection.vendor);
     },
     onError: (error) => {
       if (error instanceof ApiError && error.status === 400) {
@@ -100,7 +121,7 @@ export function AddConnectionDialog({
       return;
     }
     setErrors({});
-    create.mutate(verdict.value);
+    create.mutate(access ? { ...verdict.value, access } : verdict.value);
   };
 
   const secret = secretLegend(draft);
@@ -128,7 +149,7 @@ export function AddConnectionDialog({
           }}
         >
           <DialogHeader>
-            <DialogTitle>Add a connection</DialogTitle>
+            <DialogTitle>{title}</DialogTitle>
             <DialogDescription>
               One account of an integration: its hosts, its auth scheme and its credential, entered
               once and never shown again. Agents use it once you add it to their scope.

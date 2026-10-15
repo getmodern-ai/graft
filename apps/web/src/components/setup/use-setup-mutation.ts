@@ -1,6 +1,7 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 
 import { agentKeys } from "@/lib/agent-queries";
+import { approvalKeys } from "@/lib/approval-queries";
 import { installSetupState, type SetupStateData, setupKeys } from "@/lib/setup-queries";
 
 /**
@@ -19,6 +20,8 @@ export function useSetupMutation<TInput>(verb: (input: TInput) => Promise<SetupS
     onSuccess: async (state) => {
       await installSetupState(queryClient, state);
       void queryClient.invalidateQueries({ queryKey: agentKeys.all });
+      // Build grants the build approval for the setup's agent (GRA-207), which its page lists.
+      void queryClient.invalidateQueries({ queryKey: approvalKeys.builds });
     },
     onError: () => {
       void queryClient.invalidateQueries({ queryKey: setupKeys.current, exact: true });

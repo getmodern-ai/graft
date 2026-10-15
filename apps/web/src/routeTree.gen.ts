@@ -9,7 +9,6 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
-import { Route as IndexRouteImport } from './routes/index'
 import { Route as AuthRouteRouteImport } from './routes/_auth/route'
 import { Route as ForgotPasswordRouteImport } from './routes/forgot-password'
 import { Route as LoginRouteImport } from './routes/login'
@@ -20,18 +19,17 @@ import { Route as AuthConsentRouteImport } from './routes/_auth/consent'
 import { Route as AuthSetupRouteImport } from './routes/_auth/setup'
 import { Route as LinkCallbackRouteImport } from './routes/link.callback'
 import { Route as OauthCallbackRouteImport } from './routes/oauth.callback'
+import { Route as AuthShellIndexRouteImport } from './routes/_auth/_shell/index'
+import { Route as AuthShellActivityRouteImport } from './routes/_auth/_shell/activity'
 import { Route as AuthShellSettingsRouteImport } from './routes/_auth/_shell/settings'
 import { Route as AuthPendingIdRouteImport } from './routes/_auth/pending.$id'
 import { Route as AuthShellAgentsIndexRouteImport } from './routes/_auth/_shell/agents.index'
 import { Route as AuthShellAgentsAgentIdRouteImport } from './routes/_auth/_shell/agents.$agentId'
 import { Route as AuthShellConnectionsIndexRouteImport } from './routes/_auth/_shell/connections.index'
+import { Route as AuthShellIntegrationsIndexRouteImport } from './routes/_auth/_shell/integrations.index'
+import { Route as AuthShellIntegrationsVendorRouteImport } from './routes/_auth/_shell/integrations.$vendor'
 import { Route as AuthShellPendingIndexRouteImport } from './routes/_auth/_shell/pending.index'
 
-const IndexRoute = IndexRouteImport.update({
-  id: '/',
-  path: '/',
-  getParentRoute: () => rootRouteImport,
-} as any)
 const AuthRouteRoute = AuthRouteRouteImport.update({
   id: '/_auth',
   getParentRoute: () => rootRouteImport,
@@ -80,6 +78,16 @@ const OauthCallbackRoute = OauthCallbackRouteImport.update({
   path: '/oauth/callback',
   getParentRoute: () => rootRouteImport,
 } as any)
+const AuthShellIndexRoute = AuthShellIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => AuthShellRouteRoute,
+} as any)
+const AuthShellActivityRoute = AuthShellActivityRouteImport.update({
+  id: '/activity',
+  path: '/activity',
+  getParentRoute: () => AuthShellRouteRoute,
+} as any)
 const AuthShellSettingsRoute = AuthShellSettingsRouteImport.update({
   id: '/settings',
   path: '/settings',
@@ -106,6 +114,18 @@ const AuthShellConnectionsIndexRoute =
     path: '/connections/',
     getParentRoute: () => AuthShellRouteRoute,
   } as any)
+const AuthShellIntegrationsIndexRoute =
+  AuthShellIntegrationsIndexRouteImport.update({
+    id: '/integrations/',
+    path: '/integrations/',
+    getParentRoute: () => AuthShellRouteRoute,
+  } as any)
+const AuthShellIntegrationsVendorRoute =
+  AuthShellIntegrationsVendorRouteImport.update({
+    id: '/integrations/$vendor',
+    path: '/integrations/$vendor',
+    getParentRoute: () => AuthShellRouteRoute,
+  } as any)
 const AuthShellPendingIndexRoute = AuthShellPendingIndexRouteImport.update({
   id: '/pending/',
   path: '/pending/',
@@ -113,7 +133,7 @@ const AuthShellPendingIndexRoute = AuthShellPendingIndexRouteImport.update({
 } as any)
 
 export interface FileRoutesByFullPath {
-  '/': typeof IndexRoute
+  '/': typeof AuthShellIndexRoute
   '/forgot-password': typeof ForgotPasswordRoute
   '/login': typeof LoginRoute
   '/reset-password': typeof ResetPasswordRoute
@@ -122,15 +142,18 @@ export interface FileRoutesByFullPath {
   '/setup': typeof AuthSetupRoute
   '/link/callback': typeof LinkCallbackRoute
   '/oauth/callback': typeof OauthCallbackRoute
+  '/activity': typeof AuthShellActivityRoute
   '/settings': typeof AuthShellSettingsRoute
   '/pending/$id': typeof AuthPendingIdRoute
   '/agents/$agentId': typeof AuthShellAgentsAgentIdRoute
+  '/integrations/$vendor': typeof AuthShellIntegrationsVendorRoute
   '/agents/': typeof AuthShellAgentsIndexRoute
   '/connections/': typeof AuthShellConnectionsIndexRoute
+  '/integrations/': typeof AuthShellIntegrationsIndexRoute
   '/pending/': typeof AuthShellPendingIndexRoute
 }
 export interface FileRoutesByTo {
-  '/': typeof IndexRoute
+  '/': typeof AuthShellIndexRoute
   '/forgot-password': typeof ForgotPasswordRoute
   '/login': typeof LoginRoute
   '/reset-password': typeof ResetPasswordRoute
@@ -139,16 +162,18 @@ export interface FileRoutesByTo {
   '/setup': typeof AuthSetupRoute
   '/link/callback': typeof LinkCallbackRoute
   '/oauth/callback': typeof OauthCallbackRoute
+  '/activity': typeof AuthShellActivityRoute
   '/settings': typeof AuthShellSettingsRoute
   '/pending/$id': typeof AuthPendingIdRoute
   '/agents/$agentId': typeof AuthShellAgentsAgentIdRoute
+  '/integrations/$vendor': typeof AuthShellIntegrationsVendorRoute
   '/agents': typeof AuthShellAgentsIndexRoute
   '/connections': typeof AuthShellConnectionsIndexRoute
+  '/integrations': typeof AuthShellIntegrationsIndexRoute
   '/pending': typeof AuthShellPendingIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
-  '/': typeof IndexRoute
   '/_auth': typeof AuthRouteRouteWithChildren
   '/forgot-password': typeof ForgotPasswordRoute
   '/login': typeof LoginRoute
@@ -159,11 +184,15 @@ export interface FileRoutesById {
   '/_auth/setup': typeof AuthSetupRoute
   '/link/callback': typeof LinkCallbackRoute
   '/oauth/callback': typeof OauthCallbackRoute
+  '/_auth/_shell/activity': typeof AuthShellActivityRoute
   '/_auth/_shell/settings': typeof AuthShellSettingsRoute
   '/_auth/pending/$id': typeof AuthPendingIdRoute
+  '/_auth/_shell/': typeof AuthShellIndexRoute
   '/_auth/_shell/agents/$agentId': typeof AuthShellAgentsAgentIdRoute
+  '/_auth/_shell/integrations/$vendor': typeof AuthShellIntegrationsVendorRoute
   '/_auth/_shell/agents/': typeof AuthShellAgentsIndexRoute
   '/_auth/_shell/connections/': typeof AuthShellConnectionsIndexRoute
+  '/_auth/_shell/integrations/': typeof AuthShellIntegrationsIndexRoute
   '/_auth/_shell/pending/': typeof AuthShellPendingIndexRoute
 }
 export interface FileRouteTypes {
@@ -178,11 +207,14 @@ export interface FileRouteTypes {
     | '/setup'
     | '/link/callback'
     | '/oauth/callback'
+    | '/activity'
     | '/settings'
     | '/pending/$id'
     | '/agents/$agentId'
+    | '/integrations/$vendor'
     | '/agents/'
     | '/connections/'
+    | '/integrations/'
     | '/pending/'
   fileRoutesByTo: FileRoutesByTo
   to:
@@ -195,15 +227,17 @@ export interface FileRouteTypes {
     | '/setup'
     | '/link/callback'
     | '/oauth/callback'
+    | '/activity'
     | '/settings'
     | '/pending/$id'
     | '/agents/$agentId'
+    | '/integrations/$vendor'
     | '/agents'
     | '/connections'
+    | '/integrations'
     | '/pending'
   id:
     | '__root__'
-    | '/'
     | '/_auth'
     | '/forgot-password'
     | '/login'
@@ -214,16 +248,19 @@ export interface FileRouteTypes {
     | '/_auth/setup'
     | '/link/callback'
     | '/oauth/callback'
+    | '/_auth/_shell/activity'
     | '/_auth/_shell/settings'
     | '/_auth/pending/$id'
+    | '/_auth/_shell/'
     | '/_auth/_shell/agents/$agentId'
+    | '/_auth/_shell/integrations/$vendor'
     | '/_auth/_shell/agents/'
     | '/_auth/_shell/connections/'
+    | '/_auth/_shell/integrations/'
     | '/_auth/_shell/pending/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
-  IndexRoute: typeof IndexRoute
   AuthRouteRoute: typeof AuthRouteRouteWithChildren
   ForgotPasswordRoute: typeof ForgotPasswordRoute
   LoginRoute: typeof LoginRoute
@@ -235,13 +272,6 @@ export interface RootRouteChildren {
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
-    '/': {
-      id: '/'
-      path: '/'
-      fullPath: '/'
-      preLoaderRoute: typeof IndexRouteImport
-      parentRoute: typeof rootRouteImport
-    }
     '/_auth': {
       id: '/_auth'
       path: ''
@@ -312,6 +342,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof OauthCallbackRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/_auth/_shell/': {
+      id: '/_auth/_shell/'
+      path: '/'
+      fullPath: '/'
+      preLoaderRoute: typeof AuthShellIndexRouteImport
+      parentRoute: typeof AuthShellRouteRoute
+    }
+    '/_auth/_shell/activity': {
+      id: '/_auth/_shell/activity'
+      path: '/activity'
+      fullPath: '/activity'
+      preLoaderRoute: typeof AuthShellActivityRouteImport
+      parentRoute: typeof AuthShellRouteRoute
+    }
     '/_auth/_shell/settings': {
       id: '/_auth/_shell/settings'
       path: '/settings'
@@ -347,6 +391,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthShellConnectionsIndexRouteImport
       parentRoute: typeof AuthShellRouteRoute
     }
+    '/_auth/_shell/integrations/': {
+      id: '/_auth/_shell/integrations/'
+      path: '/integrations'
+      fullPath: '/integrations/'
+      preLoaderRoute: typeof AuthShellIntegrationsIndexRouteImport
+      parentRoute: typeof AuthShellRouteRoute
+    }
+    '/_auth/_shell/integrations/$vendor': {
+      id: '/_auth/_shell/integrations/$vendor'
+      path: '/integrations/$vendor'
+      fullPath: '/integrations/$vendor'
+      preLoaderRoute: typeof AuthShellIntegrationsVendorRouteImport
+      parentRoute: typeof AuthShellRouteRoute
+    }
     '/_auth/_shell/pending/': {
       id: '/_auth/_shell/pending/'
       path: '/pending'
@@ -358,18 +416,26 @@ declare module '@tanstack/react-router' {
 }
 
 interface AuthShellRouteRouteChildren {
+  AuthShellActivityRoute: typeof AuthShellActivityRoute
   AuthShellSettingsRoute: typeof AuthShellSettingsRoute
+  AuthShellIndexRoute: typeof AuthShellIndexRoute
   AuthShellAgentsAgentIdRoute: typeof AuthShellAgentsAgentIdRoute
+  AuthShellIntegrationsVendorRoute: typeof AuthShellIntegrationsVendorRoute
   AuthShellAgentsIndexRoute: typeof AuthShellAgentsIndexRoute
   AuthShellConnectionsIndexRoute: typeof AuthShellConnectionsIndexRoute
+  AuthShellIntegrationsIndexRoute: typeof AuthShellIntegrationsIndexRoute
   AuthShellPendingIndexRoute: typeof AuthShellPendingIndexRoute
 }
 
 const AuthShellRouteRouteChildren: AuthShellRouteRouteChildren = {
+  AuthShellActivityRoute: AuthShellActivityRoute,
   AuthShellSettingsRoute: AuthShellSettingsRoute,
+  AuthShellIndexRoute: AuthShellIndexRoute,
   AuthShellAgentsAgentIdRoute: AuthShellAgentsAgentIdRoute,
+  AuthShellIntegrationsVendorRoute: AuthShellIntegrationsVendorRoute,
   AuthShellAgentsIndexRoute: AuthShellAgentsIndexRoute,
   AuthShellConnectionsIndexRoute: AuthShellConnectionsIndexRoute,
+  AuthShellIntegrationsIndexRoute: AuthShellIntegrationsIndexRoute,
   AuthShellPendingIndexRoute: AuthShellPendingIndexRoute,
 }
 
@@ -396,7 +462,6 @@ const AuthRouteRouteWithChildren = AuthRouteRoute._addFileChildren(
 )
 
 const rootRouteChildren: RootRouteChildren = {
-  IndexRoute: IndexRoute,
   AuthRouteRoute: AuthRouteRouteWithChildren,
   ForgotPasswordRoute: ForgotPasswordRoute,
   LoginRoute: LoginRoute,

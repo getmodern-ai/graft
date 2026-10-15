@@ -1,7 +1,21 @@
-import { and, desc, eq, gt, inArray, isNotNull, isNull, sql } from "drizzle-orm";
+import {
+  and,
+  desc,
+  eq,
+  gt,
+  inArray,
+  isNotNull,
+  isNull,
+  lte,
+  notExists,
+  or,
+  type SQL,
+  sql,
+} from "drizzle-orm";
 
 import type { DbOrTx } from "../index";
 import { agent } from "../schema/agent";
+import { connection } from "../schema/connection";
 import { type NewPendingActionRow, pendingAction } from "../schema/pending-action";
 import { scopedAgentIds } from "./agent";
 import type { AgentScope } from "./scope";
@@ -39,13 +53,37 @@ export async function lockPendingActionKey(
   );
 }
 
+/**
+ * A new ask, only for an agent of the scope that is not revoked. The agent's row is read `FOR SHARE`
+ * in the insert's transaction, so an agent revoke (`repo/agent.ts`'s `revokeAgent`, an update of
+ * that row) and this insert serialise: a revoke that commits first leaves this read empty and nothing
+ * is inserted; an insert that commits first is seen by the revoke's close of the agent's open asks
+ * (`closePendingActionsForAgent`), which runs after the revoke's update has waited on it (Greptile
+ * on #225). Null is "no such active agent", which the service refuses.
+ */
 export async function insertPendingAction(
   db: DbOrTx,
+  scope: AgentScope,
   input: NewPendingActionRow,
-): Promise<PendingActionRow> {
-  const [row] = await db.insert(pendingAction).values(input).returning();
-  if (!row) throw new Error("Insert of pending action returned no row");
-  return row;
+): Promise<PendingActionRow | null> {
+  if (input.agentId !== scope.agentId) return null;
+  return db.transaction(async (tx) => {
+    const [active] = await tx
+      .select({ id: agent.id })
+      .from(agent)
+      .where(
+        and(
+          eq(agent.id, scope.agentId),
+          eq(agent.personId, scope.personId),
+          isNull(agent.revokedAt),
+        ),
+      )
+      .for("share");
+    if (!active) return null;
+    const [row] = await tx.insert(pendingAction).values(input).returning();
+    if (!row) throw new Error("Insert of pending action returned no row");
+    return row;
+  });
 }
 
 export async function findPendingAction(
@@ -99,10 +137,140 @@ export async function listOpenPendingActions(
 }
 
 /**
- * The person's answer. The statement refuses an action already answered and one past its expiry
- * — both predicates in the SQL, so an answer that arrives late lands nowhere rather than on a call
- * that has already returned its refusal. Null is "nothing to answer": unknown, not theirs,
- * answered, or expired, which the service reports as one refusal.
+ * When a finished ask finished: the answer's moment when it was answered, else its expiry, which a
+ * revoke's close stamps to the moment of the revoke. Once an ask is finished this cannot move: an
+ * answer needs `expires_at` ahead of it, and a close needs it ahead of the revoke, so neither lands
+ * on an expired ask, and a close of an answered ask moves `expires_at` behind an `answered_at` that
+ * wins the coalesce. A newly finished ask therefore sorts at the top, never between pages, which is
+ * what keeps the Done list's cursor stable.
+ */
+const finishedAt: SQL<Date> = sql<Date>`coalesce(${pendingAction.answeredAt}, ${pendingAction.expiresAt})`;
+
+/** Where the next page of the Done list starts: strictly after this row, in the list's order. */
+export type DonePendingActionCursor = { finishedAt: Date; id: string };
+
+/**
+ * The console's Done list (GRA-292): the person's asks that were answered, expired or closed by a
+ * revoke, newest finish first, keyset-paged on `(finishedAt, id)` so the cursor names a row rather
+ * than an offset. `now` is a parameter, as the open list's is, so the two lists split the person's
+ * asks on one clock. The cursor's moment is bound through the column's own encoder so it compares
+ * exactly as the stored value does.
+ */
+export async function listDonePendingActions(
+  db: DbOrTx,
+  personId: string,
+  args: { now: Date; limit: number; after?: DonePendingActionCursor | null },
+): Promise<PendingActionRow[]> {
+  const after = args.after
+    ? sql`(${finishedAt}, ${pendingAction.id}) < (${sql.param(args.after.finishedAt, pendingAction.expiresAt)}, ${args.after.id})`
+    : undefined;
+  return db
+    .select()
+    .from(pendingAction)
+    .where(
+      and(
+        inArray(pendingAction.agentId, personAgentIds(db, personId)),
+        or(isNotNull(pendingAction.answeredAt), lte(pendingAction.expiresAt, args.now)),
+        after,
+      ),
+    )
+    .orderBy(desc(finishedAt), desc(pendingAction.id))
+    .limit(args.limit);
+}
+
+/**
+ * One suggestion's row (`listSuggestedConnectionAsks`): the latest connection ask of a vendor, the
+ * agent that made it, and the three clocks the caller reads its state from. The payload's
+ * `displayName` and `docsUrl` come out of the JSON; nothing else of it does.
+ */
+export type SuggestedConnectionAskRow = {
+  id: string;
+  agentId: string;
+  agentName: string;
+  vendor: string;
+  displayName: string | null;
+  docsUrl: string | null;
+  createdAt: Date;
+  expiresAt: Date;
+  answeredAt: Date | null;
+  consumedAt: Date | null;
+};
+
+/**
+ * "Your agents asked for these" (ADR 0001 as amended 2026-10-14): per vendor, the newest `connection`
+ * ask any of the person's live agents made, kept when it was not answered with a connection (so it
+ * is open, declined or expired) and the person holds no unrevoked connection of that vendor; newest
+ * first, at most `limit`. One statement under the person on both tables: the ask through
+ * `agent.person_id`, the connection through its own `person_id`. The newest ask decides alone, so a
+ * vendor the person connected from an agent's ask and later revoked is not suggested again from an
+ * older one. The vendor is read off the payload, as `request_connection` wrote it.
+ */
+export async function listSuggestedConnectionAsks(
+  db: DbOrTx,
+  personId: string,
+  limit: number,
+): Promise<SuggestedConnectionAskRow[]> {
+  const vendor = sql<string>`${pendingAction.payload} ->> 'vendor'`;
+  const latest = db
+    .selectDistinctOn([vendor], {
+      id: pendingAction.id,
+      agentId: pendingAction.agentId,
+      agentName: sql<string>`${agent.name}`.as("agent_name"),
+      vendor: vendor.as("vendor"),
+      displayName: sql<string | null>`${pendingAction.payload} ->> 'displayName'`.as(
+        "display_name",
+      ),
+      docsUrl: sql<string | null>`${pendingAction.payload} ->> 'docsUrl'`.as("docs_url"),
+      answeredWith: sql<string | null>`${pendingAction.answer} ->> 'connectionId'`.as(
+        "answered_with",
+      ),
+      createdAt: pendingAction.createdAt,
+      expiresAt: pendingAction.expiresAt,
+      answeredAt: pendingAction.answeredAt,
+      consumedAt: pendingAction.consumedAt,
+    })
+    .from(pendingAction)
+    .innerJoin(agent, eq(agent.id, pendingAction.agentId))
+    .where(
+      and(
+        eq(agent.personId, personId),
+        isNull(agent.revokedAt),
+        eq(pendingAction.kind, "connection"),
+        sql`${vendor} is not null`,
+        notExists(
+          db
+            .select({ id: connection.id })
+            .from(connection)
+            .where(
+              and(
+                eq(connection.personId, personId),
+                eq(connection.vendor, vendor),
+                isNull(connection.revokedAt),
+              ),
+            ),
+        ),
+      ),
+    )
+    .orderBy(vendor, desc(pendingAction.createdAt), desc(pendingAction.id))
+    .as("latest");
+  const rows = await db
+    .select()
+    .from(latest)
+    .where(isNull(latest.answeredWith))
+    .orderBy(desc(latest.createdAt), desc(latest.id))
+    .limit(limit);
+  return rows.map(({ answeredWith: _, ...row }) => row);
+}
+
+/**
+ * The person's answer. The statement refuses an action already answered, one past its expiry and
+ * one a revoke closed — all in the SQL, so an answer that arrives late lands nowhere rather than on
+ * a call that has already returned its refusal. `consumed_at IS NULL` is the closed check: an
+ * unanswered ask is only ever stamped consumed by a revoke's close, including one closed before
+ * `closed_reason` existed, and it holds where `expires_at` would not: an answer whose clock was read
+ * before a close that commits ahead of it still compares its earlier moment with the close's later
+ * one (Greptile on #225). Null is "nothing to answer": unknown, not theirs, answered, expired or
+ * closed, which the service reports as one refusal.
  */
 export async function answerPendingAction(
   db: DbOrTx,
@@ -118,6 +286,7 @@ export async function answerPendingAction(
         eq(pendingAction.id, id),
         inArray(pendingAction.agentId, personAgentIds(db, personId)),
         isNull(pendingAction.answeredAt),
+        isNull(pendingAction.consumedAt),
         gt(pendingAction.expiresAt, args.answeredAt),
       ),
     )
@@ -155,6 +324,7 @@ export async function updatePendingActionPayload(
         eq(pendingAction.id, id),
         inArray(pendingAction.agentId, personAgentIds(db, personId)),
         isNull(pendingAction.answeredAt),
+        isNull(pendingAction.consumedAt),
         gt(pendingAction.expiresAt, args.now),
         eq(pendingAction.updatedAt, args.expect.updatedAt),
         sql`${pendingAction.payload} ->> 'provider' = ${args.expect.provider}`,
@@ -228,8 +398,9 @@ export async function listPendingActionsByKind(
  * take (`consumePendingAction`) reads no clock at all — an answer may be taken after its expiry,
  * which is the whole point of a durable record (ADR 0006) — so a per-call yes already given would
  * still be grantable after reconnection unless `consumed_at` is stamped too (GRA-23's known edge,
- * closed by GRA-28). A closed ask therefore reads as expired to the console and as taken to the
- * agent; the next call asks afresh, which after a revoke is right.
+ * closed by GRA-28). A closed ask therefore reads as finished to the console and as taken to the
+ * agent; the next call asks afresh, which after a revoke is right. `closed_reason` says it was the
+ * revoke, so the Done list does not call it expired (GRA-292).
  */
 export async function expirePendingActionsForConnection(
   db: DbOrTx,
@@ -239,11 +410,35 @@ export async function expirePendingActionsForConnection(
 ): Promise<PendingActionRow[]> {
   return db
     .update(pendingAction)
-    .set({ expiresAt: at, consumedAt: at })
+    .set({ expiresAt: at, consumedAt: at, closedReason: "connection_revoked" })
     .where(
       and(
         eq(pendingAction.connectionId, connectionId),
         inArray(pendingAction.agentId, personAgentIds(db, personId)),
+        isNull(pendingAction.consumedAt),
+        gt(pendingAction.expiresAt, at),
+      ),
+    )
+    .returning();
+}
+
+/**
+ * An agent's revoke closes every ask it left open (GRA-292), as a connection's revoke closes the
+ * asks about it and with the same two clocks: the person can no longer answer an ask for an agent
+ * whose token stopped resolving, and nothing will take the answer. `closed_reason` says why, so the
+ * Done list reads it as closed by the revoke rather than as an expiry a day later.
+ */
+export async function closePendingActionsForAgent(
+  db: DbOrTx,
+  scope: AgentScope,
+  at: Date,
+): Promise<PendingActionRow[]> {
+  return db
+    .update(pendingAction)
+    .set({ expiresAt: at, consumedAt: at, closedReason: "agent_revoked" })
+    .where(
+      and(
+        inArray(pendingAction.agentId, scopedAgentIds(db, scope)),
         isNull(pendingAction.consumedAt),
         gt(pendingAction.expiresAt, at),
       ),
@@ -278,6 +473,69 @@ export async function settleAnsweredToolActions(
         sql`${pendingAction.payload} ->> 'toolId' = ${toolId}`,
         isNotNull(pendingAction.answeredAt),
         isNull(pendingAction.consumedAt),
+      ),
+    )
+    .returning();
+}
+
+/**
+ * The open `tool` asks about one tool for one agent: unanswered, untaken and in time, in id order
+ * (GRA-302). Read twice by an answer set from the console: once plain, for the connections the asks
+ * name, which it locks first as answering an ask does (`recordApprovalAnswer`), and once with
+ * `forUpdate` after those locks and before the tool row's, which is that path's order (connection,
+ * action, tool), so the two cannot deadlock. The tool is matched on the payload, as
+ * `settleAnsweredToolActions` matches it.
+ */
+export async function listOpenToolActions(
+  db: DbOrTx,
+  scope: AgentScope,
+  toolId: string,
+  at: Date,
+  options: { forUpdate?: boolean } = {},
+): Promise<PendingActionRow[]> {
+  const query = db
+    .select()
+    .from(pendingAction)
+    .where(
+      and(
+        inArray(pendingAction.agentId, scopedAgentIds(db, scope)),
+        eq(pendingAction.kind, "tool"),
+        sql`${pendingAction.payload} ->> 'toolId' = ${toolId}`,
+        isNull(pendingAction.answeredAt),
+        isNull(pendingAction.consumedAt),
+        gt(pendingAction.expiresAt, at),
+      ),
+    )
+    .orderBy(pendingAction.id);
+  return options.forUpdate ? query.for("update") : query;
+}
+
+/**
+ * Answer the named open `tool` asks of one agent with the answer the console just set outright,
+ * and mark each taken (ADR 0008 as amended 2026-10-14; GRA-302). The standing row now carries the
+ * answer in full, so the ask is answered and spent at once, as `recordApprovalAnswer` spends an
+ * answer the row carries: the inbox no longer offers an answer already given, and a call still
+ * waiting on the ask reads it as taken and judges the rule again. Only `ids`, the rows the caller
+ * locked (`listOpenToolActions`), so the statement takes no row lock out of order; open and in
+ * time in the predicate, as an answer is.
+ */
+export async function answerOpenToolActions(
+  db: DbOrTx,
+  scope: AgentScope,
+  args: { ids: readonly string[]; answer: Record<string, unknown>; at: Date },
+): Promise<PendingActionRow[]> {
+  if (args.ids.length === 0) return [];
+  return db
+    .update(pendingAction)
+    .set({ answer: args.answer, answeredAt: args.at, consumedAt: args.at })
+    .where(
+      and(
+        inArray(pendingAction.id, [...args.ids]),
+        inArray(pendingAction.agentId, scopedAgentIds(db, scope)),
+        eq(pendingAction.kind, "tool"),
+        isNull(pendingAction.answeredAt),
+        isNull(pendingAction.consumedAt),
+        gt(pendingAction.expiresAt, args.at),
       ),
     )
     .returning();

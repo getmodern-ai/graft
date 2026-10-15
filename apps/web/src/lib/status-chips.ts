@@ -1,8 +1,10 @@
 import { isAwaitingHarness } from "@graft/core/setup/setup.rules";
 
+import type { ActivityAnswerOutcome } from "./activity-screen";
 import type { Agent, WorkingSetChange } from "./agent-queries";
 import type { Approval } from "./approval-queries";
 import type { Connection, ConnectionCall, ConnectionStatus } from "./connection-queries";
+import type { ModelStatus } from "./model-status";
 
 /**
  * Every status chip the console draws, from one place (GRA-47).
@@ -33,7 +35,7 @@ export type StatusChip = {
  */
 export const AGENT_STATUS_CHIP = {
   active: { variant: "success", label: "Active" },
-  awaiting_harness: { variant: "outline", label: "Awaiting harness" },
+  awaiting_harness: { variant: "outline", label: "Not connected yet" },
   revoked: { variant: "destructive", label: "Revoked" },
 } as const satisfies Record<"active" | "awaiting_harness" | "revoked", StatusChip>;
 
@@ -68,6 +70,12 @@ export const AWAITING_RECONNECTION_CHIP: StatusChip = {
 };
 
 /**
+ * On an agent page's integration row whose connection needs the person (GRA-326): the destructive
+ * tone, since its tools will not run until they act, and the act itself as the words (GRA-282).
+ */
+export const RECONNECT_CHIP: StatusChip = { variant: "destructive", label: "Reconnect" };
+
+/**
  * The chips a connection's card wears for its status — one, or two for a revoked connection, whose
  * second chip is the way back (`AWAITING_RECONNECTION_CHIP`).
  */
@@ -84,11 +92,57 @@ export function connectionStatusChips(
   return [CONNECTION_STATUS_CHIP[status]];
 }
 
+/**
+ * A live connection whose provider this deployment no longer enables (GRA-291's `ConnectionState`):
+ * nothing the person enters brings it back, so the destructive tone, and words that do not ask
+ * them to act.
+ */
+export const PROVIDER_UNAVAILABLE_CHIP: StatusChip = {
+  variant: "destructive",
+  label: "Unavailable",
+};
+
+/**
+ * The chip for a connection as the integrations read words it (`IntegrationConnection.state`), or
+ * revoked: the card's first chip, plus the one state only the server can tell.
+ */
+export function connectionStateChip(
+  connection: Pick<Connection, "oauth">,
+  state: ConnectionStatus | "provider_unavailable",
+): StatusChip {
+  if (state === "provider_unavailable") return PROVIDER_UNAVAILABLE_CHIP;
+  return connectionStatusChips(connection, state)[0] ?? CONNECTION_STATUS_CHIP[state];
+}
+
 export const CALL_OUTCOME_CHIP = {
   ok: { variant: "success", label: "OK" },
   error: { variant: "destructive", label: "Error" },
   refused: { variant: "outline", label: "Refused" },
 } as const satisfies Record<ConnectionCall["outcome"], StatusChip>;
+
+/**
+ * A run in the activity (GRA-319; Figma 2095:10473), in the person's words. Not the success tone
+ * for a run that went through: the row records a call that ended, not a state that holds, so it is
+ * the neutral rest; a failure is destructive, and a call Graft stopped before it ran is outline,
+ * as a refused call is above.
+ */
+export const ACTIVITY_OUTCOME_CHIP = {
+  ok: { variant: "secondary", label: "Ran" },
+  error: { variant: "destructive", label: "Failed" },
+  refused: { variant: "outline", label: "Blocked" },
+} as const satisfies Record<ConnectionCall["outcome"], StatusChip>;
+
+/**
+ * An answer in the activity (GRA-330), in a run's tones: what the person let through is the
+ * neutral rest, as Ran is, and what they turned down is outline, as Blocked is. Not Allowed's
+ * success tone (`APPROVAL_DECISION_CHIP`): the row records a moment, not the answer standing now.
+ */
+export const ACTIVITY_ANSWER_CHIP = {
+  allowed: { variant: "secondary", label: "Allowed" },
+  connected: { variant: "secondary", label: "Connected" },
+  denied: { variant: "outline", label: "Denied" },
+  declined: { variant: "outline", label: "Declined" },
+} as const satisfies Record<ActivityAnswerOutcome, StatusChip>;
 
 /** A dry run reached the vendor for reads only (CONTEXT.md, *Dry run*); the chip rides beside the tool name. */
 export const DRY_RUN_CHIP: StatusChip = { variant: "outline", label: "Dry run" };
@@ -107,6 +161,20 @@ export const APPROVAL_DECISION_CHIP = {
   allow: { variant: "success", label: "Allowed" },
   deny: { variant: "destructive", label: "Denied" },
 } as const satisfies Record<Approval["decision"], StatusChip>;
+
+/**
+ * An answer as the integration page's *Your answers* lists it (GRA-318): `success` where the agent
+ * runs without asking, `destructive` for a refusal, `secondary` for a tool set to ask every time,
+ * the person's own choice and not a fault, and `outline` for an allow given for an earlier
+ * version, which waits on the next call's ask (GRA-245).
+ */
+export const ANSWER_CHIP = {
+  always: { variant: "success", label: "Always allowed" },
+  allowed: { variant: "success", label: "Allowed" },
+  ask_every_time: { variant: "secondary", label: "Asks every time" },
+  denied: { variant: "destructive", label: "Denied" },
+  asks_next_time: { variant: "outline", label: "Asks next time" },
+} as const satisfies Record<string, StatusChip>;
 
 /**
  * Whether destructive tools pass under an integration's standing approval (GRA-237; ADR 0008 as
@@ -134,6 +202,29 @@ export const MODEL_KEY_STATUS_CHIP = {
 } as const satisfies Record<"set" | "unset", StatusChip>;
 
 /**
+ * The person's own address and sign-in accounts on Settings › Account (GRA-331): a verified address
+ * and a linked provider work; an unverified address waits on the emailed link.
+ */
+export const EMAIL_STATUS_CHIP = {
+  verified: { variant: "success", label: "Verified" },
+  unverified: { variant: "outline", label: "Not verified" },
+} as const satisfies Record<"verified" | "unverified", StatusChip>;
+
+export const SIGN_IN_ACCOUNT_CHIP: StatusChip = { variant: "success", label: "Connected" };
+
+/**
+ * What answers the person's `acquire` jobs (GRA-297; `lib/model-status.ts` decides which): the
+ * deployment's model or their own key work; a deployment that needs a key, or has no model at
+ * all, builds nothing until someone acts.
+ */
+export const MODEL_STATUS_CHIP = {
+  included: { variant: "success", label: "Included" },
+  own_key: { variant: "success", label: "In use" },
+  needs_key: { variant: "destructive", label: "Needs a key" },
+  unconfigured: { variant: "destructive", label: "Not configured" },
+} as const satisfies Record<ModelStatus, StatusChip>;
+
+/**
  * A tool's annotations as the check derived them (ADR 0008): read-only passes without asking; write
  * and destructive both ask once and hold, and the destructive tone is what tells the person the ask
  * is about deleting or overwriting. Three distinct tones because the annotation is what decides
@@ -149,4 +240,24 @@ export function toolAnnotationChip(readOnly: boolean, destructive: boolean): Sta
   if (readOnly) return TOOL_ANNOTATION_CHIP["read-only"];
   if (destructive) return TOOL_ANNOTATION_CHIP.destructive;
   return TOOL_ANNOTATION_CHIP.write;
+}
+
+/**
+ * A tool's access in App v2's words (GRA-320; GRA-287: "Can delete" on Tools): what the tool does
+ * to the person's data, from the same annotations. Reads never ask (ADR 0008), so a read is the
+ * neutral tone, a write waits on the person's first answer, and a delete keeps the red.
+ */
+export const TOOL_ACCESS_CHIP = {
+  read: { variant: "secondary", label: "Read" },
+  changes: { variant: "outline", label: "Changes data" },
+  deletes: { variant: "destructive", label: "Can delete" },
+} as const satisfies Record<"read" | "changes" | "deletes", StatusChip>;
+
+export function toolAccessChip(annotations: {
+  readOnlyHint: boolean;
+  destructiveHint: boolean;
+}): StatusChip {
+  if (annotations.readOnlyHint) return TOOL_ACCESS_CHIP.read;
+  if (annotations.destructiveHint) return TOOL_ACCESS_CHIP.deletes;
+  return TOOL_ACCESS_CHIP.changes;
 }

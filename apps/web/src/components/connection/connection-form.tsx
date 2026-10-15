@@ -55,7 +55,7 @@ export function ConnectionFormFields({
     <>
       <div className="grid gap-4 sm:grid-cols-2">
         <Field data-invalid={invalid("vendor")}>
-          <FieldLabel htmlFor={id("vendor")}>Integration</FieldLabel>
+          <FieldLabel htmlFor={id("vendor")}>Integration ID</FieldLabel>
           <Input
             id={id("vendor")}
             value={draft.vendor}

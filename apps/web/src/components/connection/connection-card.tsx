@@ -1,5 +1,6 @@
 import { takesCredential } from "@graft/core/connection/connection.rules";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { Link } from "@tanstack/react-router";
 import { useState } from "react";
 import { toast } from "sonner";
 import { ConnectionCalls } from "@/components/connection/connection-calls";
@@ -250,7 +251,14 @@ export function ConnectionCard({
     <Card>
       <CardHeader>
         <CardTitle className="flex flex-wrap items-center gap-2">
-          {connection.displayName}
+          {/* The integration's page (GRA-315), one per vendor, which lists this connection too. */}
+          <Link
+            to="/integrations/$vendor"
+            params={{ vendor: connection.vendor }}
+            className="rounded-sm hover:underline focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
+          >
+            {connection.displayName}
+          </Link>
           <Badge variant="outline">{connection.vendor}</Badge>
           {keyring ? null : <Badge variant="outline">{providerLabel(connection)}</Badge>}
           <Badge variant="outline">{connection.scheme}</Badge>

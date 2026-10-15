@@ -451,7 +451,9 @@ amended 2026-09-20): a `grfta_` request with an unknown session id, or with none
 announcing a protocol version the SDK lacks negotiates instead of being refused** (GRA-162; ADR 0018
 as amended 2026-09-22): the door drops the `MCP-Protocol-Version` header on a session-less
 `initialize` when the SDK does not speak it, so the body's version negotiates to Graft's latest —
-Claude.ai has announced `2026-07-28` on every session since 2026-09-20 — and a request that names a
+Claude.ai has announced `2026-07-28` on every session since 2026-09-20 — and on both of GRA-129's
+re-open paths, where the re-opened session negotiated for the client (GRA-232: Claude opens with a
+session-less `tools/list`, and the 400 outlived #128 by two weeks); a request that names a live
 session keeps the SDK's 400. Under `open`,
 authored code runs on the backing `GRAFT_SANDBOX_BACKEND` names:
 `docker` by default, which needs the `GRAFT_SANDBOX_IMAGE`/`GRAFT_SANDBOX_NETWORK` pair below and,
@@ -492,11 +494,15 @@ as amended 2026-09-18). `packages/ask-card` (`@graft/ask-card`) is one HTML page
 over `@modelcontextprotocol/ext-apps`'s `app-with-deps`, no React — that `vite build` with
 `vite-plugin-singlefile` inlines whole into `dist/ask.html`; hosts block external scripts and styles,
 so nothing may be linked. **The card reports its own frame height** (GRA-275): `autoResize` is
-off, nothing is reported before the first tool result, and every render and every layout change
-of the mount writes the height both as `ui/notifications/size-changed` and on `<html>`, which is
-what Claude.ai reads (anthropics/claude-ai-mcp#69); a result with no card reports 0, so the host
-draws no empty frame under a `find_tool` or `run_tool` that asked nothing (`src/frame-size.ts`,
-`src/card-view.ts`). Its stylesheet carries a copy of the console's `cando:tokens` block and
+off, and every render and every layout change of the mount writes the height both as
+`ui/notifications/size-changed` and on `<html>`, which is what Claude.ai reads
+(anthropics/claude-ai-mcp#69); a result with no card reports 0, so the host draws no empty frame
+under a `find_tool` or `run_tool` that asked nothing (`src/frame-size.ts`, `src/card-view.ts`).
+Before any result the mount holds one *Waiting for Graft…* line, shipped in `ask.html` and
+reported on the page's first run and again after `connect()`, so a call that waits on an approval
+shows that line rather than Claude's blank 150 px default; the tool-input notification keeps it
+(GRA-335). A line rather than 0, because a zero-height frame is the one the card would have to
+grow out of nothing, and an ask hidden there is one the model was told not to relay. Its stylesheet carries a copy of the console's `cando:tokens` block and
 `src/bundle.test.ts` fails on a colour literal outside the `:root`/`.dark` rules (ADR 0017 over one
 file). The MCP server (`packages/mcp/src/ask-card.ts`, `session.ts`) declares `resources`, lists the
 one resource `ui://graft/ask` (`text/html;profile=mcp-app`, an empty `_meta.ui.csp` said outright:
@@ -562,9 +568,15 @@ its console redirect; `McpDeps.authUrl` is `GRAFT_AUTH_URL` for it. `ask_status 
 reads where the ask stands off the row — `open`, `answered`, `declined`, `expired` — with the
 console's settled sentence for the kind. The card (`packages/ask-card/src/render.ts`) opens every
 page it sends the person to with `from=card` (`withFromCard`; `ASK_STATUS_POLL_MS` is 3 s) and polls
-`ask_status` until the ask is settled or the render is abandoned: *Connect through <provider>* on a
-link ask, *Enter the secret in Graft* on a scheme with a credential or a credential re-entry, *Open
-in the console* under a `card_not_available` refusal or where the host refused `ui/open-link`. The
+`ask_status` until the ask is settled or the render is abandoned: *Sign in with <integration>* on a
+link ask, *Open in Graft* on a scheme with a credential or a credential re-entry, *Open in the
+console* under a `card_not_available` refusal or where the host refused `ui/open-link`. **The card
+asks the handoff page's questions with its choices** (GRA-316): *Full access / Ask me first* on a
+keyless connection, a link ask and a scope ask (the scope ask's yes is `{ allow, approveBuild,
+allowVendor }` on `answer_ask`, never destructive), and on a tool ask *Every <integration> tool*,
+*Just <tool>* and the destructive line, with no allow for one call. Its words are
+`packages/ask-card/src/copy.ts`, a copy of the console's `access-choice.ts`, `tool-allow-choice.ts`
+and `handoff-copy.ts` helpers, held to them by `apps/web/src/lib/ask-card-copy.test.ts`. The
 console reads the flag through `@graft/core`'s browser-safe `connection/card.rules.ts`
 (`openedFromCard`, `askAnsweredMessage`, `FROM_CARD_CLOSE_MS`): `/pending/:id?from=card` posts
 `graft:ask` to its opener and closes itself 1.5 s after a successful submit (since GRA-144 every
@@ -588,9 +600,9 @@ choice, pre-ticked — and posts the generic `POST /api/pending-actions/:id/answ
 `recordApprovalAnswer` in `ask-answer.ts` grows the scope (`addConnectionToAgentScope`) and grants
 the build approval in the answer's transaction, and leaves the answer for the agent's next call,
 which answers `connected` naming the execute tool, or `scope_declined`. The ask card renders
-`card.kind: "scope"` as answerable, and `answer_ask` admits `{ allow, approveBuild? }` for it under
-the same gate. `SERVER_INSTRUCTIONS` names `scope` in its handoff list, and `session.test.ts`
-pins the word across the description and the Hermes skill.
+`card.kind: "scope"` as answerable, and `answer_ask` admits `{ allow }`, `{ allow, approveBuild }`
+or `{ allow, approveBuild, allowVendor }` for it under the same gate (the last since GRA-316).
+`SERVER_INSTRUCTIONS` names `scope` in its handoff list, and `session.test.ts` pins the word across the description and the Hermes skill.
 
 **A keyless proposal for a vendor the person already holds widens that row** (GRA-167; ADR 0006 as
 amended 2026-09-22). When `existingConnectionFor` finds no row covering a `none`-scheme proposal
@@ -617,7 +629,14 @@ the mode, and `listAgentIdsForConnection` — the agents a revoke announces to �
 usable row in scope and answers `connected`. The console draws the mode as a `Select` — `All
 connections` first, `Selected connections` revealing the picker — through `components/agent/scope-mode-field.tsx`
 in the create dialog and the consent card; the labels and the write's body are
-`src/lib/scope-mode.ts`, tested.
+`src/lib/scope-mode.ts`, tested. **One connection is turned on or off for one agent by its own
+write** (GRA-294): `PUT` and `DELETE /api/connections/:id/agents/:agentId` are
+`addConnectionToAgentScope` and `removeConnectionFromAgentScope`, each under the agent's row lock in
+one transaction, answering `AgentScopeToggleOutput`; a removal from an agent on `all` materialises
+`listed` without that connection, so later connections stop arriving, and answers `materialised:
+true`. Every scope write but a grant to an agent on `all` tells the agent's session after the
+commit. The agent page's switches are `src/lib/scope-toggles.ts` (`turnLater`, `turnConnection`),
+tested against the server's model.
 
 **A tool follows its vendor's reconnected connection** (GRA-122; ADR 0007 as amended 2026-09-20).
 `authored_tool.default_connection_id` is the row the tool was authored against, and a run resolves
@@ -1182,6 +1201,18 @@ and every row's menu has View agent, revoked rows included; the detail drawer is
 page keeps scope and limit editors, the working set, approvals, history and standalone revocation;
 revoked records are read-only. `GET /api/agents` includes `workingSetCount`, counted against each
 person-scoped agent in the same statement; the table shows count/cap with Cando's status dot.
+Since GRA-290 the same one statement also answers each agent's `connectionIds` (the scope as it
+resolves under its mode, `listScopeConnectionIds`'s rule) and `lastActiveAt` (its last ledger row
+that was not a dry run, any outcome), and the answer is `AgentListAnswer`, `{ agents, hasRunTool }`:
+the flag is a per-agent `exists` over ledger rows that are not dry runs and answered `ok`, in the
+same statement, folded across the person's agents in `@graft/core`'s `listAgents`.
+**A lost static token is rotated, not a new agent** (GRA-306; ADR 0007 as amended 2026-10-14):
+the page's *Rotate token* (`rotate-token-dialog.tsx`, drawn when `lib/agent-token.ts`'s
+`tokenRotatable` says so) confirms, then calls `POST /api/agents/:id/token/rotate`, `@graft/core`'s
+`rotateAgentToken`, which writes the new hash over the one it read through `issueAgentToken`'s
+`replacing` and answers the token once; an agent a client holds, one awaiting its first token and a
+revoked one are `409 agent_token_not_rotatable`. The door reads the token per request, so the old
+one is refused at once, on its open session too (`mcp.test.ts`), and the new one continues there.
 
 **Setup is one record per person and three routes** (GRA-204; ADR 0024). The `setup` table
 (`packages/db/src/schema/setup.ts`, migration 0012) keys on the person: the step reached, the
@@ -1203,8 +1234,10 @@ and needs `agentId` among several; `POST /api/setup/skip` sets `skipped_at`. Bot
 redirects to it on `show`, except `/consent` and `/pending` (`lib/setup-intercept.ts`); one
 component per step under `components/setup/`, wired in `setup-step.tsx`'s map, each moving the
 record through `useSetupMutation`, which writes the answered state into the one `["setup"]` entry.
-The agents table draws *Awaiting harness* (`AGENT_STATUS_CHIP.awaiting_harness`, outline) and
-offers *Set up Graft* in its empty body to a person who skipped.
+The agents table draws *Awaiting harness* (`AGENT_STATUS_CHIP.awaiting_harness`, outline). A
+person who skipped meets Home's *Get started* checklist instead (GRA-328, `lib/home-checklist.ts`):
+three steps (an agent whose software is connected, any connection, `hasRunTool`), in place of the
+panels with none done and above them with some, offering *Resume Setup* while the skip stands.
 
 **The integration and connect steps are the agent's own connection ask** (GRA-206). The starters
 are `@graft/core/setup/starter-vendors.ts`, browser-safe, one entry each (vendor slug, hosts, docs,
@@ -1308,6 +1341,45 @@ or a throw, so a timeout does not hide the chips for the hour. It is its own rou
 once; `components/setup/goal-suggestions.tsx` asks it after, keyed by the connection outside
 `["setup"]`, and draws outline `Button` chips that fill the field, or nothing.
 
+**An integration's page builds a tool for an agent picked before Create** (GRA-303; ADR 0024 as
+amended 2026-10-14; `apps/server/src/connection-acquire.ts`). `POST /api/connections/:id/acquire`
+(`ConnectionAcquireBody`: `{ agentId, goal }`) is `@graft/core`'s `startConsoleAcquire`, one
+transaction with no Setup record: the connection read locked (`findConnectionForNoKeyUpdate`, so a
+revoke's deletion of build approvals cannot interleave and a scope save's foreign-key check is not blocked), then the agent (`findAgentForUpdate`, the
+order a scope answer takes them; revoked is `agent_revoked`), the connection the person's, not
+revoked, usable and in the agent's scope
+(`connection_revoked`, `connection_unusable`, `connection_not_in_scope`), `grantBuildApproval`
+and `createAcquireJob` with Setup's first line and `setupBuildHints`; then the runner is kicked.
+It answers `ConnectionAcquireJob` (`acquire_status`'s shape plus `connectionId`, `agent`, `goal`,
+`createdAt`), 201, and is refused `acquire_unconfigured` with Setup's sentence. Like Build it skips
+`similar_tools_exist`: the person asked for a new tool on a page that lists the integration's tools.
+`GET /api/connections/:id/acquire-jobs` (`ConnectionAcquireJobs`) is the last day's jobs, at most
+twenty, newest first, across the person's agents (`repo/acquire-job.ts`'s
+`listAcquireJobsForConnection`, person-scoped through the agent join); each is polled after through
+the agent's job route. `GET /api/connections/:id/goal-suggestions` (`ConnectionGoalSuggestions`)
+is Setup's proposal keyed by the connection alone (`proposeGoalsForConnection`, the same memo) with
+`build` beside it. Another person's agent or connection is a 404 on all three; Create counts as
+`acquire_started` with `job_id` and `agent_id`.
+
+**A connection can be proposed from an API's docs, for the console's Flow C** (GRA-299). The person
+names an integration and pastes a link to its API docs; `POST /api/connection-proposals`
+(`ConnectionProposalBody`: `{ name, docsUrl }`) starts a short job and answers `{ id }`, `GET
+/api/connection-proposals/:id` answers `ConnectionProposalState` (`status` running, ready or failed;
+`stage` one of `@graft/mcp`'s `DOCS_PROPOSAL_STAGES`, the checklist's four lines; `found` filling in;
+`proposal` in `request_connection`'s shape once ready; `failure` with a reason word once failed), and
+`GET /api/connection-proposals` answers `ConnectionProposalAvailability`, unavailable with the
+variables to set wherever `acquireConfigured` says no. The work is `proposeConnectionFromDocs`
+(`packages/mcp/src/proposal-from-docs.ts`): the pasted page alone through `readWebPage`, bounded in
+windows and characters, then `ModelAdapter.proposeConnection` (`@graft/model`'s
+`propose-connection.ts`: the triage model, strict output, one attempt, a bound, traced as
+`propose_connection` under `connect:<personId>`, routed to the person's own key; the scripted backing
+answers a script's `connectionProposal` or a guess from the docs' host), then `normaliseProposal`, so
+a private host is `host_not_public` as it is for an agent's proposal, then each host resolved once (a
+private answer refused, a name that does not resolve listed in `unresolvedHosts`). The jobs live in
+the process (`apps/server/src/connection-proposals.ts`) for 15 minutes, one in flight per person
+(`proposal_running`); a restart loses one, and another person's id is a 404. The settled job is logged
+as counts and kinds, never the name, the link, the pages or the proposal.
+
 **The result step runs the tool, and the finish step connects the harness** (GRA-208; ADR 0024,
 `apps/server/src/setup-finish.ts` and `tool-run.ts`). `GET /api/setup/tool` answers
 `SetupToolContext`: the record's agent and harness, the connection, the job's goal and status (with
@@ -1343,9 +1415,11 @@ only where the field names match, else the schema's `default` or first `examples
 required field with no value says *This tool needs …* and Run waits (`canRun`), the required fields
 drawn first since a stored schema's keys come back in jsonb's order; JSON only for a
 schema too complex to draw (a nested object, a list of objects, a union, a composed root), where a
-required key still at the skeleton's empty object or list counts as missing. It runs the tool once
-on arrival only when the tool takes no input (`lib/setup-result.ts`'s `runsOnArrival`; a tool with
-inputs, Open-Meteo's prefilled city included, waits for Run) and shows the answer in `CodeBlock`; a
+required key still at the skeleton's empty object or list counts as missing. It runs a read-only
+tool once on arrival when the form as drawn needs nothing from the person: no input, or every
+required field at a starting value and every value in its type (`lib/setup-result.ts`'s
+`runsOnArrival`, so the ready-made Gmail search and Open-Meteo's prefilled city run at once; a
+required field nothing fills, or a JSON input, waits for Run) and shows the answer in `CodeBlock`; a
 refusal or a failure is one sentence with the raw text, cut to 500 characters, behind *Details*
 (`lib/short-failure.ts`'s `shortFailure` and `runFailure`: an HTML body reads *The integration
 answered with a web page instead of data (status N)*), and the building step's and the finish
@@ -1410,6 +1484,36 @@ a stepper in the top bar, a centred hero (`SetupEyebrowContext`), selection card
 `src/assets/setup/`) and a sticky footer with a summary; `tool-step.tsx` and `task-picker.tsx` are
 the tool screen. The rows count `setup_step_completed` as `vendor` (or `vendor_cleared`) and `goal`.
 
+**Setup offers the integration's ready-made tools before a task to build** (GRA-276; ADR 0024 as
+amended 2026-10-11; ADR 0025). Each starter names a few of its stock tools in `readyMade`
+(`{ tool, goal, replaces? }`, the curated task's best match first, the goal in the person's voice,
+`replaces` the starter's tasks it does in other words), held by `@graft/stock`'s workspace test to
+tools whose manifest is read-only, whose required inputs all have a default or are the starter's
+`runInput`, and none of whose inputs starts at an example the result step would send unchanged. `@graft/core`'s browser-safe `setup/ready-made.ts`
+(`setupReadyMade`) keeps the ones the catalogue holds as read-only, at most `SETUP_READY_MADE_MAX`,
+and `GET /api/setup/stock?starterId=` answers them (`SetupReadyMade`, from `listStockToolsForVendor`
+over `ApiDeps.stock`, `defaultStockDeps` when absent). `POST /api/setup/stock` (`SetupStockBody`:
+`{ tool, discardJob? }`, `apps/server/src/setup-stock.ts`) judges the choice against that same
+offer for the record's starter or its connection's (`readyMadeChoice`, else `404
+stock_tool_not_offered`), saves it through `planSetup`'s `stockTool` beside its `goal`, only onto
+the record it judged (`expected`, else `setup_step`; Greptile on #218) (the record's
+`stock_tool` column, migration 0018; a task without it clears it, as another starter and a Build
+do), connects the starter as the task route does, and on the task step takes it at once:
+`@graft/core`'s `takeSetupStockTool`, one transaction under `lockSetup`, refuses as Build refuses
+(`setup_step`, `connection_revoked`, `connection_not_in_scope`, `job_running`) plus
+`stock_tool_unplanned`, `stock_tool_other_integration`, the copy's own reasons, `tool_not_read_only`
+and `tool_has_no_version`, copies through `@graft/mcp`'s `ensureToolForAgent` bound to the record's
+connection, promotes with `promoteTool`, and moves the record to `result` with `toolId` and no job.
+`buildPlannedSetup` takes a planned ready-made tool instead of building when the connection lands.
+The result step reads it as a built tool (`setupToolContext`'s `goal` is the record's for a
+ready-made tool, `completeSetupResult` and the result's back target need a tool, not a job), and it
+needs no model. The result step runs it over the record's connection (`ToolRunBody.connectionId`,
+held to the scope and a stock copy's hosts), so a tool the person already held bound to another
+account runs over the one Setup connected. The row counts `setup_step_completed` as `goal` with `readyMade: true`. The
+console's tool screen and task step draw `ready-made-picker.tsx` above the tasks, which become *Or
+have Graft build one* less any task a ready-made tool does; one choice across both
+(`lib/setup-ready-made.ts`'s `ToolChoice`), *Use this tool* beside *Build this tool*.
+
 **The integration step searches a directory, a seam with two backings** (ADR 0001 as amended
 2026-10-10). `@graft/core`'s `IntegrationDirectory` (`home`, `search`, `get`; `connection/directory.ts`)
 is `Backings.directory`: the private package's, over its link provider's catalogue, or null, when the
@@ -1422,6 +1526,46 @@ Back read it as the *Tool* stage) until its task is chosen, when `POST /api/setu
 `slug` reads the entry from the directory again and proposes it (`directoryProposal`: the slug as the
 vendor, the first host as the primary) through the starter's routing (`connectSetupProposal`). No
 column holds it: a reload on that tool screen returns to the directory.
+
+**The person connects an integration with no agent asking** (GRA-304; ADR 0006 and ADR 0008 as
+amended 2026-10-14; `apps/server/src/console-connect.ts`). `POST /api/connect` (`ConnectBody`:
+`{ slug }`, read again from the directory, a starter's as the starter, or `{ proposal }` in
+`request_connection`'s shape, and `access`, `full` or `ask`) normalises the proposal, routes it by
+`providerFor` and answers `ConsoleConnectResult`, writing no pending action: `connected` (a keyless
+keyring row made at once, or the person's covering one answered or widened; a no-step provider's
+row), `form` (the keyring's, nothing written; the console posts `POST /api/connections` with the
+same `access`; a link provider that cannot start answers it too with `fallback`), or `link` with a
+`connectId`. A link's state is the short-lived record itself, `@graft/core`'s
+`signConsoleLinkState` under its own HMAC domain, so `provider-link.ts`'s return route tells it
+from an ask's, completes through `completeConsoleLink` and lands on `/link/callback` with
+`connectId` and no `pendingActionId`. No scope row is written: the row reaches every `all` agent by
+being the person's. `full` is `recordFullAccess`: each active agent whose scope reaches the row at
+that moment gets `grantBuildApproval` and `allowVendorWhenConnecting`. Counted as
+`connection_started` (`kind`, `access`, `created`).
+
+**The console's *Add a custom API* is Flow C over those two** (GRA-323;
+`apps/web/src/components/integration/add-custom-api-dialog.tsx`, exported as `AddCustomApiDialog`
+with an optional `initialName` and `initialDocsUrl`, opened from the Integrations header). The name
+step requires the docs link; the job is polled every second and drawn as the four lines
+(`lib/custom-api.ts`'s `proposalChecklist`); `proposal_running` follows the person's own job; a
+`host_not_public` or `input_invalid` failure, and a deployment with no model, open the same check
+step as the form (`draftFromFailure`, `draftByHand`). Connect posts `POST /api/connect` with the
+checked proposal and the access, then on `form` `POST /api/connections` with the key and the same
+access, runs the consent popup for an OAuth client, or on `link` opens the provider's page and polls
+`GET /api/connections/:connectId`; a connection lands on `/integrations/$vendor` with a toast. The
+fields are `ConnectionFormFields` and `CredentialFields`, the agent's proposal's, so the key is
+entered here and nowhere else.
+
+**The directory answers outside Setup too, beside the person's own suggestions** (ADR 0001 as
+amended 2026-10-14; GRA-305). `GET /api/integrations/directory` and `/search` are Setup's two
+handlers mounted a second time, same answers. `GET /api/integrations/suggested`
+(`IntegrationSuggestions`) is `@graft/core`'s `listSuggestedIntegrations` over
+`repo/pending-action.ts`'s `listSuggestedConnectionAsks`: per vendor, the newest `connection` ask
+of the person's live agents, kept when it was not answered with a connection and the person holds
+no unrevoked connection of that vendor, newest first, at most `SUGGESTED_INTEGRATIONS_LIMIT` (12),
+with the agent, the ask's state (`open`, `declined`, `expired`) and age, and the directory entry's
+`logoUrl` (null under the starters). `directory` and `suggested` are registered before any
+`/integrations/:vendor…` route (`INTEGRATION_RESERVED_SEGMENTS`).
 
 **Setup's words are integration and task** (GRA-216; CONTEXT.md, *Integration*; ADR 0024's
 amendment of 2026-09-24). Person-facing copy says *integration* for the service a person connects
@@ -1484,8 +1628,17 @@ recent calls are a disclosure in the body, not the banded `CardFooter`. A notice
 an `Alert`; a labelled control with a sentence beside it is an `Item` (`components/ui/item.tsx`,
 ported with the rest); nothing draws its own `rounded-* border` frame. The settings screen is
 Cando's row family, ported to `components/settings/` — `SettingsSection` (an `h2`), `SettingsCard`,
-`SettingsRowGroup` with inset dividers, and the `SettingsRow` variants — with one section, Model,
-carrying the key's behaviour as rows. A failed **query** toasts once with a working Retry
+`SettingsRowGroup` with inset dividers, and the `SettingsRow` variants, App v2's type (GRA-331) —
+with three sections. **Account**: the name (Better Auth's `/update-user`), the address with its
+verified chip, a row per provider `GET /api/sign-in-methods` names (`linkSocial`, `unlinkAccount`,
+returning to `/settings?provider=<p>[&error=<code>]`; `lib/account-settings.ts`'s `canDisconnect`
+never offers removing the last way to sign in the door still shows, and a linked account may carry
+another address, ADR 0020 as amended 2026-10-14), and GRA-298's password row. **Appearance**: the
+Theme row, a `ToggleGroup` writing the one `next-themes` setting the account menu's radio group
+writes. **Building tools**: the Model row, which `GET /api/me/model` and `lib/model-status.ts`
+decide (GRA-297: the deployment's model *Included*, *Your key*, *Needs a key* under the hosted
+form with no fixed model, *Not configured* under the open form with none, where a key would not
+be routed), above *Use your own key*, whose form is a dialog. A failed **query** toasts once with a working Retry
 (`lib/query-error-retry.ts`, keyed to the query hash so a second failure replaces rather than
 stacks, dismissed on the next success) beside the mutation toast; a read that fails before a screen
 draws toasts *and* shows the route boundary, as Cando's does. A screen-level empty is the `Empty`
@@ -1530,16 +1683,21 @@ the `Sidebar` primitive off canvas at its own 16rem — the `sidebar_state` cook
 back by `src/lib/sidebar-state.ts`, ⌘B toggles it, and below `md` it is the drawer, closed on the
 router's `onBeforeNavigate` — with `SkipNav` first in the tree and the `<main>` region carrying
 `MAIN_CONTENT_ID`. `main-sidebar.tsx` draws the wordmark (`src/components/graft-wordmark.tsx` — the
-supplied SVG with outlined lettering, also used by `AuthHeader`, drawn in tokens; GRA-108), the four
-destinations from `src/lib/main-sidebar-nav-items.ts` (a pure data
-module, tested) with the open-ask count as a `SidebarMenuBadge` and the count in the link's own
-name, and `account-menu.tsx` at the foot: name and email, the Theme radio group (label *inside* the
+supplied SVG with outlined lettering, also used by `AuthHeader`, drawn in tokens; GRA-108) linking to Home at `/`, the
+main group and the footer group (Docs & help, out to `DOCS_URL`, then Settings) from
+`src/lib/main-sidebar-nav-items.ts` (a pure data module, tested, which the palette's rows derive
+from too; GRA-309) with the open-ask count as a `SidebarMenuBadge` on Requests and the count in the
+link's own name, and `account-menu.tsx` at the foot: name and email, the Theme radio group (label *inside* the
 group — Base UI's `Menu.GroupLabel` throws outside one), Sign out through `src/lib/sign-out.ts`,
 which removes the session entry and clears the cache before anyone navigates. The screen's title is
 written once, with `useScreenTitle` (`shell/screen-title.tsx`), and shown by two bars — the 48px
 `PageNav` strip at `md` and up, which also carries `PageNavCollapsedSidebar`, and `MobileTopBar`
 below it; the strip is mounted once in the shell rather than per screen as in Cando, for the
-reason that file gives. Every screen is a `PageContainer` (`large` for the agents table and the
+reason that file gives. **⌘K (Ctrl+K) opens the command palette** (GRA-289), mounted once in
+the shell beside a Search row under the wordmark (`shell/command-palette.tsx`, over the ported
+`command` primitive and `cmdk`): its rows, their filter and their groups are
+`src/lib/command-palette.ts` (`PaletteItem`, `PALETTE_GROUPS`, `filterPalette`), so a new kind of
+result is rows and a group name there, never a filter in the component. Every screen is a `PageContainer` (`large` for the agents table and the
 agent detail, `medium` for the card stacks and settings) opening with `PageHeader`; a detail screen
 titles the bars with `PageNavBreadcrumb`. The doors share `AuthHeader` and `AuthCard` (`max-w-md`,
 the `xs` container inside); `route-not-found.tsx`, `route-error.tsx` and `loader.tsx` are Cando's.

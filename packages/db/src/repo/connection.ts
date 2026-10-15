@@ -1,4 +1,4 @@
-import { and, asc, eq, inArray, isNotNull, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, isNotNull, or, sql } from "drizzle-orm";
 
 import type { DbOrTx } from "../index";
 import { connection, type NewConnection } from "../schema/connection";
@@ -9,6 +9,15 @@ import { connection, type NewConnection } from "../schema/connection";
  */
 
 export type ConnectionRow = typeof connection.$inferSelect;
+
+/**
+ * Serialise a find-or-make of the person's connection on a transaction-scoped advisory lock keyed
+ * by the person and the caller's key, for rows the table has no uniqueness over: a keyless or a
+ * no-step provider's row carries no `provider_ref` (GRA-304's console connect).
+ */
+export async function lockConnectionKey(db: DbOrTx, personId: string, key: string): Promise<void> {
+  await db.execute(sql`select pg_advisory_xact_lock(hashtext(${`connection:${personId}:${key}`}))`);
+}
 
 export async function insertConnection(db: DbOrTx, input: NewConnection): Promise<ConnectionRow> {
   const [row] = await db.insert(connection).values(input).returning();
@@ -49,6 +58,57 @@ export async function findConnectionForUpdate(
     .limit(1)
     .for("update");
   return row ?? null;
+}
+
+/**
+ * The same read locked `FOR NO KEY UPDATE`: it waits for a revoke (`findConnectionForUpdate`) and
+ * a revoke waits for it, but it does not block the `KEY SHARE` lock a foreign-key check takes, so
+ * a transaction inserting a row that references the connection (a scope save's `agent_connection`)
+ * while holding another lock never deadlocks against it. The console's Create reads through it
+ * (GRA-303, Greptile on #237).
+ */
+export async function findConnectionForNoKeyUpdate(
+  db: DbOrTx,
+  personId: string,
+  id: string,
+): Promise<ConnectionRow | null> {
+  const [row] = await db
+    .select()
+    .from(connection)
+    .where(and(eq(connection.id, id), eq(connection.personId, personId)))
+    .limit(1)
+    .for("no key update");
+  return row ?? null;
+}
+
+/**
+ * Every connection of one vendor the person holds, revoked ones included, and the further rows
+ * `alsoIds` names, locked for the transaction in id order (GRA-302). A revoke locks its row and
+ * then sweeps every answer for the vendor's tools (`revokeConnection`), and answering an ask locks
+ * the ask's connection first (`recordApprovalAnswer`); an answer set from the console locks every
+ * row either of those would hold before it, so it serialises with both rather than outliving a
+ * revoke's sweep. The fixed order keeps two such writers from each holding one row and waiting on
+ * the other's. Under the person on both branches.
+ */
+export async function findVendorConnectionsForUpdate(
+  db: DbOrTx,
+  personId: string,
+  vendor: string,
+  alsoIds: readonly string[] = [],
+): Promise<ConnectionRow[]> {
+  return db
+    .select()
+    .from(connection)
+    .where(
+      and(
+        eq(connection.personId, personId),
+        alsoIds.length === 0
+          ? eq(connection.vendor, vendor)
+          : or(eq(connection.vendor, vendor), inArray(connection.id, [...alsoIds])),
+      ),
+    )
+    .orderBy(asc(connection.id))
+    .for("update");
 }
 
 /**

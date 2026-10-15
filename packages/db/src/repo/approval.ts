@@ -100,6 +100,59 @@ export async function findBuildApproval(
   return row ?? null;
 }
 
+/** A build approval as the agent's page lists it: the row, and the integration it names. */
+export type BuildApprovalListing = BuildApprovalRow & {
+  vendor: string;
+  displayName: string;
+};
+
+/**
+ * The agent's build approvals, one per connection, with the connection's vendor and name (ADR 0008
+ * as amended 2026-09-18: the agent's page lists them). Agent-scoped through `scopedAgentIds`, and
+ * the join names the person too, so a row can only ever carry the person's own connection.
+ */
+export async function listBuildApprovals(
+  db: DbOrTx,
+  scope: AgentScope,
+): Promise<BuildApprovalListing[]> {
+  const rows = await db
+    .select({
+      row: buildApproval,
+      vendor: connection.vendor,
+      displayName: connection.displayName,
+    })
+    .from(buildApproval)
+    .innerJoin(
+      connection,
+      and(eq(connection.id, buildApproval.connectionId), eq(connection.personId, scope.personId)),
+    )
+    .where(inArray(buildApproval.agentId, scopedAgentIds(db, scope)))
+    .orderBy(connection.displayName, buildApproval.connectionId);
+  return rows.map(({ row, vendor, displayName }) => ({ ...row, vendor, displayName }));
+}
+
+/**
+ * Withdraw one agent's build approval for one connection, from the console: the next `acquire`
+ * against it asks again (ADR 0008 as amended 2026-09-18). Null when none stood. Distinct from the
+ * revoke's sweep below, which reaches every agent.
+ */
+export async function deleteBuildApproval(
+  db: DbOrTx,
+  scope: AgentScope,
+  connectionId: string,
+): Promise<BuildApprovalRow | null> {
+  const [row] = await db
+    .delete(buildApproval)
+    .where(
+      and(
+        eq(buildApproval.connectionId, connectionId),
+        inArray(buildApproval.agentId, scopedAgentIds(db, scope)),
+      ),
+    )
+    .returning();
+  return row ?? null;
+}
+
 /** Grant, once: a repeated grant changes nothing and answers null. */
 export async function insertBuildApproval(
   db: DbOrTx,
@@ -320,4 +373,33 @@ export async function deleteVendorApprovalsForVendor(
       ),
     )
     .returning();
+}
+
+/**
+ * Widen or narrow an agent's standing approval for a vendor to its destructive tools, from the
+ * console (ADR 0008 as amended 2026-10-14; GRA-302). Only a row that stands is changed: the
+ * console amends an integration's allow, and recording one is an answer's. `grantedAt` moves, since
+ * the row now holds the answer given at that moment. Null when none stood.
+ */
+export async function updateVendorApprovalDestructive(
+  db: DbOrTx,
+  scope: AgentScope,
+  vendor: string,
+  input: { includesDestructive: boolean; grantedAt: Date },
+): Promise<VendorApprovalRow | null> {
+  const [row] = await db
+    .update(vendorApproval)
+    .set({
+      includesDestructive: input.includesDestructive,
+      grantedAt: input.grantedAt,
+      updatedAt: new Date(),
+    })
+    .where(
+      and(
+        eq(vendorApproval.vendor, vendor),
+        inArray(vendorApproval.agentId, scopedAgentIds(db, scope)),
+      ),
+    )
+    .returning();
+  return row ?? null;
 }

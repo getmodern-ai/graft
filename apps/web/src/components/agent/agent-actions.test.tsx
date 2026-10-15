@@ -8,12 +8,14 @@ import {
 } from "@tanstack/react-router";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, type Mock, vi } from "vitest";
 
 import type { Agent } from "@/lib/agent-queries";
+import type { Connection } from "@/lib/connection-queries";
 import { hermesConfigSnippet } from "@/lib/mcp-snippet";
 import { AgentActions } from "./agent-actions";
-import { AgentsTable } from "./agents-table";
+import type { ConnectAgent } from "./agent-card";
+import { AgentCards } from "./agent-cards";
 
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 
@@ -31,9 +33,11 @@ const agent: Agent = {
 };
 let root: Root;
 let client: QueryClient;
+let connectAgent: Mock<ConnectAgent>;
 
 beforeEach(() => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  connectAgent = vi.fn<ConnectAgent>();
   const container = document.createElement("div");
   document.body.append(container);
   root = createRoot(container);
@@ -63,13 +67,23 @@ async function click(label: string) {
   await act(async () => control(label).click());
 }
 
-async function mount(value = agent, table = false) {
+async function mount(
+  value = agent,
+  table = false,
+  read: { connections?: Connection[]; connectionsFailed?: boolean } = { connections: [] },
+) {
   const route = createRootRoute({
     component: () => (
       <QueryClientProvider client={client}>
         {table ? (
-          <AgentsTable
-            agents={[{ ...value, workingSetCount: 5 }]}
+          <AgentCards
+            agents={[{ ...value, workingSetCount: 5, connectionIds: [], lastActiveAt: null }]}
+            connections={read.connections}
+            connectionsFailed={read.connectionsFailed}
+            pendingActions={[]}
+            setup={undefined}
+            onAdd={() => {}}
+            onConnectAgent={connectAgent}
             isPending={false}
             isError={false}
             error={null}
@@ -139,7 +153,7 @@ describe("agent actions", () => {
     await mount();
     const trigger = control("Actions for Laptop");
     await click("Actions for Laptop");
-    await click("Connect a harness");
+    await click("Connect an agent");
     const dialog = document.querySelector("[role=dialog]");
     expect(dialog?.textContent).toContain("YOUR_AGENT_TOKEN");
     expect(dialog?.textContent).not.toContain("—");
@@ -163,24 +177,43 @@ describe("agent actions", () => {
     await waitFor(() => expect(document.activeElement).toBe(trigger));
   });
 
-  it.each([0, 1])("opens the same setup from Set up harness in table layout %s", async (index) => {
-    await mount(agent, true);
-    expect(document.body.textContent).not.toContain("Not recorded");
-    const trigger = document.querySelectorAll<HTMLButtonElement>(
-      'button[aria-label="Set up harness for Laptop"]',
-    )[index];
-    if (!trigger) throw new Error("Missing harness setup trigger");
-    await act(async () => {
-      trigger.focus();
-      trigger.click();
-    });
-    expect(document.querySelectorAll("[role=dialog]")).toHaveLength(1);
-    expect(document.querySelector("[role=dialog]")?.textContent).toContain(
-      "Add to ~/.hermes/config.yaml",
+  it("hands Connect an agent to the screen from a card, never opening a dialog of its own", async () => {
+    await mount({ ...agent, tokenPrefix: null }, true);
+    expect(document.body.textContent).toContain("Not recorded");
+    const trigger = document.querySelector<HTMLButtonElement>(
+      'button[aria-label="Connect Laptop"]',
     );
-    await click("Done");
-    await waitFor(() => expect(document.querySelector("[role=dialog]")).toBeNull());
-    await waitFor(() => expect(document.activeElement).toBe(trigger));
+    if (!trigger) throw new Error("Missing connect trigger");
+    expect(trigger.textContent).toBe("Connect its agent");
+    await act(async () => trigger.click());
+    expect(connectAgent).toHaveBeenCalledWith(expect.objectContaining({ id: "agent_1" }), trigger);
+    // The card's menu goes the same way, with the menu's trigger for focus to return to.
+    const menu = control("Actions for Laptop");
+    await click("Actions for Laptop");
+    await click("Connect an agent");
+    expect(connectAgent).toHaveBeenLastCalledWith(expect.objectContaining({ id: "agent_1" }), menu);
+    expect(document.querySelector("[role=dialog]")).toBeNull();
+  });
+
+  it("says No integrations yet only once the connections are read", async () => {
+    await mount(agent, true, {});
+    expect(document.body.textContent).not.toContain("No integrations yet");
+    expect(document.querySelector('[aria-label="Loading integrations"]')).not.toBeNull();
+    await act(async () => root.unmount());
+    root = createRoot(document.body.appendChild(document.createElement("div")));
+    await mount(agent, true, { connectionsFailed: true });
+    expect(document.body.textContent).toContain("Could not load integrations");
+    expect(document.body.textContent).not.toContain("No integrations yet");
+    await act(async () => root.unmount());
+    root = createRoot(document.body.appendChild(document.createElement("div")));
+    await mount(agent, true);
+    expect(document.body.textContent).toContain("No integrations yet");
+  });
+
+  it("draws no Connect its agent on a card whose agent holds a token", async () => {
+    await mount(agent, true);
+    expect(document.querySelector('button[aria-label="Connect Laptop"]')).toBeNull();
+    expect(document.body.textContent).toContain("5 tools ready");
   });
 
   it("shows OAuth connection instructions without a static-token placeholder", async () => {
@@ -190,7 +223,7 @@ describe("agent actions", () => {
       connectedVia: { clientId: "claude", clientName: "Claude" },
     });
     await click("Actions for Laptop");
-    await click("Connect a harness");
+    await click("Connect an agent");
     const dialog = document.querySelector("[role=dialog]");
     expect(dialog?.textContent).toContain("MCP server URL");
     expect(dialog?.textContent).toContain("choose Laptop");
@@ -204,11 +237,38 @@ describe("agent actions", () => {
     expect(dialog?.textContent).not.toContain("GRAFT_TOKEN");
   });
 
-  it("offers no connection setup for a revoked agent", async () => {
-    await mount({ ...agent, revokedAt: "2026-09-20T00:00:00Z" }, true);
-    expect(document.querySelector('button[aria-label^="Set up harness"]')).toBeNull();
+  it("offers no connection setup or revoke for a revoked agent, under the Revoked disclosure", async () => {
+    await mount({ ...agent, tokenPrefix: null, revokedAt: "2026-09-20T00:00:00Z" }, true);
+    expect(document.body.textContent).not.toContain("Laptop");
+    await click("Revoked (1)");
+    expect(document.querySelector('button[aria-label="Connect Laptop"]')).toBeNull();
     await click("Actions for Laptop");
-    expect(document.querySelector("[role=menu]")?.textContent).not.toContain("Connect a harness");
+    const menu = document.querySelector("[role=menu]")?.textContent;
+    expect(menu).toContain("View agent");
+    expect(menu).not.toContain("Connect an agent");
+    expect(menu).not.toContain("Revoke");
+  });
+
+  it("revokes from the menu through the same confirmation the agent page opens", async () => {
+    const fetch = vi
+      .fn()
+      .mockResolvedValue(Response.json({ agent: { ...agent, revokedAt: "2026-09-21T00:00:00Z" } }));
+    vi.stubGlobal("fetch", fetch);
+    await mount();
+    await click("Actions for Laptop");
+    await click("Revoke");
+    const confirmation = document.querySelector("[role=alertdialog]");
+    if (!confirmation) throw new Error("Missing revocation confirmation");
+    expect(confirmation.textContent).toContain("Revoke Laptop?");
+    await act(async () => {
+      [...confirmation.querySelectorAll("button")]
+        .find((button) => button.textContent === "Revoke token")
+        ?.click();
+    });
+    await waitFor(() => expect(fetch).toHaveBeenCalledTimes(1));
+    const [url, options] = fetch.mock.calls[0] ?? [];
+    expect(url).toBe("/api/agents/agent_1/revoke");
+    expect(options.method).toBe("POST");
   });
 
   it("opens with saved values, cancels without saving, restores focus and discards the draft", async () => {

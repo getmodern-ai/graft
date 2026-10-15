@@ -5,7 +5,7 @@ import { socialSignInMessage, socialSignInUrls, verificationReturnURL } from "./
 describe("socialSignInUrls", () => {
   it("lands a plain sign-in on the default path and brings a failure back to the door", () => {
     expect(socialSignInUrls("https://app.graft.example", undefined)).toEqual({
-      callbackURL: "https://app.graft.example/agents",
+      callbackURL: "https://app.graft.example/",
       errorCallbackURL: "https://app.graft.example/login",
     });
   });

@@ -612,9 +612,14 @@ async function runHeld(
   const wireName = authoredToolName(args.vendor, args.name);
   const startedAt = Date.now();
 
+  // How the line ends, in the ledger's words (GRA-301; `@graft/db/schema/usage`): the connection
+  // once one of the person's is read for this run, and whether the gate asked, once it decided.
+  let ledgerConnectionId: string | null = null;
+  let asked: boolean | null = null;
   const record = async (
     outcome: UsageOutcome,
     ids: { toolId?: string; versionId?: string } = {},
+    reason: string | null = null,
   ) => {
     await recordUsage(
       ctx,
@@ -626,6 +631,9 @@ async function runHeld(
         outcome,
         dryRun: args.mode.dryRun,
         latencyMs: Date.now() - startedAt,
+        reason,
+        asked,
+        connectionId: ledgerConnectionId,
       },
       deps.ledger,
     );
@@ -636,7 +644,7 @@ async function runHeld(
     ids?: { toolId?: string; versionId?: string },
     details?: Record<string, unknown>,
   ): Promise<AuthoredRunAnswer> => {
-    await record("refused", ids);
+    await record("refused", ids, reason);
     return { answer: refusal(reason, message, details), isError: true };
   };
 
@@ -718,9 +726,12 @@ async function runHeld(
   const connection =
     bound && inScope ? await getConnection(ctx, principal, bound, deps.connection) : null;
   const revoked = connection?.revokedAt != null;
+  // Read under the person and in this agent's scope, so it is theirs to name on the line.
+  ledgerConnectionId = connection?.id ?? null;
   if (args.connectionId && revoked && connection) {
-    await record("refused", versioned);
-    return { answer: revokedConnectionRefusal(connection), isError: true };
+    const answer = revokedConnectionRefusal(connection);
+    await record("refused", versioned, reasonOf(answer));
+    return { answer, isError: true };
   }
   if (args.connectionId && stock && connection && !stockToolRunsOver(stock, connection)) {
     return refuse(
@@ -744,16 +755,14 @@ async function runHeld(
         }))(live.filter((row) => row.vendor === tool.vendor));
     const target = followed.chosen;
     if (!target) {
-      await record("refused", versioned);
-      return {
-        answer:
-          revoked && connection
-            ? revokedConnectionRefusal(connection, followed.matches)
-            : bound
-              ? notInScopeRefusal(wireName, bound, followed.matches)
-              : unboundStockRefusal(wireName, followed.matches),
-        isError: true,
-      };
+      const answer =
+        revoked && connection
+          ? revokedConnectionRefusal(connection, followed.matches)
+          : bound
+            ? notInScopeRefusal(wireName, bound, followed.matches)
+            : unboundStockRefusal(wireName, followed.matches);
+      await record("refused", versioned, reasonOf(answer));
+      return { answer, isError: true };
     }
     connectionId = target.id;
     if (revoked) {
@@ -776,6 +785,7 @@ async function runHeld(
   } else {
     connectionId = bound;
   }
+  ledgerConnectionId = connectionId;
 
   const validator = compileInputSchema(tool.inputSchema);
   if ("error" in validator) {
@@ -798,7 +808,7 @@ async function runHeld(
     admitBlobs(deps, scope, verdict.value),
   );
   if (!door.ok) {
-    await record("refused", versioned);
+    await record("refused", versioned, reasonOf(door.refusal));
     return { answer: door.refusal, isError: true };
   }
   const admitted = door.admission;
@@ -835,8 +845,9 @@ async function runHeld(
         deps,
         args.channel,
       );
+      asked = gate.asked === true;
       if (!gate.pass) {
-        await record("refused", versioned);
+        await record("refused", versioned, reasonOf(gate.answer));
         return {
           answer: gate.answer,
           isError: true,
@@ -888,7 +899,7 @@ async function runHeld(
     });
 
     if ("error" in outcome && outcome.error === "refused") {
-      await record("refused", versioned);
+      await record("refused", versioned, reasonOf(outcome));
       return { answer: outcome, isError: true };
     }
     const run = outcome as ModuleRunOutcome;
@@ -909,7 +920,7 @@ async function runHeld(
         run.blobsDropped,
       );
       const overshoot = blobQuotaOvershoot(recorded);
-      await record("error", versioned);
+      await record("error", versioned, overshoot ? "blob_quota" : run.kind);
       noteRunFailure(run.kind, run.vendorStatus);
       return {
         answer: {
@@ -945,7 +956,7 @@ async function runHeld(
     );
     const overshoot = blobQuotaOvershoot(recorded);
     if (overshoot) {
-      await record("error", versioned);
+      await record("error", versioned, "blob_quota");
       noteRunFailure("blob_quota");
       return {
         answer: {
@@ -971,7 +982,7 @@ async function runHeld(
         },
         deps.tool,
       );
-      await record(report ? "ok" : "error", versioned);
+      await record(report ? "ok" : "error", versioned, report ? null : "dry_run_report_missing");
       return report
         ? {
             answer: { dryRun: report, ...blobsOnWire(recorded.listed, recorded.dropped) },
@@ -992,6 +1003,14 @@ async function runHeld(
       isError: false,
     };
   }
+}
+
+/**
+ * A refusal's `reason` for the ledger line (GRA-301): every refusal this file answers carries one
+ * (`result.ts`'s `refusal`, `revoke.ts`'s), and an answer without a string one records none.
+ */
+function reasonOf(answer: Record<string, unknown>): string | null {
+  return typeof answer.reason === "string" ? answer.reason : null;
 }
 
 /**

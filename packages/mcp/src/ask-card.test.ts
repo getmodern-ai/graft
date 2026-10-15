@@ -42,6 +42,7 @@ const action = {
   answeredAt: null,
   answer: null,
   consumedAt: null,
+  closedReason: null,
   owner: "person" as const,
   createdAt: NOW,
   updatedAt: NOW,
@@ -190,6 +191,11 @@ describe("what the card may answer", () => {
       url,
       answerable: true,
       provider: "Broker",
+      vendorTools: {
+        integrationName: "Gmail",
+        label: expect.stringContaining("Gmail"),
+        description: expect.any(String),
+      },
     });
     expect(
       scopeAskCard({

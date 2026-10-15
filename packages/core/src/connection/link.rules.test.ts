@@ -7,7 +7,12 @@ import {
   linkCallbackUri,
   readLinkCallbackSearch,
 } from "./link.rules";
-import { signLinkState, verifyLinkState } from "./link-state";
+import {
+  signConsoleLinkState,
+  signLinkState,
+  verifyConsoleLinkState,
+  verifyLinkState,
+} from "./link-state";
 import { signOAuthState } from "./oauth-consent";
 
 /**
@@ -124,5 +129,65 @@ describe("the link's signed state", () => {
       SECRET,
     );
     expect(verifyLinkState(consent, SECRET, NOW).ok).toBe(false);
+  });
+});
+
+describe("the console connect's signed state (GRA-304)", () => {
+  const RECORD = {
+    connectId: "cc_1",
+    personId: "person_1",
+    provider: "broker",
+    vendor: "gmail",
+    displayName: "Gmail",
+    primaryHost: "https://gmail.googleapis.com",
+    hosts: ["gmail.googleapis.com"],
+    access: "full" as const,
+    expiresAt: NOW.getTime() + LINK_STATE_TTL_MS,
+  };
+
+  it("round-trips the record, and expires with the link's window", () => {
+    const state = signConsoleLinkState(RECORD, SECRET);
+    expect(verifyConsoleLinkState(state, SECRET, NOW)).toEqual({ ok: true, payload: RECORD });
+    expect(verifyConsoleLinkState(state, SECRET, new Date(RECORD.expiresAt))).toMatchObject({
+      ok: false,
+      reason: "expired",
+    });
+  });
+
+  it("never verifies as an ask's state, nor an ask's as it, under the same secret", () => {
+    expect(verifyLinkState(signConsoleLinkState(RECORD, SECRET), SECRET, NOW)).toMatchObject({
+      ok: false,
+      reason: "tampered",
+    });
+    expect(verifyConsoleLinkState(signLinkState(PAYLOAD, SECRET), SECRET, NOW)).toMatchObject({
+      ok: false,
+      reason: "tampered",
+    });
+  });
+
+  it("refuses a record whose access is not one of the two words", () => {
+    const state = signConsoleLinkState({ ...RECORD, access: "all" as "full" }, SECRET);
+    expect(verifyConsoleLinkState(state, SECRET, NOW)).toMatchObject({
+      ok: false,
+      reason: "malformed",
+    });
+  });
+});
+
+describe("the link callback's outcome for a console connect", () => {
+  it("carries connectId through the redirect and back, and leaves it out when absent", () => {
+    const outcome = {
+      status: "connected" as const,
+      pendingActionId: null,
+      connectionId: "conn_1",
+      message: "Connected.",
+      connectId: "cc_1",
+    };
+    const url = new URL(linkCallbackRedirect("http://console.test", outcome));
+    expect(readLinkCallbackSearch(Object.fromEntries(url.searchParams))).toEqual(outcome);
+    const plain = new URL(
+      linkCallbackRedirect("http://console.test", { ...outcome, connectId: null }),
+    );
+    expect(plain.searchParams.has("connectId")).toBe(false);
   });
 });

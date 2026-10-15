@@ -67,6 +67,39 @@ describe("readLinkMessage", () => {
     );
     expect(readLinkMessage({ origin: ORIGIN, data: posted }, ORIGIN, "pa_1")).toEqual(MESSAGE);
   });
+
+  it("reads a console connect's message by its connectId, as the server's redirect wrote it (GRA-304)", () => {
+    const url = new URL(
+      linkCallbackRedirect(ORIGIN, {
+        status: "connected",
+        pendingActionId: null,
+        connectionId: "conn_9",
+        message: "Notion is connected.",
+        connectId: "conn_9",
+      }),
+    );
+    const posted = linkCallbackMessage(
+      readLinkCallbackSearch(Object.fromEntries(url.searchParams)),
+    );
+    expect(
+      readLinkMessage({ origin: ORIGIN, data: posted }, ORIGIN, { connectId: "conn_9" }),
+    ).toEqual({
+      type: LINK_CALLBACK_MESSAGE_TYPE,
+      status: "connected",
+      pendingActionId: null,
+      connectionId: "conn_9",
+      message: "Notion is connected.",
+      connectId: "conn_9",
+    });
+    // Another connect's, an ask's, and a connect message waited on as an ask: none is this one.
+    expect(
+      readLinkMessage({ origin: ORIGIN, data: posted }, ORIGIN, { connectId: "conn_8" }),
+    ).toBeNull();
+    expect(
+      readLinkMessage({ origin: ORIGIN, data: MESSAGE }, ORIGIN, { connectId: "conn_9" }),
+    ).toBeNull();
+    expect(readLinkMessage({ origin: ORIGIN, data: posted }, ORIGIN, "pa_1")).toBeNull();
+  });
 });
 
 describe("linkOutcomeOf", () => {

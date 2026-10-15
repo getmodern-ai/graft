@@ -16,16 +16,17 @@ import {
   WarningIcon,
 } from "@/components/icons";
 import { Loader } from "@/components/loader";
+import { HarnessMark } from "@/components/marks";
 import { RetryNotice } from "@/components/retry-notice";
 import { ToolResultCard } from "@/components/setup/result-step";
 import { SetupAppCard } from "@/components/setup/setup-app-card";
 import { SetupDisclosure } from "@/components/setup/setup-disclosure";
 import { SetupFooter } from "@/components/setup/setup-footer";
-import { SetupLogo } from "@/components/setup/setup-logo";
 import { SetupStepHeader } from "@/components/setup/setup-step-header";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { agentKeys, issueAgentToken } from "@/lib/agent-queries";
+import { harnessMarkOfSetup } from "@/lib/marks";
 import { harnessSetup, mcpEndpointUrl } from "@/lib/mcp-snippet";
 import { DEFAULT_SIGNED_IN_PATH } from "@/lib/safe-redirect";
 import {
@@ -199,7 +200,7 @@ export function FinishStep({
       {sections.prompt && harness ? (
         <SetupPromptCard
           harness={harness}
-          label={entry?.label ?? "your harness"}
+          label={entry?.label ?? "your agent"}
           agentName={agentName}
           connection={context.data.connection}
           tool={promptTool}
@@ -283,7 +284,7 @@ function BuildFailed({ arrival }: { arrival: Extract<ToolArrival, { kind: "faile
       <WarningIcon />
       <AlertTitle>The tool did not pass</AlertTitle>
       <AlertDescription>
-        {arrival.message} The prompt leaves the tool out; once your harness is connected, ask it for
+        {arrival.message} The prompt leaves the tool out; once your agent is connected, ask it for
         what you wanted and Graft acquires it there.
       </AlertDescription>
     </Alert>
@@ -400,8 +401,8 @@ function AskInChat({ context }: { context: SetupTool }) {
       wrap
       hint={
         tool.wireName
-          ? `Your harness finds ${tool.wireName} among Graft's tools. If its list has not refreshed, ask it again in a new chat.`
-          : "The tool is still on its way. Ask once it has joined the agent's tools, and the harness finds it there."
+          ? `Your agent finds ${tool.wireName} among Graft's tools. If its list has not refreshed, ask it again in a new chat.`
+          : "The tool is still on its way. Ask once it has joined the agent's tools, and it finds the tool there."
       }
     />
   );
@@ -438,7 +439,7 @@ function SetupPromptCard({
   });
   return (
     <SetupAppCard
-      media={<SetupLogo harness={harness} />}
+      media={<HarnessMark mark={harnessMarkOfSetup(harness)} />}
       name={<span className="text-base">Paste this into {label} to connect Graft</span>}
       subline={`It holds no token. ${label} walks you through connecting, then makes your first request.`}
       action={<CopyButton text={prompt} label="Copy prompt" variant="default" />}

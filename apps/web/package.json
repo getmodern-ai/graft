@@ -17,6 +17,7 @@
   },
   "dependencies": {
     "@base-ui/react": "catalog:",
+    "@graft/auth": "workspace:*",
     "@graft/core": "workspace:*",
     "@graft/proxy": "workspace:*",
     "@tanstack/react-query": "catalog:",
@@ -24,6 +25,7 @@
     "better-auth": "catalog:",
     "class-variance-authority": "catalog:",
     "clsx": "catalog:",
+    "cmdk": "catalog:",
     "next-themes": "catalog:",
     "react": "catalog:",
     "react-dom": "catalog:",
@@ -31,7 +33,7 @@
     "tailwind-merge": "catalog:"
   },
   "devDependencies": {
-    "@graft/auth": "workspace:*",
+    "@graft/ask-card": "workspace:*",
     "@graft/config": "workspace:*",
     "@graft/db": "workspace:*",
     "@graft/mcp": "workspace:*",
