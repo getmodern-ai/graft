@@ -132,3 +132,21 @@ connection, as Build is in Setup, and the job is an ordinary `acquire` job of th
 promotes into its working set. The console polls the job as Setup's building step does and can find
 it again after a reload. Other agents reach the tool through `find_tool`, within their scope. No
 link opens the agent's own software: nothing holds a deep link into it.
+
+### Amended 2026-10-15: the building agent is chosen by rule, and the agent to try it in after (GRA-346)
+
+The amendment above has the person pick the agent before Create. That is reversed (Aleks): the
+dialog asks only what the tool should do. The build runs as the agent that **last used** the
+integration, or else the first active agent whose scope reaches one of its live, usable
+connections. Create is still that agent's build approval for the connection, recorded as above,
+and the dialog names the agent beside Create, because pressing it grants something. With no agent
+able to reach the integration, Create is disabled and the dialog points the person to connecting
+one. Once the tool is ready, the person picks the agent to **try it in**, defaulting to the one it
+was built as, and copies a prompt for it. The flow stops there.
+
+Why: the design asks for the tool first and the agent after, and asking for an agent before Create
+is a question with no consequence for which agents can use the result. A tool is the person's, and
+any agent with the integration in scope finds it through `find_tool` (ADR 0007). The building
+agent's only difference is the build approval and the working set it is promoted into. The rule
+picks the agent most likely to be the one the person means, and the choice that matters (where to
+try it) comes when the person has a tool to try.
