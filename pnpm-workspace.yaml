@@ -19,7 +19,7 @@ catalog:
   # versions Cando runs (ADR 0011): one line each so the proxy, the token and the server cannot
   # disagree about a compiler-visible type such as `Headers` or a JWT claim set.
   hono: ^4.13.9
-  undici: ^8.11.2
+  undici: ^8.12.2
   jose: ^6.2.4
   zod: ^4.6.5
   "@t3-oss/env-core": ^0.13.11
