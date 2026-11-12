@@ -40,7 +40,7 @@
     "@graft/token": "workspace:*",
     "@graft/toolbox": "workspace:*",
     "@graft/vault": "workspace:*",
-    "@hono/node-server": "^2.1.1",
+    "@hono/node-server": "^2.1.6",
     "drizzle-orm": "catalog:",
     "evlog": "^2.29.0",
     "hono": "catalog:",
