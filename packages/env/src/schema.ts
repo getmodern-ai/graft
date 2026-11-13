@@ -714,6 +714,23 @@ export const trustedProxyHops = z.coerce
   .default(0);
 
 /**
+ * A ceiling of the relay budget (GRA-349; ADR 0019 as amended 2026-11-14): how many relayed calls
+ * an agent may make in a clock hour (`GRAFT_RELAY_BUDGET_AGENT_HOURLY`) or a person's agents over a
+ * rolling 24 hours (`GRAFT_RELAY_BUDGET_PERSON_DAILY`). A relayed call costs the deployment what
+ * its upstream charges, and one looping agent once made tens of thousands. Each is optional and
+ * **off by default in both forms**, as the rate limits are: a self-host is unlimited unless its
+ * operator says otherwise, and the hosted form sets its own numbers. A whole number of at least 1;
+ * 0 would refuse every relayed call, which is revoking the provider, not budgeting it.
+ */
+export function relayBudgetCeiling(name: string) {
+  return z.coerce
+    .number({ error: `${name} must be a whole number of relayed calls` })
+    .int(`${name} must be a whole number of relayed calls`)
+    .min(1, `${name} must be at least 1; unset it to leave relayed calls uncounted`)
+    .optional();
+}
+
+/**
  * The gateway provider (ADR 0019, GRA-58): a company's API gateway fronts the vendors it covers and
  * holds their credentials, and a vendor whose hosts it covers connects with no person step and
  * relays every call through it. Four settings, all-or-nothing (`gatewayKeys`) and off by default —
@@ -1239,6 +1256,10 @@ export const serverSchema = {
   GRAFT_RATE_LIMIT_MCP: rateLimitWindow("GRAFT_RATE_LIMIT_MCP"),
   GRAFT_RATE_LIMIT_PROXY: rateLimitWindow("GRAFT_RATE_LIMIT_PROXY"),
   GRAFT_RATE_LIMIT_API: rateLimitWindow("GRAFT_RATE_LIMIT_API"),
+
+  /** The relay budget's two ceilings, each optional and off by default — see `relayBudgetCeiling` (GRA-349). */
+  GRAFT_RELAY_BUDGET_AGENT_HOURLY: relayBudgetCeiling("GRAFT_RELAY_BUDGET_AGENT_HOURLY"),
+  GRAFT_RELAY_BUDGET_PERSON_DAILY: relayBudgetCeiling("GRAFT_RELAY_BUDGET_PERSON_DAILY"),
 
   /** How far right in `X-Forwarded-For` the client's address is, 0 meaning never read it — see `trustedProxyHops`. */
   GRAFT_TRUSTED_PROXY_HOPS: trustedProxyHops,

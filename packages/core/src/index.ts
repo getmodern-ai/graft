@@ -500,6 +500,25 @@ export {
   MAX_PENDING_ACTION_TTL_MS,
 } from "./pending-action/pending-action.service";
 export {
+  defaultRelayBudgetDeps,
+  type RelayBudgetDeps,
+} from "./relay-budget/relay-budget.deps";
+export {
+  hasRelayBudget,
+  hourStartOf,
+  judgeRelayBudget,
+  NO_RELAY_BUDGET,
+  PERSON_WINDOW_HOURS,
+  personWindowStart,
+  type RelayBudgetLimits,
+  type RelayCallBucket,
+} from "./relay-budget/relay-budget.rules";
+export {
+  chargeRelayCall,
+  pruneRelayCallCounts,
+  RELAY_CALL_COUNT_RETENTION_MS,
+} from "./relay-budget/relay-budget.service";
+export {
   readSetupHarness,
   SETUP_HARNESS_IDS,
   SETUP_HARNESSES,

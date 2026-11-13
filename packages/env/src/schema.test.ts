@@ -40,6 +40,7 @@ import {
   proxyMaxBodyBytes,
   RETIRED_ADMIN_PASSWORD,
   rateLimitWindow,
+  relayBudgetCeiling,
   sandboxBackend,
   serverEnvIssues,
   serverSchema,
@@ -1125,6 +1126,32 @@ describe("the GRAFT_RATE_LIMIT_* group", () => {
       "GRAFT_RATE_LIMIT_PROXY",
       "GRAFT_RATE_LIMIT_SIGN_IN",
     ]);
+  });
+});
+
+describe("the GRAFT_RELAY_BUDGET_* pair", () => {
+  const hourly = relayBudgetCeiling("GRAFT_RELAY_BUDGET_AGENT_HOURLY");
+
+  it("is absent by default, so relayed calls are uncounted until an operator sets a ceiling", () => {
+    expect(hourly.parse(undefined)).toBeUndefined();
+    expect(
+      Object.keys(serverSchema)
+        .filter((name) => name.startsWith("GRAFT_RELAY_BUDGET_"))
+        .sort(),
+    ).toEqual(["GRAFT_RELAY_BUDGET_AGENT_HOURLY", "GRAFT_RELAY_BUDGET_PERSON_DAILY"]);
+  });
+
+  it("takes a whole number of at least one, each on its own", () => {
+    expect(hourly.parse("250")).toBe(250);
+    expect(serverSchema.GRAFT_RELAY_BUDGET_PERSON_DAILY.parse("1000")).toBe(1000);
+  });
+
+  it("refuses zero, a fraction and a word with a sentence naming the variable", () => {
+    for (const bad of ["0", "-1", "2.5", "lots"]) {
+      const parsed = hourly.safeParse(bad);
+      expect(parsed.success, bad).toBe(false);
+      expect(parsed.error?.issues[0]?.message).toContain("GRAFT_RELAY_BUDGET_AGENT_HOURLY");
+    }
   });
 });
 

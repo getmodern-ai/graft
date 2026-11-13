@@ -42,6 +42,7 @@ import { forwardableRequestHeaders, passthroughResponseHeaders } from "./headers
 import { isPublicHost } from "./public-host";
 import { classifyRequest, parseJsonBody } from "./read-request";
 import { type Hop, isRedirect, nextHop, scrubReturnedRedirect } from "./redirects";
+import { chargeRelayBudget } from "./relay-budget";
 import { SCHEMES, type SchemePlugin, type SchemeTarget } from "./schemes";
 import { createSingleFlight } from "./single-flight";
 import { extractToken, scrubToken } from "./token";
@@ -50,6 +51,7 @@ import type {
   CredentialFields,
   CredentialScope,
   DerivedCredentialCache,
+  ProxyBudgetTrace,
   ProxyDeps,
   ProxyEvent,
   ProxyOptions,
@@ -215,6 +217,8 @@ type Trace = {
   oauth: ProxyEvent["oauth"];
   /** The relay scheme the call left through, once the connection resolved to one (`ProxyEvent.relay`). */
   relay: string | null;
+  /** What the relay budget said, once it was asked (`ProxyEvent.budget`). */
+  budget: ProxyBudgetTrace | null;
 };
 
 type Answered = {
@@ -270,6 +274,7 @@ async function proxyCall(
     dryRunOutcome: null,
     oauth: null,
     relay: null,
+    budget: null,
   };
 
   let result: Refused | Answered | Intercepted;
@@ -312,6 +317,9 @@ async function proxyCall(
       {
         [PROXY_REFUSED_HEADER]: result.reason,
         ...(result.unreached ? { [REFUSAL_HEADER]: result.reason } : {}),
+        ...(result.retryAfterSeconds !== undefined
+          ? { "retry-after": String(result.retryAfterSeconds) }
+          : {}),
       },
     );
   }
@@ -492,6 +500,29 @@ async function decide(
     if (!named.ok) return refuse(409, named.reason, named.message, { requestBytes });
     trace.dryRunOutcome = "intercepted";
     return intercept(call.method, target.url, named.headerNames, body, requestBytes);
+  }
+
+  /**
+   * The relay budget's rung (GRA-349): a relayed call about to leave is counted, or refused past a
+   * ceiling. After the dry-run rung, so an intercepted write costs nothing and a dry-run read, which
+   * does leave, is counted; before `obtain`, so a refused call assembles no relay fields. A call the
+   * proxy signs itself is never asked about: it costs the deployment nothing.
+   */
+  if (source.mode === "relay" && deps.relayBudget) {
+    const refused = await chargeRelayBudget(
+      deps.relayBudget,
+      {
+        personId: claims.person,
+        agentId: claims.agent,
+        connectionId: connection.id,
+        relay: source.plugin.scheme,
+        dryRun: claims.dryRun,
+      },
+      shared.now(),
+      trace,
+      requestBytes,
+    );
+    if (refused) return refused;
   }
 
   let credential: CredentialFields;

@@ -62,6 +62,12 @@ import {
 } from "./connections";
 import { createModel, createModelKeyCheck } from "./model";
 import { describeObservability, flushObservability } from "./observability";
+import {
+  createRelayBudget,
+  relayBudgetClause,
+  relayBudgetLimitsFrom,
+  startRelayCallPrune,
+} from "./relay-budget";
 import { toolCalledProperties } from "./tool-called";
 
 /**
@@ -452,10 +458,19 @@ const mcpOAuth = {
   cardHosts: env.GRAFT_CARD_HOSTS,
 };
 
+/**
+ * The relay budget (GRA-349; `relay-budget.ts`): every relayed call counted against the agent's
+ * hour and the person's day in Postgres, or refused past a ceiling. Off unless a
+ * `GRAFT_RELAY_BUDGET_*` variable is set, in which case there is no hook and nothing is counted.
+ */
+const relayBudgetLimits = relayBudgetLimitsFrom(env);
+const relayBudget = createRelayBudget(db, relayBudgetLimits);
+
 const app = createServer({
   keys,
   vault,
   connections,
+  ...(relayBudget ? { relayBudget } : {}),
   /**
    * The rate limit at each door (GRA-149; ADR 0018's "a rate limit at the edge"). `UNLIMITED`
    * unless a `GRAFT_RATE_LIMIT_*` variable said otherwise, which is the decision: a self-host is
@@ -569,6 +584,13 @@ const sweep = startSweep(mcp, {
 
 acquireRunner.start();
 
+// The relay budget's counts past two days are read by nothing; delete them on the sweep's cadence.
+const relayCallPrune = startRelayCallPrune(db, relayBudgetLimits, {
+  intervalSeconds: env.GRAFT_SWEEP_INTERVAL_SECONDS,
+  onError: (error) =>
+    log.error({ relayBudget: { message: "relay call count prune failed", error: String(error) } }),
+});
+
 serve({ fetch: app.fetch, port: env.PORT }, (info) => {
   console.log(
     `graft server listening on http://localhost:${info.port} — proxy at ${PROXY_MOUNT_PATH}, ` +
@@ -583,6 +605,7 @@ serve({ fetch: app.fetch, port: env.PORT }, (info) => {
       modelSetup.summary +
       `, ${describeObservability(backings)}` +
       `, rate limit ${backings.rateLimiter.name}` +
+      relayBudgetClause(relayBudgetLimits) +
       proxyBodyCapClause(env.GRAFT_PROXY_MAX_BODY_BYTES) +
       `, acquire runner: ${env.GRAFT_ACQUIRE_CONCURRENCY} job(s) at once, ` +
       `console ${existsSync(join(env.GRAFT_CONSOLE_DIR, "index.html")) ? `served from ${env.GRAFT_CONSOLE_DIR}` : `not built at ${env.GRAFT_CONSOLE_DIR} (console paths answer 404)`}`,
@@ -592,6 +615,7 @@ serve({ fetch: app.fetch, port: env.PORT }, (info) => {
 for (const signal of ["SIGINT", "SIGTERM"] as const) {
   process.once(signal, () => {
     sweep.stop();
+    relayCallPrune.stop();
     acquireRunner.stop();
     mcp.notifier?.close();
     mcp.inFlight?.close();

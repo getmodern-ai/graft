@@ -4,6 +4,7 @@ import {
   DEFAULT_PROXY_OPTIONS,
   type ProxyDeps,
   type ProxyEvent,
+  type RelayBudget,
   type UpstreamFetch,
 } from "@graft/proxy";
 import { type CapabilityTokenKeys, createCapabilityTokenVerifier } from "@graft/token";
@@ -68,6 +69,12 @@ export type ServerDeps = {
    * a running server the environment is the rule and `DEFAULT_PROXY_OPTIONS` only its default.
    */
   maxBodyBytes?: number;
+  /**
+   * The relay budget (GRA-349; `relay-budget.ts`): counts every relayed call against the agent's
+   * hour and the person's day, or refuses it with a 429. Absent, the default in both forms until an
+   * operator sets a `GRAFT_RELAY_BUDGET_*` ceiling, relayed calls are not counted.
+   */
+  relayBudget?: RelayBudget;
   /**
    * A test's fake vendor; production takes the proxy's default, undici behind the guarded resolver
    * with no exemption — a gateway relay's own fetch rides on its connection (ADR 0019, GRA-58).
@@ -185,6 +192,7 @@ export function createServer(deps: ServerDeps): Hono<EvlogVariables> {
         ...(deps.maxBodyBytes !== undefined ? { maxBodyBytes: deps.maxBodyBytes } : {}),
       },
       ...(deps.upstreamFetch ? { upstreamFetch: deps.upstreamFetch } : {}),
+      ...(deps.relayBudget ? { relayBudget: deps.relayBudget } : {}),
     }),
   );
 

@@ -1924,6 +1924,24 @@ saves the read. A refusal happens before the handler, so it is never an approval
 a vendor call. `Backings.rateLimiter` is the seam beside `logs`, `analytics` and `model telemetry`;
 the hosted form's limits and any store behind them are graft-cloud's, in its private package.
 
+**A relayed call is counted against the relay budget, when one is set** (GRA-349; ADR 0019 as
+amended 2026-11-14; CONTEXT.md, *Relay budget*). An upstream that relays a call may bill the
+deployment for it, and a per-minute limit cannot tell a loop at eight calls a minute from an honest
+fan-out, so the budget is over hours: `GRAFT_RELAY_BUDGET_AGENT_HOURLY` per agent per clock hour
+and `GRAFT_RELAY_BUDGET_PERSON_DAILY` per person over the current hour and the 23 before it, each a
+whole number, optional and off by default in both forms; the boot line says `relay budget off` or
+names them. The proxy asks `ProxyDeps.relayBudget` for every relayed call, after the dry-run rung
+and before `obtain`, and refuses past a ceiling with `429 relay_budget_exhausted`, `Retry-After`
+and `@graft/proxy`'s `relayBudgetMessage` (the ceiling, the count, when it lifts, the likely loop);
+the wide event carries `proxy.budget`, `exhausted` or `unavailable` (a counter that threw, which
+lets the call through). The server binds the hook in `apps/server/src/relay-budget.ts` to
+`@graft/core`'s `chargeRelayCall` over `relay_call_count` (migration 0023: hourly buckets per
+agent, the person on the row), judged before counting so a refused call is never counted, and
+prunes buckets past two days on the sweep's cadence. A call the proxy signs itself is never
+counted. `packages/core/src/relay-budget/relay-budget.service.test.ts` and
+`apps/server/src/relay-budget.test.ts` replay the October loop through the decision and through
+the proxy.
+
 ```bash
 cat >> apps/server/.env <<'ENV'
 GRAFT_SANDBOX_BACKEND=fake

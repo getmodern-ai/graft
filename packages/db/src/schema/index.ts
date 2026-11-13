@@ -14,6 +14,7 @@ export * from "./connection";
 export * from "./mcp-oauth";
 export * from "./pending-action";
 export * from "./person-model-key";
+export * from "./relay-call";
 export * from "./setup";
 export * from "./stock";
 export * from "./tool";
