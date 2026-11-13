@@ -67,6 +67,7 @@ export {
   relayRefuses,
   relayRulesOf,
 } from "./relay";
+export { REPEAT_GUARD_MAX_KEYS, repeatedRequestMessage } from "./repeat-guard";
 export { CredentialRefreshError, DerivedCredentialError } from "./scheme-errors";
 export {
   requiredParametersOf,
@@ -88,6 +89,7 @@ export type {
   ProxyOptions,
   ProxyOutcome,
   ProxyRelay,
+  ProxyRepeatTrace,
   ProxyScheme,
   RelayBudget,
   RelayBudgetCall,
@@ -96,6 +98,7 @@ export type {
   RelayHeaderRules,
   RelayPlugin,
   RelayScheme,
+  RepeatLimit,
   SchemeConfig,
   SchemeTarget,
   TokenVerdict,

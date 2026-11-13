@@ -1260,6 +1260,12 @@ export const serverSchema = {
   /** The relay budget's two ceilings, each optional and off by default — see `relayBudgetCeiling` (GRA-349). */
   GRAFT_RELAY_BUDGET_AGENT_HOURLY: relayBudgetCeiling("GRAFT_RELAY_BUDGET_AGENT_HOURLY"),
   GRAFT_RELAY_BUDGET_PERSON_DAILY: relayBudgetCeiling("GRAFT_RELAY_BUDGET_PERSON_DAILY"),
+  /**
+   * Repeat detection (GRA-351; ADR 0019 as amended 2026-11-14): `<limit>/<windowSeconds>`, at most
+   * that many identical relayed requests by one agent in any such window; the next is refused as a
+   * probable loop. Optional and off by default in both forms; the hosted form sets `30/900`.
+   */
+  GRAFT_RELAY_REPEAT_LIMIT: rateLimitWindow("GRAFT_RELAY_REPEAT_LIMIT"),
 
   /** How far right in `X-Forwarded-For` the client's address is, 0 meaning never read it — see `trustedProxyHops`. */
   GRAFT_TRUSTED_PROXY_HOPS: trustedProxyHops,

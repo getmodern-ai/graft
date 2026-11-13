@@ -73,7 +73,9 @@ broker
 **Relay budget**:
 The deployment's ceilings on relayed calls, which its upstream bills it for: an agent's in the
 current clock hour and a person's over the last 24 hours. Past one, the proxy refuses the call
-until the ceiling lifts. Off unless the operator sets a number. ADR 0019 as amended 2026-11-14.
+until the ceiling lifts. Off unless the operator sets a number. A sibling limit refuses one
+agent's identical relayed request repeated too often in a few minutes, as a probable loop, before
+the budget is charged. ADR 0019 as amended 2026-11-14.
 _Avoid_: quota (a blob's, ADR 0023), rate limit (a door's per-minute count, GRA-149), credits
 
 **Scope**:
