@@ -10,7 +10,7 @@ import type {
 /**
  * The relay budget's rung (GRA-349; ADR 0019 as amended 2026-11-14). A relayed call costs the
  * deployment whatever its upstream charges, and one looping agent once made tens of thousands of
- * them. So before a relayed call's fields are assembled, the host's budget counts it or refuses it.
+ * them. So just before each relayed hop is sent, the host's budget counts it or refuses it.
  * The proxy holds no store and no numbers: it asks, and turns a refusal into a 429 the caller and
  * the wide event can both read.
  *

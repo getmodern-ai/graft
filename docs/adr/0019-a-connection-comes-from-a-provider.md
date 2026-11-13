@@ -265,9 +265,10 @@ private knowledge:
   reads in under half a minute), so the bound is a budget over hours, in two ceilings:
   `GRAFT_RELAY_BUDGET_AGENT_HOURLY` per agent per clock hour, `GRAFT_RELAY_BUDGET_PERSON_DAILY` per
   person over the current hour and the 23 before it. Each is optional and off by default in both
-  forms, as the rate limits are. The proxy asks the host's budget (`ProxyDeps.relayBudget`) for
-  every relayed call after the dry-run rung, so an intercepted write costs nothing and a dry-run
-  read that leaves is counted, and before the relay's fields are assembled. Past a ceiling the
+  forms, as the rate limits are. The proxy asks the host's budget (`ProxyDeps.relayBudget`) just
+  before each relayed hop is sent, a followed redirect being another hop the upstream bills: so an
+  intercepted dry-run write costs nothing, a dry-run read that leaves is counted, and a call that
+  fails before it leaves (the provider could not assemble its fields) is not. Past a ceiling the
   call is refused `429 relay_budget_exhausted` with `Retry-After` and a sentence naming the
   ceiling, when it lifts, and the likely loop; the event carries `budget`. The count is
   `relay_call_count`, hourly buckets per agent in Postgres, because a count in the process forgets

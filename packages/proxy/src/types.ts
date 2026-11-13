@@ -431,7 +431,7 @@ export type ProxyOutcome =
   /**
    * A relayed call past the deployment's relay budget (GRA-349; ADR 0019 as amended 2026-11-14):
    * the agent's calls this hour or the person's over the last 24 hours reached the ceiling, so the
-   * call was refused before the relay's fields were assembled and cost nothing.
+   * call was refused before it reached the upstream and cost nothing.
    */
   | "relay_budget_exhausted"
   | "proxy_error";
@@ -604,9 +604,9 @@ export type ProxyDeps = {
   /** Defaults to `createUpstreamFetch()` — undici with a public-address-only resolver. */
   upstreamFetch?: UpstreamFetch;
   /**
-   * The relay budget (GRA-349): asked for every relayed call that is about to leave, after the
-   * dry-run rung and before the relay's fields are assembled. Absent, relayed calls are not
-   * counted — the default in both forms until an operator sets a ceiling.
+   * The relay budget (GRA-349): asked just before each relayed hop is sent, a followed redirect
+   * included, so only what reaches the upstream is counted. Absent, relayed calls are not counted —
+   * the default in both forms until an operator sets a ceiling.
    */
   relayBudget?: RelayBudget;
   /** The wide-event sink. Called exactly once per proxied call, refused or forwarded. */

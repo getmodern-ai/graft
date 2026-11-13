@@ -53,7 +53,10 @@ function claims(overrides: Partial<CapabilityClaims> = {}): CapabilityClaims {
   };
 }
 
-function harness(charge: (call: RelayBudgetCall) => Promise<RelayBudgetVerdict>) {
+function harness(
+  charge: (call: RelayBudgetCall) => Promise<RelayBudgetVerdict>,
+  opts: { obtainFails?: boolean; followRedirects?: boolean } = {},
+) {
   const events: ProxyEvent[] = [];
   const sent: UpstreamRequest[] = [];
   const charged: RelayBudgetCall[] = [];
@@ -70,6 +73,7 @@ function harness(charge: (call: RelayBudgetCall) => Promise<RelayBudgetVerdict>)
       plugin: relay,
       obtain: async () => {
         obtained += 1;
+        if (opts.obtainFails) throw new Error("the provider is down");
         return { upstream: "https://relay.example" };
       },
     },
@@ -102,6 +106,15 @@ function harness(charge: (call: RelayBudgetCall) => Promise<RelayBudgetVerdict>)
     },
     upstreamFetch: async (request) => {
       sent.push(request);
+      // `/moved` answers a redirect inside the host set, once; everything else answers 200.
+      if (decodeURIComponent(request.url).includes("/moved")) {
+        return {
+          status: 302,
+          statusText: "Found",
+          headers: new Headers({ location: "https://www.vendor.example/drive/v3/files/new" }),
+          body: null,
+        };
+      }
       return {
         status: 200,
         statusText: "OK",
@@ -110,6 +123,7 @@ function harness(charge: (call: RelayBudgetCall) => Promise<RelayBudgetVerdict>)
       };
     },
     now: () => NOW,
+    options: { followRedirects: opts.followRedirects ?? false },
     log: (event) => events.push(event),
   };
   const call = (path: string, token = "good", init: RequestInit = {}) =>
@@ -147,7 +161,7 @@ describe("the relay budget's rung", () => {
     expect(h.events[0]?.budget).toBeNull();
   });
 
-  it("refuses past a ceiling with a 429 and Retry-After, before the relay's fields or the vendor", async () => {
+  it("refuses past a ceiling with a 429 and Retry-After, before anything reaches the upstream", async () => {
     const h = harness(exhausted);
     const response = await h.call("/c/conn_r/files/abc/export");
     expect(response.status).toBe(429);
@@ -158,7 +172,6 @@ describe("the relay budget's rung", () => {
     expect(body.error).toBe("too_many_requests");
     expect(body.reason).toBe("relay_budget_exhausted");
     expect(body.message).toContain("250 relayed calls this hour");
-    expect(h.obtained()).toBe(0);
     expect(h.sent).toHaveLength(0);
     expect(h.events[0]).toMatchObject({
       outcome: "relay_budget_exhausted",
@@ -172,6 +185,39 @@ describe("the relay budget's rung", () => {
         resetsAt: "2026-10-12T14:00:00.000Z",
       },
     });
+  });
+
+  /** Greptile on #297: a provider outage must not spend the allowance on calls that never left. */
+  it("does not count a call whose relay fields could not be assembled", async () => {
+    const h = harness(allowed, { obtainFails: true });
+    const response = await h.call("/c/conn_r/files/abc/export");
+    expect(response.status).toBe(502);
+    expect(h.obtained()).toBe(1);
+    expect(h.charged).toHaveLength(0);
+    expect(h.sent).toHaveLength(0);
+  });
+
+  /** Greptile on #297: a followed redirect is another request the upstream bills. */
+  it("counts every hop a followed redirect sends through the relay", async () => {
+    const h = harness(allowed, { followRedirects: true });
+    const response = await h.call("/c/conn_r/files/moved");
+    expect(response.status).toBe(200);
+    expect(h.sent).toHaveLength(2);
+    expect(h.charged).toHaveLength(2);
+  });
+
+  it("stops following a redirect when the budget refuses the next hop", async () => {
+    let calls = 0;
+    const h = harness(
+      async () => {
+        calls += 1;
+        return calls === 1 ? { allowed: true } : exhausted();
+      },
+      { followRedirects: true },
+    );
+    const response = await h.call("/c/conn_r/files/moved");
+    expect(response.status).toBe(429);
+    expect(h.sent).toHaveLength(1);
   });
 
   it("never asks about a call the proxy signs itself", async () => {

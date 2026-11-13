@@ -502,29 +502,6 @@ async function decide(
     return intercept(call.method, target.url, named.headerNames, body, requestBytes);
   }
 
-  /**
-   * The relay budget's rung (GRA-349): a relayed call about to leave is counted, or refused past a
-   * ceiling. After the dry-run rung, so an intercepted write costs nothing and a dry-run read, which
-   * does leave, is counted; before `obtain`, so a refused call assembles no relay fields. A call the
-   * proxy signs itself is never asked about: it costs the deployment nothing.
-   */
-  if (source.mode === "relay" && deps.relayBudget) {
-    const refused = await chargeRelayBudget(
-      deps.relayBudget,
-      {
-        personId: claims.person,
-        agentId: claims.agent,
-        connectionId: connection.id,
-        relay: source.plugin.scheme,
-        dryRun: claims.dryRun,
-      },
-      shared.now(),
-      trace,
-      requestBytes,
-    );
-    if (refused) return refused;
-  }
-
   let credential: CredentialFields;
   try {
     credential = await source.obtain();
@@ -535,6 +512,31 @@ async function decide(
   // The host keeps what a scheme rotates on the way to the vendor, under the scope it decrypts with
   // (ADR 0005); a host that bound neither seam gets the refreshed token for this call alone.
   const scope: CredentialScope = { personId: connection.personId, connectionId: connection.id };
+  /**
+   * The relay budget (GRA-349): every hop that leaves through a relay is a call the upstream bills,
+   * a followed redirect included, so `forward` counts each one, or refuses it past a ceiling, just
+   * before it is sent. That is after the dry-run rung, so an intercepted write costs nothing, and
+   * after `obtain` and the relay's rewrite, so a call that fails before it leaves is never counted.
+   * A call the proxy signs itself is never asked about: it costs the deployment nothing.
+   */
+  const { relayBudget } = deps;
+  const beforeSend =
+    source.mode === "relay" && relayBudget
+      ? () =>
+          chargeRelayBudget(
+            relayBudget,
+            {
+              personId: claims.person,
+              agentId: claims.agent,
+              connectionId: connection.id,
+              relay: source.plugin.scheme,
+              dryRun: claims.dryRun,
+            },
+            shared.now(),
+            trace,
+            requestBytes,
+          )
+      : null;
   const { storeCredential, credentialRefreshFailed } = deps;
   return forward(
     {
@@ -551,6 +553,7 @@ async function decide(
       hosts: source.hosts,
       signal,
       trace,
+      beforeSend,
       rotation: {
         store: storeCredential ? (fields) => storeCredential(scope, fields) : async () => undefined,
         failed: credentialRefreshFailed
@@ -680,6 +683,11 @@ type Forwarding = {
   signal: AbortSignal;
   /** The event's running record; `forward` marks the moment a dry-run read leaves. */
   trace: Trace;
+  /**
+   * Asked immediately before each hop is sent; a refusal stops the call there. The relay budget's
+   * charge for a relayed call (GRA-349), null for every other.
+   */
+  beforeSend: (() => Promise<Refused | null>) | null;
   /** The host's two seams for a credential the scheme rotates, bound to this connection's scope. */
   rotation: {
     store: (fields: CredentialFields) => Promise<void>;
@@ -750,6 +758,10 @@ async function forward(
 
     // Set as the request leaves, not when it answers: a dry-run read that then times out was still
     // forwarded, and the audit trail says so.
+    if (forwarding.beforeSend) {
+      const refused = await forwarding.beforeSend();
+      if (refused) return refused;
+    }
     if (trace.dryRun) trace.dryRunOutcome = "forwarded";
     const sent = await sendHop(forwarding.upstream, hop, outgoing.target, signal, requestBytes);
     if (sent.kind === "refused") return sent;

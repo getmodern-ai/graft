@@ -1930,8 +1930,8 @@ deployment for it, and a per-minute limit cannot tell a loop at eight calls a mi
 fan-out, so the budget is over hours: `GRAFT_RELAY_BUDGET_AGENT_HOURLY` per agent per clock hour
 and `GRAFT_RELAY_BUDGET_PERSON_DAILY` per person over the current hour and the 23 before it, each a
 whole number, optional and off by default in both forms; the boot line says `relay budget off` or
-names them. The proxy asks `ProxyDeps.relayBudget` for every relayed call, after the dry-run rung
-and before `obtain`, and refuses past a ceiling with `429 relay_budget_exhausted`, `Retry-After`
+names them. The proxy asks `ProxyDeps.relayBudget` for every hop a relayed call sends (a followed
+redirect is another), just before it leaves, and refuses past a ceiling with `429 relay_budget_exhausted`, `Retry-After`
 and `@graft/proxy`'s `relayBudgetMessage` (the ceiling, the count, when it lifts, the likely loop);
 the wide event carries `proxy.budget`, `exhausted` or `unavailable` (a counter that threw, which
 lets the call through). The server binds the hook in `apps/server/src/relay-budget.ts` to
