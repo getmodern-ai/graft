@@ -13,9 +13,9 @@ import type { ProxyRepeatTrace, RepeatLimit } from "./types";
  *
  * **The count lives in this app instance**, a sliding window per request held as timestamps under a
  * sha256 digest of the request. Two limits follow and are accepted: a restart forgets at most one
- * window, and two replicas count their own shares. Memory is bounded twice: a key's entries are
- * never more than the limit, since a refused call is not recorded, and the number of keys is capped
- * at `REPEAT_GUARD_MAX_KEYS`, the least recently admitted evicted first. Expired keys are pruned as
+ * window, and two replicas count their own shares. Memory is bounded twice: a key's entries stay
+ * near the limit, since a refused call is not recorded, and the number of keys is capped at
+ * `REPEAT_GUARD_MAX_KEYS`, the least recently recorded evicted first. Expired keys are pruned as
  * calls arrive, oldest first, so the map holds at most one window of traffic.
  */
 
@@ -29,6 +29,8 @@ export const REPEAT_GUARD_MAX_KEYS = 20_000;
 /** What makes two relayed requests the same one. The URL is the vendor's, query included. */
 export type RepeatRequest = {
   agentId: string;
+  /** The connection, so one agent's identical reads of two accounts are two requests. */
+  connectionId: string;
   tool: string;
   method: string;
   url: string;
@@ -40,14 +42,16 @@ function sha256(data: string | Uint8Array): string {
 }
 
 /**
- * The request's key: a sha256 over the agent, the tool, the method, the full vendor URL and a
- * sha256 of the body. Only this digest is held, never the URL or the body. A JSON array so no
- * field's content can spell another's boundary; no body and an empty body are the same request.
+ * The request's key: a sha256 over the agent, the connection, the tool, the method, the full
+ * vendor URL and a sha256 of the body. Only this digest is held, never the URL or the body. A JSON
+ * array so no field's content can spell another's boundary; no body and an empty body are the same
+ * request.
  */
 export function repeatKey(request: RepeatRequest): string {
   return sha256(
     JSON.stringify([
       request.agentId,
+      request.connectionId,
       request.tool,
       request.method.toUpperCase(),
       request.url,
@@ -62,13 +66,15 @@ export type RepeatVerdict =
 
 export type RepeatGuard = {
   limit: RepeatLimit;
+  /** Judge one request at `nowMs`, recording nothing: a refusal never fills the window. */
+  check: (key: string, nowMs: number) => RepeatVerdict;
   /**
-   * Judge one request at `nowMs`, and record it when it is allowed. Synchronous, so two identical
-   * calls arriving together cannot both take the last place in the window.
+   * Record one request that is leaving, at `nowMs`. Called when the request's first hop is let
+   * through, so only calls that leave are counted. Calls judged together may each pass the check
+   * before any records, and so pass the limit by as many as are in flight, as the budget's may; a
+   * loop sends one at a time.
    */
-  admit: (key: string, nowMs: number) => RepeatVerdict;
-  /** Take back an admission recorded at `atMs`: the call was refused by a later rung and never left. */
-  release: (key: string, atMs: number) => void;
+  record: (key: string, nowMs: number) => void;
   /** How many distinct requests are held: for the tests of the memory bound. */
   size: () => number;
 };
@@ -78,8 +84,9 @@ export function createRepeatGuard(
   maxKeys: number = REPEAT_GUARD_MAX_KEYS,
 ): RepeatGuard {
   const windowMs = limit.windowSeconds * 1000;
-  // Insertion order is the order of last admission, since an admission re-inserts its key: the
-  // first key is the least recently admitted, and its newest entry the oldest newest of them all.
+  // Insertion order is the order of last record, since a record re-inserts its key at the proxy's
+  // clock, which only moves forward: the first key is the least recently recorded, and its newest
+  // entry the oldest newest of them all. Nothing removes an entry but its age, so the order holds.
   const seen = new Map<string, number[]>();
 
   /** Drop every key whose newest entry has left the window, from the front, stopping at a live one. */
@@ -91,23 +98,30 @@ export function createRepeatGuard(
     }
   }
 
+  /** The key's entries still inside the window, oldest first. */
+  function live(key: string, nowMs: number): number[] {
+    return (seen.get(key) ?? []).filter((at) => at > nowMs - windowMs);
+  }
+
   return {
     limit,
-    admit(key, nowMs) {
+    check(key, nowMs) {
       pruneExpired(nowMs);
-      const times = (seen.get(key) ?? []).filter((at) => at > nowMs - windowMs);
-      if (times.length >= limit.limit) {
-        // Not recorded, so a loop that keeps asking does not keep the window full. Put back in place:
-        // a refusal is not an admission and does not move the key up the eviction order.
-        seen.set(key, times);
-        // The call may go once enough of the oldest entries age out to leave room for one more.
-        const freeing = times[times.length - limit.limit] ?? nowMs;
-        return {
-          allowed: false,
-          count: times.length,
-          retryAfterSeconds: Math.max(1, Math.ceil((freeing + windowMs - nowMs) / 1000)),
-        };
-      }
+      const times = live(key, nowMs);
+      if (times.length < limit.limit) return { allowed: true };
+      // Put back in place, trimmed: a check is not a record and does not move the key up the
+      // eviction order.
+      seen.set(key, times);
+      // The call may go once enough of the oldest entries age out to leave room for one more.
+      const freeing = times[times.length - limit.limit] ?? nowMs;
+      return {
+        allowed: false,
+        count: times.length,
+        retryAfterSeconds: Math.max(1, Math.ceil((freeing + windowMs - nowMs) / 1000)),
+      };
+    },
+    record(key, nowMs) {
+      const times = live(key, nowMs);
       times.push(nowMs);
       seen.delete(key);
       seen.set(key, times);
@@ -116,14 +130,6 @@ export function createRepeatGuard(
         if (oldest === undefined) break;
         seen.delete(oldest);
       }
-      return { allowed: true };
-    },
-    release(key, atMs) {
-      const times = seen.get(key);
-      if (!times) return;
-      const index = times.lastIndexOf(atMs);
-      if (index !== -1) times.splice(index, 1);
-      if (times.length === 0) seen.delete(key);
     },
     size: () => seen.size,
   };
@@ -159,23 +165,27 @@ export function repeatedRequestMessage(verdict: {
   return `This agent has made this same relayed request ${verdict.count} times in the last ${duration(verdict.windowSeconds)}, the limit of ${verdict.limit}; it may be sent again ${after(verdict.retryAfterSeconds)}. An agent that sends one request this often is usually looping: stop, and tell the person what you were doing.`;
 }
 
-/** An admitted request, with the way to take it back if a later rung refuses the call. */
-export type RepeatAdmission = { kind: "admitted"; release: () => void };
+/**
+ * An admitted request, and how to count it once its first hop is let through: `forward`'s
+ * `beforeSend` calls `record` then, at the proxy's clock, so a call refused by the budget or one
+ * that fails before it leaves is never counted.
+ */
+export type RepeatAdmission = { kind: "admitted"; record: () => void };
 
 /**
  * The rung: admit one relayed request, or refuse it `429 repeated_request` with `Retry-After` and
- * record the refusal on `trace.repeat`. The guard never throws; it is the proxy's own memory.
+ * note the refusal on `trace.repeat`. The guard never throws; it is the proxy's own memory.
  */
 export function admitRepeat(
   guard: RepeatGuard,
   request: RepeatRequest,
-  nowMs: number,
+  now: () => number,
   trace: { repeat: ProxyRepeatTrace | null },
   requestBytes: number,
 ): Refused | RepeatAdmission {
   const key = repeatKey(request);
-  const verdict = guard.admit(key, nowMs);
-  if (verdict.allowed) return { kind: "admitted", release: () => guard.release(key, nowMs) };
+  const verdict = guard.check(key, now());
+  if (verdict.allowed) return { kind: "admitted", record: () => guard.record(key, now()) };
   trace.repeat = {
     count: verdict.count,
     limit: guard.limit.limit,

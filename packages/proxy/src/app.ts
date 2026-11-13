@@ -519,26 +519,28 @@ async function decide(
    * intercepted write is not counted; before `forward`, whose `beforeSend` charges the budget, so a
    * refused repeat is never charged. One caller request is one count, whatever redirects `forward`
    * then follows. The URL is read after the token sweep above, so a token a caller put in the query
-   * is not part of it. A call the proxy signs itself is never counted. A call whose first hop the
-   * budget refuses is taken back out of the window, so `Retry-After` is not held up by it.
+   * is not part of it. A call the proxy signs itself is never counted. The rung only judges: the
+   * request is counted when its first hop is let through (`beforeSend` below), so a call the
+   * budget refuses, or one that fails before it leaves, never fills the window.
    */
-  let releaseRepeat: (() => void) | null = null;
+  let recordRepeat: (() => void) | null = null;
   if (source.mode === "relay" && shared.repeats) {
     const admitted = admitRepeat(
       shared.repeats,
       {
         agentId: claims.agent,
+        connectionId: connection.id,
         tool: claims.tool,
         method: call.method,
         url: target.url.href,
         body,
       },
-      shared.now(),
+      shared.now,
       trace,
       requestBytes,
     );
     if (admitted.kind === "refused") return admitted;
-    releaseRepeat = admitted.release;
+    recordRepeat = admitted.record;
   }
 
   let credential: CredentialFields;
@@ -559,28 +561,33 @@ async function decide(
    * A call the proxy signs itself is never asked about: it costs the deployment nothing.
    */
   const { relayBudget } = deps;
-  // Whether a hop has been let past the budget yet: a refusal of the first means nothing left, and
-  // the repeat window gives the request back (GRA-351); a refused redirect hop keeps its count.
-  let hopsSent = 0;
+  // The first hop let through counts the request for repeat detection (GRA-351), once: one caller
+  // request is one count, however many redirect hops follow it.
+  let repeatRecorded = false;
   const beforeSend =
-    source.mode === "relay" && relayBudget
-      ? async () => {
-          const refused = await chargeRelayBudget(
-            relayBudget,
-            {
-              personId: claims.person,
-              agentId: claims.agent,
-              connectionId: connection.id,
-              relay: source.plugin.scheme,
-              dryRun: claims.dryRun,
-            },
-            shared.now(),
-            trace,
-            requestBytes,
-          );
-          if (!refused) hopsSent += 1;
-          else if (hopsSent === 0) releaseRepeat?.();
-          return refused;
+    source.mode === "relay" && (relayBudget || recordRepeat)
+      ? async (): Promise<Refused | null> => {
+          if (relayBudget) {
+            const refused = await chargeRelayBudget(
+              relayBudget,
+              {
+                personId: claims.person,
+                agentId: claims.agent,
+                connectionId: connection.id,
+                relay: source.plugin.scheme,
+                dryRun: claims.dryRun,
+              },
+              shared.now(),
+              trace,
+              requestBytes,
+            );
+            if (refused) return refused;
+          }
+          if (!repeatRecorded) {
+            repeatRecorded = true;
+            recordRepeat?.();
+          }
+          return null;
         }
       : null;
   const { storeCredential, credentialRefreshFailed } = deps;
@@ -730,8 +737,9 @@ type Forwarding = {
   /** The event's running record; `forward` marks the moment a dry-run read leaves. */
   trace: Trace;
   /**
-   * Asked immediately before each hop is sent; a refusal stops the call there. The relay budget's
-   * charge for a relayed call (GRA-349), null for every other.
+   * Asked immediately before each hop is sent; a refusal stops the call there. For a relayed call,
+   * the relay budget's charge (GRA-349) and, on the first hop let through, repeat detection's count
+   * (GRA-351); null for every other.
    */
   beforeSend: (() => Promise<Refused | null>) | null;
   /** The host's two seams for a credential the scheme rotates, bound to this connection's scope. */

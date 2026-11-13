@@ -283,18 +283,20 @@ private knowledge:
   hour or the day; the October loop's signature was narrower, one agent re-exporting the same file
   thousands of times, and that is caught within minutes.
   `GRAFT_RELAY_REPEAT_LIMIT=<limit>/<windowSeconds>` (the hosted form's is `30/900`) allows one
-  agent at most that many identical relayed requests, the same tool, method, vendor URL with its
-  query and body, in any such window; the next is refused `429 repeated_request` with `Retry-After`, the time until enough of the window's
-  oldest entries age out, and a sentence saying the agent is probably looping. Off by default in
-  both forms. The rung sits after the dry-run rung, so an intercepted write is not counted, and
-  before the budget charges the first hop, so a refused repeat is never charged. One caller request
-  is one count, whatever redirects follow; a request whose first hop the budget refuses is taken
-  back out of the window, so only calls that leave count and a refusal does not keep the window
-  full. The count is held in the proxy's own memory, a sliding window per request under a
-  sha256 digest of it (the URL and the body are never held or logged), its keys capped and pruned
-  as calls arrive. That is accepted at a fifteen-minute window: a restart forgets at most one
-  window, and two replicas each count their own share, so a loop may make up to the limit on each
-  before it is caught. Caching the answer instead was rejected: it breaks the
-  verbatim answer ADR 0010 promises, serves stale data to an honest poll, and holds up to the body
-  cap per entry. Counting a repeat double against the budget was rejected as too slow to stop the
+  agent at most that many identical relayed requests, the same connection, tool, method, vendor
+  URL with its query and body, in any such window; the next is refused `429 repeated_request` with
+  `Retry-After`, the time until enough of the window's oldest entries age out, and a sentence
+  saying the agent is probably looping. Off by default in both forms. The rung sits after the
+  dry-run rung, so an intercepted write is not counted, and before the budget charges the first
+  hop, so a refused repeat is never charged. It only judges; the request is counted once its first
+  hop is let through, so one caller request is one count whatever redirects follow, and only calls
+  that leave count: one the budget refuses, or one that fails before it leaves, does not, and a
+  refusal does not keep the window full. The connection is in the key because one agent may run
+  one tool against two accounts of a vendor, whose URLs are the same. The count is held in the
+  proxy's own memory, a sliding window per request under a sha256 digest of it (the URL and the
+  body are never held or logged), its keys capped and pruned as calls arrive. That is accepted at
+  a fifteen-minute window: a restart forgets at most one window, and two replicas each count their
+  own share, so a loop may make up to the limit on each before it is caught. Caching the answer
+  instead was rejected: it breaks the verbatim answer ADR 0010 promises, serves stale data to an
+  honest poll, and holds up to the body cap per entry. Counting a repeat double against the budget was rejected as too slow to stop the
   loop. The event carries `repeat`, the count, the limit and the window. Only relayed calls count.

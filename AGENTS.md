@@ -1947,18 +1947,19 @@ the proxy.
 (`rateLimitWindow`'s shape; hosted `30/900`), optional and off by default in both forms, reaches
 the proxy as `ProxyOptions.repeatLimit` through `ServerDeps.relayRepeatLimit`, and the boot line
 says `relay repeat limit off` or names it. `packages/proxy/src/repeat-guard.ts` is the rung and the
-window: the key is a sha256 over the agent, the tool, the method, the vendor URL with its query
-(read after the token sweep) and a sha256 of the body, and only that digest is held; the count is
-a sliding window per key in the app instance (`Shared.repeats`), pruned oldest first as calls
-arrive and capped at `REPEAT_GUARD_MAX_KEYS`, least recently admitted evicted. The rung runs for
-relayed calls only, in `decide` after the dry-run rung and before `forward`, whose `beforeSend`
-charges the budget per hop, so a refused repeat never reaches `forward` and is never charged. One
-caller request is one count, however many redirect hops follow; a request whose first hop the
-budget refuses is released from the window, and a refused repeat is never recorded, so only calls
-that leave are counted and `Retry-After` (until enough of the oldest entries age out) is honest. Past the limit: `429 repeated_request`, `Retry-After`, and
-`repeatedRequestMessage` (the count, the window, when it lifts, the likely loop); the wide event
-carries `proxy.repeat`, `{ count, limit, windowSeconds }`, and never the URL, the query or the
-digest. A restart forgets at most one window and two replicas count separately; both are accepted.
+window: the key is a sha256 over the agent, the connection, the tool, the method, the vendor URL
+with its query (read after the token sweep) and a sha256 of the body, and only that digest is
+held; the count is a sliding window per key in the app instance (`Shared.repeats`), pruned oldest
+first as calls arrive and capped at `REPEAT_GUARD_MAX_KEYS`, least recently recorded evicted. The
+rung runs for relayed calls only, in `decide` after the dry-run rung and before `forward`, and
+only judges (`RepeatGuard.check`), so a refused repeat never reaches `forward` and is never
+charged. `forward`'s `beforeSend` records the request (`record`) once its first hop is past the
+budget, so one caller request is one count however many redirect hops follow, and a call the budget
+refuses or whose `obtain` fails is never counted; only calls that leave are, so `Retry-After`
+(until enough of the oldest entries age out) is honest. Past the limit: `429 repeated_request`,
+`Retry-After`, and `repeatedRequestMessage` (the count, the window, when it lifts, the likely
+loop); the wide event carries `proxy.repeat`, `{ count, limit, windowSeconds }`, and never the
+URL, the query or the digest. A restart forgets at most one window and two replicas count separately; both are accepted.
 `packages/proxy/src/repeat-guard.test.ts` replays the October cadence (the export refused at its
 31st call, 450 s in, uncharged) beside an honest fan-out of 180 distinct reads in 30 s.
 

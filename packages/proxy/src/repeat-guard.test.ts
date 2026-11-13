@@ -35,6 +35,7 @@ const HOSTED = { limit: 30, windowSeconds: 900 };
 describe("the key", () => {
   const base: RepeatRequest = {
     agentId: AGENT,
+    connectionId: "conn_drive",
     tool: "google-drive__read-xlsx-sheet-page",
     method: "GET",
     url: "https://www.googleapis.example/drive/v3/files/1jkB/export?mimeType=text%2Fcsv",
@@ -48,10 +49,11 @@ describe("the key", () => {
     expect(key).not.toContain("1jkB");
   });
 
-  it("differs on the agent, the tool, the method, the query and the body", () => {
+  it("differs on the agent, the connection, the tool, the method, the query and the body", () => {
     const key = repeatKey(base);
     const variants: RepeatRequest[] = [
       { ...base, agentId: "agent_2" },
+      { ...base, connectionId: "conn_drive_2" },
       { ...base, tool: "google-drive__read-drive-files" },
       { ...base, method: "POST" },
       { ...base, url: base.url.replace("csv", "tsv") },
@@ -76,30 +78,37 @@ describe("the key", () => {
 });
 
 describe("the window", () => {
+  /** A request judged and, when allowed, recorded at once: one that leaves as soon as it is let in. */
+  const admit = (guard: ReturnType<typeof createRepeatGuard>, key: string, at: number) => {
+    const verdict = guard.check(key, at);
+    if (verdict.allowed) guard.record(key, at);
+    return verdict;
+  };
+
   it("admits the limit, refuses the next, and says when room comes back", () => {
     const guard = createRepeatGuard({ limit: 3, windowSeconds: 60 });
-    expect(guard.admit("k", START)).toEqual({ allowed: true });
-    expect(guard.admit("k", START + 10_000)).toEqual({ allowed: true });
-    expect(guard.admit("k", START + 20_000)).toEqual({ allowed: true });
+    expect(admit(guard, "k", START)).toEqual({ allowed: true });
+    expect(admit(guard, "k", START + 10_000)).toEqual({ allowed: true });
+    expect(admit(guard, "k", START + 20_000)).toEqual({ allowed: true });
     // The first entry leaves the window at START + 60 s, forty seconds from now.
-    expect(guard.admit("k", START + 20_000)).toEqual({
+    expect(admit(guard, "k", START + 20_000)).toEqual({
       allowed: false,
       count: 3,
       retryAfterSeconds: 40,
     });
-    expect(guard.admit("other", START + 20_000)).toEqual({ allowed: true });
+    expect(admit(guard, "other", START + 20_000)).toEqual({ allowed: true });
   });
 
   it("does not record a refusal, so a loop that keeps asking gets in once the oldest ages out", () => {
     const guard = createRepeatGuard({ limit: 2, windowSeconds: 60 });
-    guard.admit("k", START);
-    guard.admit("k", START + 1_000);
+    admit(guard, "k", START);
+    admit(guard, "k", START + 1_000);
     for (let t = START + 2_000; t < START + 60_000; t += 1_000) {
-      expect(guard.admit("k", t).allowed).toBe(false);
+      expect(admit(guard, "k", t).allowed).toBe(false);
     }
     // Exactly as `Retry-After` promised at the first refusal: 58 s after START + 2 s.
-    expect(guard.admit("k", START + 60_000)).toEqual({ allowed: true });
-    expect(guard.admit("k", START + 60_500)).toMatchObject({
+    expect(admit(guard, "k", START + 60_000)).toEqual({ allowed: true });
+    expect(admit(guard, "k", START + 60_500)).toMatchObject({
       allowed: false,
       retryAfterSeconds: 1,
     });
@@ -107,45 +116,52 @@ describe("the window", () => {
 
   it("never answers a Retry-After under one second", () => {
     const guard = createRepeatGuard({ limit: 1, windowSeconds: 1 });
-    guard.admit("k", START);
-    expect(guard.admit("k", START + 999)).toMatchObject({ allowed: false, retryAfterSeconds: 1 });
+    admit(guard, "k", START);
+    expect(admit(guard, "k", START + 999)).toMatchObject({ allowed: false, retryAfterSeconds: 1 });
   });
 
-  it("takes back a released admission", () => {
+  it("counts nothing on a check: only a record fills the window", () => {
     const guard = createRepeatGuard({ limit: 1, windowSeconds: 60 });
-    guard.admit("k", START);
-    guard.release("k", START);
+    for (let i = 0; i < 5; i += 1) expect(guard.check("k", START + i)).toEqual({ allowed: true });
     expect(guard.size()).toBe(0);
-    expect(guard.admit("k", START + 1)).toEqual({ allowed: true });
-    // Releasing what was never admitted changes nothing.
-    guard.release("k", START + 999);
-    guard.release("never", START);
-    expect(guard.admit("k", START + 2).allowed).toBe(false);
+    guard.record("k", START + 10);
+    expect(guard.check("k", START + 11).allowed).toBe(false);
+  });
+
+  /** Greptile on #298: under the old `release`, `b` stayed behind a live `a` and outlived its window. */
+  it("keeps the eviction order, so an expired key never hides behind a live one", () => {
+    const guard = createRepeatGuard({ limit: 5, windowSeconds: 60 });
+    guard.record("b", START);
+    guard.record("a", START + 10_000);
+    // A request for `b` judged at 20 s whose first hop never left is never recorded.
+    expect(guard.check("b", START + 20_000)).toEqual({ allowed: true });
+    guard.check("c", START + 65_000);
+    expect(guard.size()).toBe(1);
   });
 
   it("prunes keys whose window has passed as calls arrive", () => {
     const guard = createRepeatGuard({ limit: 5, windowSeconds: 60 });
-    for (let i = 0; i < 100; i += 1) guard.admit(`k${i}`, START + i);
+    for (let i = 0; i < 100; i += 1) admit(guard, `k${i}`, START + i);
     expect(guard.size()).toBe(100);
-    guard.admit("late", START + 60_050);
+    admit(guard, "late", START + 60_050);
     // Every key admitted at or before START + 50 ms has left the window; 49 are still in it.
     expect(guard.size()).toBe(50);
-    guard.admit("later", START + 200_000);
+    admit(guard, "later", START + 200_000);
     expect(guard.size()).toBe(1);
   });
 
   it("caps the keys it holds, evicting the least recently admitted", () => {
     const guard = createRepeatGuard({ limit: 1, windowSeconds: 900 }, 3);
-    guard.admit("a", START);
-    guard.admit("b", START + 1);
-    guard.admit("c", START + 2);
+    admit(guard, "a", START);
+    admit(guard, "b", START + 1);
+    admit(guard, "c", START + 2);
     // `a` is refused, which does not move it up: it is still the oldest admission.
-    expect(guard.admit("a", START + 3).allowed).toBe(false);
-    guard.admit("d", START + 4);
+    expect(admit(guard, "a", START + 3).allowed).toBe(false);
+    admit(guard, "d", START + 4);
     expect(guard.size()).toBe(3);
     // `a` was evicted and so forgotten; `b` was not.
-    expect(guard.admit("b", START + 5).allowed).toBe(false);
-    expect(guard.admit("a", START + 6)).toEqual({ allowed: true });
+    expect(admit(guard, "b", START + 5).allowed).toBe(false);
+    expect(admit(guard, "a", START + 6)).toEqual({ allowed: true });
     expect(guard.size()).toBe(3);
   });
 });
@@ -179,7 +195,7 @@ function claims(tool: string, overrides: Partial<CapabilityClaims> = {}): Capabi
   return {
     person: PERSON,
     agent: AGENT,
-    connections: ["conn_drive", "conn_keyed"],
+    connections: ["conn_drive", "conn_drive_2", "conn_keyed"],
     tool,
     jti: "jti",
     exp: Math.floor(Date.now() / 1000) + 300,
@@ -200,8 +216,9 @@ function harness(options: Partial<ProxyOptions>) {
   const charged: RelayBudgetCall[] = [];
   let verdict: RelayBudgetVerdict | ((n: number) => RelayBudgetVerdict) = { allowed: true };
   let obtained = 0;
-  const relayed: ProxyConnection = {
-    id: "conn_drive",
+  let obtainFails = false;
+  const relayedAs = (id: string): ProxyConnection => ({
+    id,
     personId: PERSON,
     authScheme: null,
     primaryHost: "https://www.googleapis.example/drive/v3",
@@ -212,10 +229,14 @@ function harness(options: Partial<ProxyOptions>) {
       plugin: relay,
       obtain: async () => {
         obtained += 1;
+        if (obtainFails) throw new Error("the relay's upstream is down");
         return {};
       },
     },
-  };
+  });
+  // Two accounts of one vendor, through the same relay: the same vendor URLs reach both.
+  const relayed = relayedAs("conn_drive");
+  const second = relayedAs("conn_drive_2");
   const keyed: ProxyConnection = {
     id: "conn_keyed",
     personId: PERSON,
@@ -234,7 +255,7 @@ function harness(options: Partial<ProxyOptions>) {
     },
     jwks: async () => ({ keys: [] }),
     connections: {
-      get: async (id) => (id === relayed.id ? relayed : id === keyed.id ? keyed : null),
+      get: async (id) => [relayed, second, keyed].find((row) => row.id === id) ?? null,
     },
     decryptCredential: async () => ({ token: "vendor-key" }),
     relayBudget: {
@@ -278,6 +299,9 @@ function harness(options: Partial<ProxyOptions>) {
     sent,
     charged,
     obtained: () => obtained,
+    failObtain: (fails: boolean) => {
+      obtainFails = fails;
+    },
     advance: (ms: number) => {
       clock += ms;
     },
@@ -454,7 +478,29 @@ describe("what the rung counts", () => {
     });
   });
 
-  it("takes back a call the budget refused, so only calls that leave are counted", async () => {
+  /** Greptile on #298: one agent may run one tool against either of two accounts. */
+  it("counts the same request to two accounts separately", async () => {
+    const h = harness({ repeatLimit: { limit: 2, windowSeconds: 900 } });
+    const other = EXPORT.replace("conn_drive", "conn_drive_2");
+    expect((await h.call(EXPORT, XLSX)).status).toBe(200);
+    expect((await h.call(EXPORT, XLSX)).status).toBe(200);
+    expect((await h.call(other, XLSX)).status).toBe(200);
+    expect((await h.call(other, XLSX)).status).toBe(200);
+    expect((await h.call(EXPORT, XLSX)).status).toBe(429);
+    expect((await h.call(other, XLSX)).status).toBe(429);
+  });
+
+  it("does not count a call whose relay fields could not be obtained, since nothing left", async () => {
+    const h = harness({ repeatLimit: { limit: 1, windowSeconds: 900 } });
+    h.failObtain(true);
+    for (let i = 0; i < 3; i += 1) expect((await h.call(EXPORT, XLSX)).status).not.toBe(429);
+    expect(h.sent).toHaveLength(0);
+    h.failObtain(false);
+    expect((await h.call(EXPORT, XLSX)).status).toBe(200);
+    expect((await h.call(EXPORT, XLSX)).status).toBe(429);
+  });
+
+  it("does not count a call the budget refused, so only calls that leave are counted", async () => {
     const h = harness({ repeatLimit: { limit: 1, windowSeconds: 900 } });
     h.budget({
       allowed: false,
