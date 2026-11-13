@@ -317,6 +317,10 @@ const handoff = {
 const relayBudgetLimits = relayBudgetLimitsFrom(env);
 const relayBudget = createRelayBudget(db, relayBudgetLimits);
 const relayBudgetPeek = createRelayBudgetPeek(db, relayBudgetLimits);
+// A call or a run the budget refused, counted once per agent, ceiling and window (GRA-350).
+const relayBudgetExhausted = relayBudget
+  ? createRelayBudgetExhaustedCapture((input) => backings.analytics.capture(input))
+  : null;
 
 /**
  * One `McpDeps` for the endpoint and the sweep. What a sandbox is handed as `GRAFT_PROXY_URL` is the
@@ -333,6 +337,7 @@ const mcp = createMcpDeps({
   publish,
   handoff,
   ...(relayBudgetPeek ? { relayBudget: relayBudgetPeek } : {}),
+  ...(relayBudgetExhausted ? { onRelayBudgetRefused: relayBudgetExhausted.fromDoor } : {}),
   // The chat products whose clients may answer the ask card (GRA-84; `GRAFT_CARD_HOSTS`).
   cardHosts: env.GRAFT_CARD_HOSTS,
   // What the agent tells the person to paste into the OAuth client they register (ADR 0005) — the
@@ -476,15 +481,8 @@ const app = createServer({
   keys,
   vault,
   connections,
-  // With a call the relay budget refused counted once per agent, ceiling and window (GRA-350).
-  ...(relayBudget
-    ? {
-        relayBudget,
-        onProxyEvent: createRelayBudgetExhaustedCapture((input) =>
-          backings.analytics.capture(input),
-        ),
-      }
-    : {}),
+  ...(relayBudget ? { relayBudget } : {}),
+  ...(relayBudgetExhausted ? { onProxyEvent: relayBudgetExhausted.fromProxyEvent } : {}),
   /**
    * The rate limit at each door (GRA-149; ADR 0018's "a rate limit at the edge"). `UNLIMITED`
    * unless a `GRAFT_RATE_LIMIT_*` variable said otherwise, which is the decision: a self-host is

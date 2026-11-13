@@ -25,16 +25,39 @@ export type RelayBudgetPeek = {
 /** The refusal's reason, the proxy's word for the same ceiling. */
 export const RELAY_BUDGET_EXHAUSTED = "relay_budget_exhausted";
 
+/** A ceiling that refused, as the peek answered it. */
+export type RelayBudgetExhausted = Extract<RelayBudgetVerdict, { allowed: false }>;
+
 /**
- * The refusal for a run past a ceiling, with the proxy's own sentence (`relayBudgetMessage`), or
- * null when the run may go: no row read, a connection that does not relay, a budget with room, or
- * a peek that failed.
+ * A run the door refused (`McpDeps.onRelayBudgetRefused`): who, which tool over which relay, and
+ * the ceiling. The server counts it as the proxy's own refusal is counted, since a loop of one
+ * relayed call per run fills the budget on an allowed call and then meets only the door (Greptile
+ * on #299). Ids, kinds and counts, never the input.
+ */
+export type RelayBudgetRefusedEvent = {
+  personId: string;
+  agentId: string;
+  tool: string;
+  relay: string;
+  dryRun: boolean;
+  verdict: RelayBudgetExhausted;
+};
+
+/**
+ * The refusal for a run past a ceiling, with the proxy's own sentence (`relayBudgetMessage`), the
+ * verdict and the relay scheme, or null when the run may go: no row read, a connection that does
+ * not relay, a budget with room, or a peek that failed.
  */
 export async function relayBudgetSpent(
   budget: RelayBudgetPeek,
   scope: Pick<AgentScope, "personId" | "agentId">,
   connection: { scheme: string } | null,
-): Promise<{ reason: typeof RELAY_BUDGET_EXHAUSTED; message: string } | null> {
+): Promise<{
+  reason: typeof RELAY_BUDGET_EXHAUSTED;
+  message: string;
+  verdict: RelayBudgetExhausted;
+  relay: string;
+} | null> {
   if (!connection || !isRelayScheme(connection.scheme)) return null;
   let verdict: RelayBudgetVerdict;
   try {
@@ -43,5 +66,10 @@ export async function relayBudgetSpent(
     return null;
   }
   if (verdict.allowed) return null;
-  return { reason: RELAY_BUDGET_EXHAUSTED, message: relayBudgetMessage(verdict) };
+  return {
+    reason: RELAY_BUDGET_EXHAUSTED,
+    message: relayBudgetMessage(verdict),
+    verdict,
+    relay: connection.scheme,
+  };
 }

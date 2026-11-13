@@ -14,7 +14,7 @@ import { NO_ELICITATION } from "./approval";
 import type { McpDeps, ToolCallEvent } from "./deps";
 import { createInFlightRegistry } from "./in-flight";
 import { createToolListChangedNotifier } from "./notifier";
-import { relayBudgetSpent } from "./relay-budget-door";
+import { type RelayBudgetRefusedEvent, relayBudgetSpent } from "./relay-budget-door";
 import { runAuthoredTool } from "./run";
 import { openAgentSession } from "./session";
 import { createFakeDeps, createFakeStore, type FakeStore } from "./testing/fake-deps";
@@ -77,6 +77,7 @@ let peeks: number;
 let chargeAnswer: RelayBudgetVerdict;
 let charges: number;
 const toolEvents: ToolCallEvent[] = [];
+const doorRefusals: RelayBudgetRefusedEvent[] = [];
 
 beforeAll(async () => {
   const keys = await generateTestKeys();
@@ -182,6 +183,7 @@ beforeAll(async () => {
       },
     },
     onToolCall: (event) => toolEvents.push(event),
+    onRelayBudgetRefused: (event) => doorRefusals.push(event),
     handoff: {
       consoleUrl: "http://console.graft.test",
       secret: "graft-mcp-test-handoff-secret-that-is-long-enough",
@@ -203,6 +205,7 @@ beforeEach(() => {
   chargeAnswer = { allowed: true };
   charges = 0;
   toolEvents.length = 0;
+  doorRefusals.length = 0;
 });
 
 const run = (vendorSlug: "drive" | "keyed", dryRun = false) =>
@@ -245,6 +248,17 @@ describe("the door (GRA-350)", () => {
         connectionId: CONN_RELAYED,
         dryRun: false,
       }),
+    ]);
+    // Told to the server, which counts it beside the proxy's own refusals (Greptile on #299).
+    expect(doorRefusals).toEqual([
+      {
+        personId: PERSON,
+        agentId: AGENT,
+        tool: authoredToolName("drive", "list-files"),
+        relay: "relay",
+        dryRun: false,
+        verdict: EXHAUSTED,
+      },
     ]);
   });
 
@@ -311,6 +325,8 @@ describe("relayBudgetSpent", () => {
     expect(await relayBudgetSpent(budget, scope, { scheme: "gateway" })).toEqual({
       reason: "relay_budget_exhausted",
       message: SENTENCE,
+      verdict: EXHAUSTED,
+      relay: "gateway",
     });
   });
 });

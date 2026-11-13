@@ -45,7 +45,7 @@ import type { BlobWrittenEvent } from "./blobs";
 import type { HandoffConfig } from "./handoff";
 import { createInFlightRegistry, type InFlightRegistry } from "./in-flight";
 import { createToolListChangedNotifier, type ToolListChangedNotifier } from "./notifier";
-import type { RelayBudgetPeek } from "./relay-budget-door";
+import type { RelayBudgetPeek, RelayBudgetRefusedEvent } from "./relay-budget-door";
 import type { StockSignal } from "./stock-signal";
 import type { BlobSweptEvent } from "./sweep";
 import { createStockToolSource, type ToolSource } from "./tool-source";
@@ -127,6 +127,12 @@ export type McpDeps = {
    * absent, the door asks nothing and the proxy is the only judge.
    */
   relayBudget?: RelayBudgetPeek;
+  /**
+   * Fired when the door refuses a run past the relay budget (GRA-350): the hook the server binds
+   * `relay_budget_exhausted` to beside the proxy's own refusals, since a loop of one relayed call
+   * per run only ever meets the door once the budget is spent. Absent, the refusal is not counted.
+   */
+  onRelayBudgetRefused?: (event: RelayBudgetRefusedEvent) => void;
   /**
    * Where stock tools come from (ADR 0025; GRA-238; `tool-source.ts`): `find_tool` searches its
    * list beside the toolbox, and the first `run_tool` or `promote` of a stock tool copies it in

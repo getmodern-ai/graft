@@ -8,7 +8,7 @@ import {
   type RelayBudgetLimits,
 } from "@graft/core";
 import type { DbOrTx } from "@graft/db";
-import type { RelayBudgetPeek } from "@graft/mcp";
+import type { RelayBudgetPeek, RelayBudgetRefusedEvent } from "@graft/mcp";
 import type { Capture } from "@graft/observability";
 import type { ProxyEvent, RelayBudget } from "@graft/proxy";
 
@@ -91,8 +91,9 @@ export function createRelayBudgetPeek(
 export const RELAY_BUDGET_EXHAUSTED_KEYS = 10_000;
 
 /**
- * `relay_budget_exhausted` off the proxy's event (GRA-350; `@graft/observability`'s `events.ts`):
- * captured for a call the budget refused, at most once per agent, ceiling and window, so a loop
+ * `relay_budget_exhausted` (GRA-350; `@graft/observability`'s `events.ts`), off the proxy's event
+ * and off the run's door: captured for a call or a run the budget refused, at most once per agent,
+ * ceiling and window across the two, so a loop
  * knocking on a spent budget all hour is one event. The window is the refusal's `resetsAt`, so a
  * ceiling still spent in a later window is counted again.
  *
@@ -103,15 +104,32 @@ export const RELAY_BUDGET_EXHAUSTED_KEYS = 10_000;
 export function createRelayBudgetExhaustedCapture(
   capture: (input: Capture) => void,
   options: { maxKeys?: number; now?: () => number } = {},
-): (event: ProxyEvent) => void {
+): {
+  /** A call the proxy refused (`ServerDeps.onProxyEvent`). */
+  fromProxyEvent: (event: ProxyEvent) => void;
+  /**
+   * A run the door refused (`McpDeps.onRelayBudgetRefused`): a loop of one relayed call per run
+   * fills the budget on an allowed call and then meets only the door, so the proxy never refuses
+   * it (Greptile on #299). The same keys, so a window counted by either is not counted by the other.
+   */
+  fromDoor: (event: RelayBudgetRefusedEvent) => void;
+} {
   const maxKeys = options.maxKeys ?? RELAY_BUDGET_EXHAUSTED_KEYS;
   const now = options.now ?? Date.now;
   /** key -> when its window ends, in insertion order. */
   const seen = new Map<string, number>();
-  return (event) => {
-    const budget = event.budget;
-    if (budget?.outcome !== "exhausted" || !event.personId || !event.agentId) return;
-    const key = `${event.agentId}|${budget.ceiling}|${budget.resetsAt}`;
+  const count = (input: {
+    personId: string;
+    agentId: string;
+    ceiling: string;
+    limit: number;
+    used: number;
+    resetsAt: string;
+    tool: string | null;
+    relay: string | null;
+    dryRun: boolean;
+  }) => {
+    const key = `${input.agentId}|${input.ceiling}|${input.resetsAt}`;
     if (seen.has(key)) return;
     const at = now();
     for (const [old, endsAt] of seen) {
@@ -122,20 +140,49 @@ export function createRelayBudgetExhaustedCapture(
       if (oldest === undefined) break;
       seen.delete(oldest);
     }
-    seen.set(key, Date.parse(budget.resetsAt));
+    seen.set(key, Date.parse(input.resetsAt));
     capture({
-      distinctId: event.personId,
+      distinctId: input.personId,
       event: "relay_budget_exhausted",
       properties: {
+        ceiling: input.ceiling,
+        limit: input.limit,
+        used: input.used,
+        resets_at: input.resetsAt,
+        tool: input.tool,
+        agent_id: input.agentId,
+        relay: input.relay,
+        dry_run: input.dryRun,
+      },
+    });
+  };
+  return {
+    fromProxyEvent: (event) => {
+      const budget = event.budget;
+      if (budget?.outcome !== "exhausted" || !event.personId || !event.agentId) return;
+      count({
+        personId: event.personId,
+        agentId: event.agentId,
         ceiling: budget.ceiling,
         limit: budget.limit,
         used: budget.used,
-        resets_at: budget.resetsAt,
+        resetsAt: budget.resetsAt,
         tool: event.tool,
-        agent_id: event.agentId,
         relay: event.relay,
-        dry_run: event.dryRun,
-      },
-    });
+        dryRun: event.dryRun,
+      });
+    },
+    fromDoor: (event) =>
+      count({
+        personId: event.personId,
+        agentId: event.agentId,
+        ceiling: event.verdict.ceiling,
+        limit: event.verdict.limit,
+        used: event.verdict.used,
+        resetsAt: event.verdict.resetsAt.toISOString(),
+        tool: event.tool,
+        relay: event.relay,
+        dryRun: event.dryRun,
+      }),
   };
 }

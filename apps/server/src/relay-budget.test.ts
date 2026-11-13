@@ -180,9 +180,12 @@ describe("the incident's loop, through the proxy", () => {
 
     // The analytics event (GRA-350): 460 refusals over two hours are two events, one per window.
     const captured: Capture[] = [];
-    const capture = createRelayBudgetExhaustedCapture((input) => captured.push(input), {
-      now: count.now,
-    });
+    const { fromProxyEvent: capture } = createRelayBudgetExhaustedCapture(
+      (input) => captured.push(input),
+      {
+        now: count.now,
+      },
+    );
     for (const event of events) capture(event);
     expect(captured.map((input) => input.properties?.resets_at)).toEqual([
       "2026-10-12T01:00:00.000Z",
@@ -245,9 +248,12 @@ describe("relay_budget_exhausted, counted (GRA-350)", () => {
 
   it("is one event per agent, ceiling and window however many calls are refused in it", () => {
     const captured: Capture[] = [];
-    const capture = createRelayBudgetExhaustedCapture((input) => captured.push(input), {
-      now: () => NOW,
-    });
+    const { fromProxyEvent: capture } = createRelayBudgetExhaustedCapture(
+      (input) => captured.push(input),
+      {
+        now: () => NOW,
+      },
+    );
     for (let i = 0; i < 1_000; i += 1) capture(proxyEvent());
     expect(captured).toHaveLength(1);
     // Another agent of the person's, and the person's own ceiling for the first: one more each.
@@ -273,9 +279,12 @@ describe("relay_budget_exhausted, counted (GRA-350)", () => {
   it("is a new event in a new window", () => {
     const captured: Capture[] = [];
     let now = NOW;
-    const capture = createRelayBudgetExhaustedCapture((input) => captured.push(input), {
-      now: () => now,
-    });
+    const { fromProxyEvent: capture } = createRelayBudgetExhaustedCapture(
+      (input) => captured.push(input),
+      {
+        now: () => now,
+      },
+    );
     capture(proxyEvent());
     now += HOUR_MS;
     const next = proxyEvent({
@@ -297,7 +306,9 @@ describe("relay_budget_exhausted, counted (GRA-350)", () => {
 
   it("counts nothing for a call the budget did not refuse, or one with no agent on it", () => {
     const captured: Capture[] = [];
-    const capture = createRelayBudgetExhaustedCapture((input) => captured.push(input));
+    const { fromProxyEvent: capture } = createRelayBudgetExhaustedCapture((input) =>
+      captured.push(input),
+    );
     capture(proxyEvent({ outcome: "forwarded", status: 200, budget: null }));
     capture(proxyEvent({ budget: { outcome: "unavailable", failure: "Error" } }));
     capture(proxyEvent({ agentId: null }));
@@ -306,13 +317,62 @@ describe("relay_budget_exhausted, counted (GRA-350)", () => {
 
   it("holds a bounded number of keys, forgetting the oldest first", () => {
     const captured: Capture[] = [];
-    const capture = createRelayBudgetExhaustedCapture((input) => captured.push(input), {
-      maxKeys: 2,
-      now: () => NOW,
-    });
+    const { fromProxyEvent: capture } = createRelayBudgetExhaustedCapture(
+      (input) => captured.push(input),
+      {
+        maxKeys: 2,
+        now: () => NOW,
+      },
+    );
     for (const agentId of ["a", "b", "c", "a"]) capture(proxyEvent({ agentId }));
     // `a` was forgotten when `c` landed, so its next refusal counts again: a duplicate, never a miss.
     expect(captured.map((input) => input.properties?.agent_id)).toEqual(["a", "b", "c", "a"]);
+  });
+
+  /**
+   * The incident's own shape (Greptile on #299): one relayed call per run, so the 250th call is
+   * allowed and fills the budget, and every run after it meets the door, never the proxy. The door's
+   * refusals are counted on the same keys as the proxy's, so a window counted by one is not counted
+   * again by the other.
+   */
+  it("counts a run the door refused, on the same keys as the proxy's refusals", () => {
+    const captured: Capture[] = [];
+    const { fromDoor, fromProxyEvent } = createRelayBudgetExhaustedCapture(
+      (input) => captured.push(input),
+      { now: () => NOW },
+    );
+    const door = {
+      personId: "person_1",
+      agentId: "agent_1",
+      tool: "google-drive__read-drive-files",
+      relay: "relay",
+      dryRun: false,
+      verdict: {
+        allowed: false as const,
+        ceiling: "agent_hour" as const,
+        limit: 250,
+        used: 250,
+        resetsAt: new Date("2026-10-12T14:00:00.000Z"),
+      },
+    };
+    for (let i = 0; i < 400; i += 1) fromDoor(door);
+    fromProxyEvent(proxyEvent());
+    expect(captured).toEqual([
+      {
+        distinctId: "person_1",
+        event: "relay_budget_exhausted",
+        properties: {
+          ceiling: "agent_hour",
+          limit: 250,
+          used: 250,
+          resets_at: "2026-10-12T14:00:00.000Z",
+          tool: "google-drive__read-drive-files",
+          agent_id: "agent_1",
+          relay: "relay",
+          dry_run: false,
+        },
+      },
+    ]);
   });
 });
 

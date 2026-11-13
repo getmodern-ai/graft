@@ -860,7 +860,21 @@ async function runHeld(
           : await getConnection(ctx, principal, connectionId, deps.connection),
       )
     : null;
-  if (spent) return refuse(spent.reason, spent.message, versioned);
+  if (spent) {
+    try {
+      deps.onRelayBudgetRefused?.({
+        personId: scope.personId,
+        agentId: scope.agentId,
+        tool: wireName,
+        relay: spent.relay,
+        dryRun: args.mode.dryRun,
+        verdict: spent.verdict,
+      });
+    } catch {
+      // Counting is fire and forget: the refusal stands either way.
+    }
+    return refuse(spent.reason, spent.message, versioned);
+  }
 
   // The blob door (GRA-187; `blob-door.ts`): the quota, then every ref the input names, judged over
   // the rows before the gate asks anyone and before a sandbox is touched. A dry run passes it too.

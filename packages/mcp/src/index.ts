@@ -214,7 +214,9 @@ export {
 } from "./provider-link";
 export {
   RELAY_BUDGET_EXHAUSTED,
+  type RelayBudgetExhausted,
   type RelayBudgetPeek,
+  type RelayBudgetRefusedEvent,
   relayBudgetSpent,
 } from "./relay-budget-door";
 export { type Refusal, refusal, withCard } from "./result";

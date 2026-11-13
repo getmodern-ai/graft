@@ -1955,8 +1955,10 @@ before the vendor status line; `run.ts` reads it from that place only and answer
 refusal (`refused` on the ledger and on `tool_called`), never as the module's error or a vendor
 status. A module that swallows the 429 and returns is answered its result; its next run meets the
 door. The server captures `relay_budget_exhausted` off the proxy's event
-(`ServerDeps.onProxyEvent`, `createRelayBudgetExhaustedCapture`) once per agent, ceiling and
-`resetsAt`, in a bounded in-process map.
+(`ServerDeps.onProxyEvent`) and off the door's (`McpDeps.onRelayBudgetRefused`, since a loop of one
+relayed call per run fills the budget on an allowed call and then meets only the door), through
+one `createRelayBudgetExhaustedCapture`: once per agent, ceiling and `resetsAt` across both, in a
+bounded in-process map.
 
 ```bash
 cat >> apps/server/.env <<'ENV'
