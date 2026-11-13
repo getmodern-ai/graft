@@ -30,8 +30,11 @@ import {
   MAX_BLOB_BYTES,
   MAX_BLOB_CONTENT_TYPE_CHARS,
   MAX_BLOB_NAME_CHARS,
+  MAX_PROXY_LIMIT_MESSAGE_CHARS,
   MEDIA_TYPE_PATTERN,
   MODULE_ENTRIES,
+  PROXY_LIMIT_MARKER,
+  PROXY_LIMIT_REASONS,
   PROXY_REFUSED_HEADER,
   REFUSAL_HEADER,
   RESULT_MARKER,
@@ -633,6 +636,26 @@ beforeAll(async () => {
         res.end(JSON.stringify({ error: "bad_gateway", reason: "upstream_unreachable" }));
         return;
       }
+      // GRA-350: the proxy's refusals for a limit hit, in the proxy's body shape.
+      if (path === "/budget-spent" || path === "/repeated") {
+        const reason = path === "/repeated" ? "repeated_request" : "relay_budget_exhausted";
+        res.statusCode = 429;
+        res.setHeader(PROXY_REFUSED_HEADER, reason);
+        res.end(
+          JSON.stringify({
+            error: "too_many_requests",
+            reason,
+            message: `The ${reason} sentence.\nOn two lines.`,
+          }),
+        );
+        return;
+      }
+      if (path === "/budget-spent-long") {
+        res.statusCode = 429;
+        res.setHeader(PROXY_REFUSED_HEADER, "relay_budget_exhausted");
+        res.end(JSON.stringify({ reason: "relay_budget_exhausted", message: "x".repeat(5_000) }));
+        return;
+      }
       res.end(JSON.stringify({ path: req.url }));
     });
   });
@@ -804,6 +827,13 @@ describe("a TypeScript module", () => {
     expect(source).toContain(
       `const VENDOR_STATUS_MARKER = ${JSON.stringify(VENDOR_STATUS_MARKER)};`,
     );
+    expect(source).toContain(`const PROXY_LIMIT_MARKER = ${JSON.stringify(PROXY_LIMIT_MARKER)};`);
+    expect(source).toContain(
+      `const PROXY_LIMIT_REASONS = ${JSON.stringify([...PROXY_LIMIT_REASONS]).replaceAll(",", ", ")};`,
+    );
+    expect(source).toContain(
+      `const MAX_PROXY_LIMIT_MESSAGE_CHARS = ${MAX_PROXY_LIMIT_MESSAGE_CHARS.toLocaleString("en-US").replaceAll(",", "_")};`,
+    );
   });
 
   /** And the blob contract's scheme, cap and life (GRA-186); the path names are pinned to `@graft/toolbox` in `packages/mcp/src/run.test.ts`. */
@@ -950,6 +980,71 @@ describe("the vendor status on a failure", () => {
     const run = await runRunner({ module: fixture("fetches.mjs"), stdin: "{}", env: bound() });
     expect(run.code).toBe(0);
     expect(run.stderr).not.toContain(VENDOR_STATUS_MARKER);
+    expect(run.stderr).not.toContain(PROXY_LIMIT_MARKER);
+  });
+});
+
+/**
+ * GRA-350: the line before the vendor status names the last refusal the proxy made because a limit
+ * was hit, with its sentence, so the server can answer the run as that refusal. Always present on a
+ * worded failure, empty when no limit was hit, so its place is the runner's.
+ */
+describe("a limit the proxy refused on, on a failure", () => {
+  const lines = (stderr: string) => stderr.trimEnd().split("\n");
+  const limitLine = (stderr: string) => lines(stderr).at(-2);
+
+  it("names the reason and the proxy's sentence on one line, and the module still read the body", async () => {
+    const run = await runRunner({
+      module: fixture("vendorFails.mjs"),
+      stdin: JSON.stringify({ paths: ["/budget-spent"] }),
+      env: bound(),
+    });
+    expect(run.code).toBe(1);
+    // The module read the body it was handed after the runner's clone.
+    expect(run.stderr).toContain("the vendor said no: {");
+    expect(limitLine(run.stderr)).toBe(
+      `${PROXY_LIMIT_MARKER}${JSON.stringify({
+        reason: "relay_budget_exhausted",
+        message: "The relay_budget_exhausted sentence.\nOn two lines.",
+      })}`,
+    );
+    // A proxy refusal is never a vendor status.
+    expect(lines(run.stderr).at(-1)).toBe(VENDOR_STATUS_MARKER);
+  });
+
+  it("keeps the last of several, names a repeat as it names the budget, and bounds the sentence", async () => {
+    const repeated = await runRunner({
+      module: fixture("vendorFails.mjs"),
+      stdin: JSON.stringify({ paths: ["/budget-spent", "/vendor-404", "/repeated"] }),
+      env: bound(),
+    });
+    expect(JSON.parse(limitLine(repeated.stderr)?.slice(PROXY_LIMIT_MARKER.length) ?? "")).toEqual({
+      reason: "repeated_request",
+      message: "The repeated_request sentence.\nOn two lines.",
+    });
+    expect(lines(repeated.stderr).at(-1)).toBe(`${VENDOR_STATUS_MARKER}404`);
+
+    const long = await runRunner({
+      module: fixture("vendorFails.mjs"),
+      stdin: JSON.stringify({ paths: ["/budget-spent-long"] }),
+      env: bound(),
+    });
+    const parsed = JSON.parse(limitLine(long.stderr)?.slice(PROXY_LIMIT_MARKER.length) ?? "");
+    expect(parsed.message).toHaveLength(MAX_PROXY_LIMIT_MESSAGE_CHARS);
+  });
+
+  it("is empty for a failure no limit stopped, the proxy's other refusals included", async () => {
+    for (const paths of [["/vendor-404"], ["/never-answered"], ["/over-the-cap"]]) {
+      const run = await runRunner({
+        module: fixture("vendorFails.mjs"),
+        stdin: JSON.stringify({ paths }),
+        env: bound(),
+      });
+      expect(run.code).toBe(1);
+      expect(limitLine(run.stderr)).toBe(PROXY_LIMIT_MARKER);
+    }
+    const threw = await runRunner({ module: fixture("throws.mjs") });
+    expect(limitLine(threw.stderr)).toBe(PROXY_LIMIT_MARKER);
   });
 });
 

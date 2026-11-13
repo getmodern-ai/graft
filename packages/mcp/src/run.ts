@@ -22,7 +22,11 @@ import {
   type BlobLedgerEntry,
   EXIT_TIMEOUT,
   EXIT_USAGE,
+  isProxyLimitReason,
+  MAX_PROXY_LIMIT_MESSAGE_CHARS,
   MODULE_ENTRIES,
+  PROXY_LIMIT_MARKER,
+  type ProxyLimitReason,
   readRunnerEnvelope,
   VENDOR_STATUS_MARKER,
 } from "@graft/runner";
@@ -36,6 +40,7 @@ import { blobsOnWire, withBlobs } from "./blobs";
 import { boundResult } from "./bounds";
 import type { McpDeps } from "./deps";
 import { admitUnderGrant, detachedHoldMs, heldInFlight } from "./in-flight";
+import { relayBudgetSpent } from "./relay-budget-door";
 import { type Refusal, refusal } from "./result";
 import { revokedConnectionRefusal } from "./revoke";
 import {
@@ -237,12 +242,16 @@ export type ModuleRunOutcome =
    * `kind` and `vendorStatus` are for a stock tool's failure signal (GRA-244; `stock-signal.ts`)
    * and never reach the wire: which way the run failed, and the last error status a vendor answered
    * `ctx.fetch` with, read off the runner's last stderr line.
+   *
+   * `proxyLimit` is the limit the proxy refused one of the run's calls on (GRA-350), read off the
+   * line before it: when set, the run is answered as that refusal rather than as this failure.
    */
   | {
       ok: false;
       failure: RunFailure;
       kind: RunFailureKind;
       vendorStatus?: number;
+      proxyLimit?: ProxyLimitRefusal;
       blobs: BlobLedgerEntry[];
       blobsDropped: number;
     };
@@ -391,7 +400,7 @@ export function describeModuleRun(
     result.status !== "running" &&
     result.status !== "killed" &&
     (result.exitCode === 1 || result.exitCode === EXIT_TIMEOUT || result.exitCode === EXIT_USAGE);
-  const { tail: stderr, vendorStatus } = readVendorStatus(stderrTail, worded);
+  const { tail: stderr, vendorStatus, proxyLimit } = readRunnerTrailer(stderrTail, worded);
   // A failure that followed a write carries the ledger behind the runner's marker (the outcome
   // type); a killed or timed-out process printed nothing, so its list is empty.
   const failure = (kind: RunFailureKind, error: string): ModuleRunOutcome => {
@@ -401,6 +410,7 @@ export function describeModuleRun(
       failure: { error, exitCode: result.exitCode, stderrTail: stderr },
       kind,
       ...(vendorStatus !== null ? { vendorStatus } : {}),
+      ...(proxyLimit !== null ? { proxyLimit } : {}),
       blobs: envelope?.blobs ?? [],
       blobsDropped: envelope?.dropped ?? 0,
     };
@@ -472,27 +482,62 @@ export function unwrapEnvelope(text: string): ModuleRunOutcome | null {
 }
 
 /**
- * The runner's vendor status line off a stderr tail (GRA-244): every line carrying the marker is
- * taken out of the tail, and the status is read from the last line only when `worded` says the
- * runner wrote the tail's end. Null when there is none, or the line names none.
+ * The runner's two closing lines off a stderr tail: the vendor status (GRA-244), last, and the
+ * limit the proxy refused on (GRA-350), the line before it. Every line carrying either marker is
+ * taken out of the tail, and each is read from its place only when `worded` says the runner wrote
+ * the tail's end and the last line is the runner's status line, so a module's own copy of either is
+ * never believed. Null for each when there is none, or its line names none.
  */
-function readVendorStatus(
+function readRunnerTrailer(
   stderrTail: string,
   worded: boolean,
-): { tail: string; vendorStatus: number | null } {
+): { tail: string; vendorStatus: number | null; proxyLimit: ProxyLimitRefusal | null } {
   const lines = stderrTail.trim().split("\n");
   const last = lines.at(-1) ?? "";
-  const status = last.startsWith(VENDOR_STATUS_MARKER)
-    ? Number.parseInt(last.slice(VENDOR_STATUS_MARKER.length), 10)
-    : Number.NaN;
+  const closed = worded && last.startsWith(VENDOR_STATUS_MARKER);
+  const status = closed ? Number.parseInt(last.slice(VENDOR_STATUS_MARKER.length), 10) : Number.NaN;
+  const beforeLast = lines.at(-2) ?? "";
   const tail = lines
-    .filter((line) => !line.startsWith(VENDOR_STATUS_MARKER))
+    .filter(
+      (line) => !line.startsWith(VENDOR_STATUS_MARKER) && !line.startsWith(PROXY_LIMIT_MARKER),
+    )
     .join("\n")
     .trim();
   return {
     tail,
-    vendorStatus:
-      worded && Number.isInteger(status) && status >= 400 && status <= 599 ? status : null,
+    vendorStatus: Number.isInteger(status) && status >= 400 && status <= 599 ? status : null,
+    proxyLimit:
+      closed && beforeLast.startsWith(PROXY_LIMIT_MARKER)
+        ? readProxyLimit(beforeLast.slice(PROXY_LIMIT_MARKER.length))
+        : null,
+  };
+}
+
+/**
+ * A run the proxy stopped because a limit was hit (GRA-350): the refusal's reason, one of
+ * `@graft/runner`'s `PROXY_LIMIT_REASONS`, and the proxy's own sentence, which names the limit,
+ * when it lifts and what to do.
+ */
+export type ProxyLimitRefusal = { reason: ProxyLimitReason; message: string };
+
+/** The limit line's JSON, held to the reasons and the bound; null for anything else. */
+function readProxyLimit(text: string): ProxyLimitRefusal | null {
+  if (text === "") return null;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    return null;
+  }
+  if (typeof parsed !== "object" || parsed === null) return null;
+  const { reason, message } = parsed as { reason?: unknown; message?: unknown };
+  if (!isProxyLimitReason(reason)) return null;
+  return {
+    reason,
+    message:
+      typeof message === "string" && message.trim() !== ""
+        ? message.slice(0, MAX_PROXY_LIMIT_MESSAGE_CHARS)
+        : `The proxy refused a call of this run: ${reason}. Calls past a limit are refused until it lifts.`,
   };
 }
 
@@ -742,6 +787,9 @@ async function runHeld(
     );
   }
   let connectionId: string;
+  // The row the run goes over, when this function already read it: the relay budget's door reads
+  // its scheme (GRA-350).
+  let resolvedRow: ConnectionOutput | null = null;
   if (!bound || !inScope || revoked) {
     // The header's last paragraph (GRA-122): the one live connection of the vendor in this agent's
     // scope, or for a stock copy the one its hosts choose (GRA-241), or the refusal naming what
@@ -765,6 +813,7 @@ async function runHeld(
       return { answer, isError: true };
     }
     connectionId = target.id;
+    resolvedRow = target;
     if (revoked) {
       // Dead for every agent, so the row follows — unless the person reconnected it meanwhile, in
       // which case it is live again and the run goes there; a live default outside this scope is
@@ -784,6 +833,7 @@ async function runHeld(
     }
   } else {
     connectionId = bound;
+    resolvedRow = connection;
   }
   ledgerConnectionId = connectionId;
 
@@ -797,6 +847,20 @@ async function runHeld(
   if (!verdict.ok) {
     return refuse("input_invalid", verdict.message, versioned, { inputSchema: tool.inputSchema });
   }
+
+  // The relay budget's door (GRA-350; ADR 0019 as amended 2026-11-14): a run over a connection that
+  // relays, by an agent already past a ceiling, is refused before the gate asks anyone and before a
+  // sandbox is touched, with the sentence the proxy would answer each of its calls with.
+  const spent = deps.relayBudget
+    ? await relayBudgetSpent(
+        deps.relayBudget,
+        scope,
+        resolvedRow?.id === connectionId
+          ? resolvedRow
+          : await getConnection(ctx, principal, connectionId, deps.connection),
+      )
+    : null;
+  if (spent) return refuse(spent.reason, spent.message, versioned);
 
   // The blob door (GRA-187; `blob-door.ts`): the quota, then every ref the input names, judged over
   // the rows before the gate asks anyone and before a sandbox is touched. A dry run passes it too.
@@ -920,6 +984,25 @@ async function runHeld(
         run.blobsDropped,
       );
       const overshoot = blobQuotaOvershoot(recorded);
+      // The proxy refused one of the run's calls because a limit was hit (GRA-350): the run is
+      // answered as that refusal, with the proxy's sentence, and not as the module's error.
+      if (run.proxyLimit) {
+        const { reason, message } = run.proxyLimit;
+        await record("refused", versioned, reason);
+        return {
+          answer: refusal(reason, overshoot ? `${message} ${overshoot.error}` : message, {
+            ...blobsOnWire(recorded.listed, recorded.dropped),
+            ...(overshoot
+              ? {
+                  blobsRemoved: overshoot.blobsRemoved,
+                  removedBytes: overshoot.removedBytes,
+                  quota: overshoot.quota,
+                }
+              : {}),
+          }),
+          isError: true,
+        };
+      }
       await record("error", versioned, overshoot ? "blob_quota" : run.kind);
       noteRunFailure(run.kind, run.vendorStatus);
       return {

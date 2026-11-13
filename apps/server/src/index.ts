@@ -64,6 +64,8 @@ import { createModel, createModelKeyCheck } from "./model";
 import { describeObservability, flushObservability } from "./observability";
 import {
   createRelayBudget,
+  createRelayBudgetExhaustedCapture,
+  createRelayBudgetPeek,
   relayBudgetClause,
   relayBudgetLimitsFrom,
   startRelayCallPrune,
@@ -306,6 +308,17 @@ const handoff = {
 };
 
 /**
+ * The relay budget (GRA-349; `relay-budget.ts`): every relayed call counted against the agent's
+ * hour and the person's day in Postgres, or refused past a ceiling. Off unless a
+ * `GRAFT_RELAY_BUDGET_*` variable is set, in which case there is no hook and nothing is counted.
+ * The run's door peeks at the same count before a sandbox is touched (GRA-350), bound only when a
+ * ceiling is set.
+ */
+const relayBudgetLimits = relayBudgetLimitsFrom(env);
+const relayBudget = createRelayBudget(db, relayBudgetLimits);
+const relayBudgetPeek = createRelayBudgetPeek(db, relayBudgetLimits);
+
+/**
  * One `McpDeps` for the endpoint and the sweep. What a sandbox is handed as `GRAFT_PROXY_URL` is the
  * proxy's public URL, so relocating the proxy stays the DNS change GRA-1 promises. The notifier and
  * the in-flight registry inside are the process's one of each: the sweep's `tools/list_changed`
@@ -319,6 +332,7 @@ const mcp = createMcpDeps({
   proxyPublicUrl: env.GRAFT_PROXY_PUBLIC_URL,
   publish,
   handoff,
+  ...(relayBudgetPeek ? { relayBudget: relayBudgetPeek } : {}),
   // The chat products whose clients may answer the ask card (GRA-84; `GRAFT_CARD_HOSTS`).
   cardHosts: env.GRAFT_CARD_HOSTS,
   // What the agent tells the person to paste into the OAuth client they register (ADR 0005) — the
@@ -458,19 +472,19 @@ const mcpOAuth = {
   cardHosts: env.GRAFT_CARD_HOSTS,
 };
 
-/**
- * The relay budget (GRA-349; `relay-budget.ts`): every relayed call counted against the agent's
- * hour and the person's day in Postgres, or refused past a ceiling. Off unless a
- * `GRAFT_RELAY_BUDGET_*` variable is set, in which case there is no hook and nothing is counted.
- */
-const relayBudgetLimits = relayBudgetLimitsFrom(env);
-const relayBudget = createRelayBudget(db, relayBudgetLimits);
-
 const app = createServer({
   keys,
   vault,
   connections,
-  ...(relayBudget ? { relayBudget } : {}),
+  // With a call the relay budget refused counted once per agent, ceiling and window (GRA-350).
+  ...(relayBudget
+    ? {
+        relayBudget,
+        onProxyEvent: createRelayBudgetExhaustedCapture((input) =>
+          backings.analytics.capture(input),
+        ),
+      }
+    : {}),
   /**
    * The rate limit at each door (GRA-149; ADR 0018's "a rate limit at the edge"). `UNLIMITED`
    * unless a `GRAFT_RATE_LIMIT_*` variable said otherwise, which is the decision: a self-host is

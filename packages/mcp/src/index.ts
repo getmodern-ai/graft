@@ -212,12 +212,18 @@ export {
   providerFallbackNote,
   type StartedProviderLink,
 } from "./provider-link";
+export {
+  RELAY_BUDGET_EXHAUSTED,
+  type RelayBudgetPeek,
+  relayBudgetSpent,
+} from "./relay-budget-door";
 export { type Refusal, refusal, withCard } from "./result";
 export { revokeConnectionAndNotify } from "./revoke";
 export {
   type AuthoredRunAnswer,
   type AuthoredRunArgs,
   EXIT_MODULE_MISSING,
+  type ProxyLimitRefusal,
   type RunFailure,
   type RunFailureKind,
   type RunMode,

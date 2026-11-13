@@ -1940,7 +1940,23 @@ agent, the person on the row), judged before counting so a refused call is never
 prunes buckets past two days on the sweep's cadence. A call the proxy signs itself is never
 counted. `packages/core/src/relay-budget/relay-budget.service.test.ts` and
 `apps/server/src/relay-budget.test.ts` replay the October loop through the decision and through
-the proxy.
+the proxy. **A run past the budget is refused at its door, and a run the proxy stops reads as
+that refusal** (GRA-350). `run.ts` asks `McpDeps.relayBudget` (`relay-budget-door.ts`; `@graft/core`'s
+`peekRelayBudget`, the charge's read and judgement with no write, bound in `index.ts` only when a
+ceiling is set) once the connection is resolved and the input is valid, for a connection whose
+scheme is one of `RELAY_SCHEMES`, before the gate and the blob door: past a ceiling the run is
+refused `relay_budget_exhausted` with `relayBudgetMessage`, a `refused` ledger row and no sandbox,
+on every path through `runAuthoredTool` (`run_tool`, an authored tool's own name, the console's
+run, a dry run). The peek never charges and fails open; the proxy stays the judge. Inside a run,
+the runner notes a `ctx.fetch` answer whose `x-graft-refused` is one of `@graft/runner`'s
+`PROXY_LIMIT_REASONS` (the budget's, and GRA-351's `repeated_request`) with the body's sentence,
+and on a worded failure writes it as `PROXY_LIMIT_MARKER`'s line, always present and always just
+before the vendor status line; `run.ts` reads it from that place only and answers the run as that
+refusal (`refused` on the ledger and on `tool_called`), never as the module's error or a vendor
+status. A module that swallows the 429 and returns is answered its result; its next run meets the
+door. The server captures `relay_budget_exhausted` off the proxy's event
+(`ServerDeps.onProxyEvent`, `createRelayBudgetExhaustedCapture`) once per agent, ceiling and
+`resetsAt`, in a bounded in-process map.
 
 ```bash
 cat >> apps/server/.env <<'ENV'

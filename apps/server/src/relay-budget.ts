@@ -2,12 +2,15 @@ import {
   chargeRelayCall,
   defaultRelayBudgetDeps,
   hasRelayBudget,
+  peekRelayBudget,
   pruneRelayCallCounts,
   type RelayBudgetDeps,
   type RelayBudgetLimits,
 } from "@graft/core";
 import type { DbOrTx } from "@graft/db";
-import type { RelayBudget } from "@graft/proxy";
+import type { RelayBudgetPeek } from "@graft/mcp";
+import type { Capture } from "@graft/observability";
+import type { ProxyEvent, RelayBudget } from "@graft/proxy";
 
 /**
  * The server's half of the relay budget (GRA-349; ADR 0019 as amended 2026-11-14): the ceilings
@@ -67,4 +70,72 @@ export function startRelayCallPrune(
   }, options.intervalSeconds * 1000);
   timer.unref();
   return { stop: () => clearInterval(timer) };
+}
+
+/**
+ * The run's door reads the budget through this (GRA-350; `@graft/mcp`'s `relay-budget-door.ts`):
+ * `@graft/core`'s `peekRelayBudget` over the count and ceilings the proxy charges against, so the
+ * door and the proxy judge alike. Undefined when no ceiling is set, so `McpDeps.relayBudget` stays
+ * unset and the door asks nothing.
+ */
+export function createRelayBudgetPeek(
+  db: DbOrTx,
+  limits: RelayBudgetLimits,
+  deps: RelayBudgetDeps = defaultRelayBudgetDeps,
+): RelayBudgetPeek | undefined {
+  if (!hasRelayBudget(limits)) return undefined;
+  return { peek: (scope) => peekRelayBudget({ db }, scope, limits, deps) };
+}
+
+/** How many agent, ceiling and window keys the capture below holds before it forgets the oldest. */
+export const RELAY_BUDGET_EXHAUSTED_KEYS = 10_000;
+
+/**
+ * `relay_budget_exhausted` off the proxy's event (GRA-350; `@graft/observability`'s `events.ts`):
+ * captured for a call the budget refused, at most once per agent, ceiling and window, so a loop
+ * knocking on a spent budget all hour is one event. The window is the refusal's `resetsAt`, so a
+ * ceiling still spent in a later window is counted again.
+ *
+ * The keys live in this process, bounded: a key whose window has passed is dropped as a new one
+ * lands, and past `maxKeys` the oldest goes. A restart or a second replica may count one window
+ * twice; that is a duplicate on a chart, never a loop unseen.
+ */
+export function createRelayBudgetExhaustedCapture(
+  capture: (input: Capture) => void,
+  options: { maxKeys?: number; now?: () => number } = {},
+): (event: ProxyEvent) => void {
+  const maxKeys = options.maxKeys ?? RELAY_BUDGET_EXHAUSTED_KEYS;
+  const now = options.now ?? Date.now;
+  /** key -> when its window ends, in insertion order. */
+  const seen = new Map<string, number>();
+  return (event) => {
+    const budget = event.budget;
+    if (budget?.outcome !== "exhausted" || !event.personId || !event.agentId) return;
+    const key = `${event.agentId}|${budget.ceiling}|${budget.resetsAt}`;
+    if (seen.has(key)) return;
+    const at = now();
+    for (const [old, endsAt] of seen) {
+      if (endsAt <= at) seen.delete(old);
+    }
+    while (seen.size >= maxKeys) {
+      const oldest = seen.keys().next().value;
+      if (oldest === undefined) break;
+      seen.delete(oldest);
+    }
+    seen.set(key, Date.parse(budget.resetsAt));
+    capture({
+      distinctId: event.personId,
+      event: "relay_budget_exhausted",
+      properties: {
+        ceiling: budget.ceiling,
+        limit: budget.limit,
+        used: budget.used,
+        resets_at: budget.resetsAt,
+        tool: event.tool,
+        agent_id: event.agentId,
+        relay: event.relay,
+        dry_run: event.dryRun,
+      },
+    });
+  };
 }

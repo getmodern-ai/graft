@@ -83,6 +83,11 @@ export type ServerDeps = {
   /** Where the proxy's one event per call goes; by default onto the request's wide event. */
   log?: (event: ProxyEvent) => void;
   /**
+   * Told every proxy event beside `log`, wherever that goes: the hook `index.ts` binds the relay
+   * budget's `relay_budget_exhausted` capture to (GRA-350; `relay-budget.ts`). Absent, nothing.
+   */
+  onProxyEvent?: (event: ProxyEvent) => void;
+  /**
    * The person's half — Better Auth and the JSON API (`api.ts`). Optional so a proxy-only harness,
    * the shape GRA-5's tests drive, needs neither a database nor an auth instance.
    */
@@ -185,7 +190,10 @@ export function createServer(deps: ServerDeps): Hono<EvlogVariables> {
       connections: deps.connections,
       decryptCredential: (ciphertext, scope) => deps.vault.decrypt(ciphertext, scope),
       ...deps.credentialRotation,
-      log: deps.log ?? ((event) => useLogger().set({ proxy: event })),
+      log: withProxyEventHook(
+        deps.log ?? ((event) => useLogger().set({ proxy: event })),
+        deps.onProxyEvent,
+      ),
       // Spread rather than passed as `undefined`, which would sit over the proxy's default.
       options: {
         followRedirects: deps.followRedirects,
@@ -245,4 +253,23 @@ export function createServer(deps: ServerDeps): Hono<EvlogVariables> {
   }
 
   return app;
+}
+
+/**
+ * The proxy's sink with `ServerDeps.onProxyEvent` told each event after it. A hook that throws is
+ * swallowed: the proxy calls its sink once per call and has nothing to record a sink's failure to.
+ */
+function withProxyEventHook(
+  log: (event: ProxyEvent) => void,
+  hook: ((event: ProxyEvent) => void) | undefined,
+): (event: ProxyEvent) => void {
+  if (!hook) return log;
+  return (event) => {
+    log(event);
+    try {
+      hook(event);
+    } catch {
+      // Analytics is fire and forget (`@graft/observability`): the vendor call stands either way.
+    }
+  };
 }
