@@ -515,6 +515,7 @@ export {
 } from "./relay-budget/relay-budget.rules";
 export {
   chargeRelayCall,
+  peekRelayBudget,
   pruneRelayCallCounts,
   RELAY_CALL_COUNT_RETENTION_MS,
 } from "./relay-budget/relay-budget.service";

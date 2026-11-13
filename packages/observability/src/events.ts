@@ -74,6 +74,14 @@ export type AnalyticsEvent =
   // failed run, else null): the failure's shape, never the input, the output or the vendor's body.
   // Every other call carries none of the five.
   | "tool_called"
+  // The proxy refused a relayed call past the relay budget (GRA-350; ADR 0019 as amended
+  // 2026-11-14), captured from the proxy's event (`apps/server/src/relay-budget.ts`) at most once
+  // per agent, ceiling and window, so a loop knocking on a spent budget is one event and not
+  // thousands: `ceiling` (agent_hour | person_day), `limit`, `used`, `resets_at` (when the ceiling
+  // lifts, ISO 8601), `tool` (the wire name the capability token carried), `agent_id`, `relay` (the
+  // relay scheme) and `dry_run`. Counts and kinds; never the host, the path or a body. The hook a
+  // usage alert hangs off.
+  | "relay_budget_exhausted"
   // A blob a tool wrote (ADR 0023; GRA-186), once per blob, beside the `tool_called` of the run
   // that wrote it: `bytes`, `content_type` (a kind), `agent_id`, `version_id`. Never the name the
   // module gave it and never a byte of it.

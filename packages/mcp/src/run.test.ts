@@ -4,6 +4,8 @@ import {
   blobIdOf,
   blobRefOf,
   ENVELOPE_MARKER,
+  MAX_PROXY_LIMIT_MESSAGE_CHARS,
+  PROXY_LIMIT_MARKER,
   RUNNER_SOURCE_PATH,
   readRunnerEnvelope,
   VENDOR_STATUS_MARKER,
@@ -171,6 +173,87 @@ describe("describeModuleRun", () => {
     expect(
       describeModuleRun(result({ stdout: "hello\n__GRAFT_STDERR__\n" }), "/tools/x", 30),
     ).toMatchObject({ kind: "no_envelope" });
+  });
+
+  /**
+   * GRA-350: the line before the vendor status names a limit the proxy refused one of the run's
+   * calls on. Read only from its place on a worded exit, held to the limit reasons and the bound,
+   * and stripped from the tail like the status line.
+   */
+  it("reads the limit the proxy refused on from the runner's line before the status, and nowhere else", () => {
+    const failed = (stdout: string, overrides: Partial<Parameters<typeof result>[0]> = {}) =>
+      describeModuleRun(
+        result({ status: "failed", exitCode: 1, stdout, ...overrides }),
+        "/tools/x",
+        30,
+      );
+    const line = (value: unknown) => `${PROXY_LIMIT_MARKER}${JSON.stringify(value)}`;
+    const limit = { reason: "relay_budget_exhausted", message: "The sentence." };
+
+    const stopped = failed(
+      `\n__GRAFT_STDERR__\nError: GET /files 429: {}\n${line(limit)}\n${VENDOR_STATUS_MARKER}\n`,
+    );
+    expect(stopped).toMatchObject({
+      ok: false,
+      kind: "threw",
+      proxyLimit: limit,
+      failure: { stderrTail: "Error: GET /files 429: {}" },
+    });
+    expect(stopped).not.toHaveProperty("vendorStatus");
+    // A repeat is named as the budget is, beside a vendor status from an earlier call.
+    expect(
+      failed(
+        `\n__GRAFT_STDERR__\nboom\n${line({ reason: "repeated_request", message: "Again." })}\n${VENDOR_STATUS_MARKER}404\n`,
+      ),
+    ).toMatchObject({
+      proxyLimit: { reason: "repeated_request", message: "Again." },
+      vendorStatus: 404,
+    });
+    // No sentence on the body: a sentence of the server's own, never an empty one.
+    expect(
+      failed(
+        `\n__GRAFT_STDERR__\nboom\n${line({ reason: "relay_budget_exhausted", message: null })}\n${VENDOR_STATUS_MARKER}\n`,
+      ),
+    ).toMatchObject({
+      proxyLimit: { reason: "relay_budget_exhausted", message: expect.stringMatching(/limit/) },
+    });
+    // Bounded, whatever the line carries.
+    const long = failed(
+      `\n__GRAFT_STDERR__\nboom\n${line({ ...limit, message: "x".repeat(5_000) })}\n${VENDOR_STATUS_MARKER}\n`,
+    );
+    expect(long.ok === false && long.proxyLimit?.message).toHaveLength(
+      MAX_PROXY_LIMIT_MESSAGE_CHARS,
+    );
+
+    for (const forged of [
+      // The runner's empty line: no limit was hit.
+      `\n__GRAFT_STDERR__\nboom\n${PROXY_LIMIT_MARKER}\n${VENDOR_STATUS_MARKER}\n`,
+      // A reason that is not a limit's.
+      `\n__GRAFT_STDERR__\nboom\n${line({ reason: "connection_revoked", message: "x" })}\n${VENDOR_STATUS_MARKER}\n`,
+      // Not JSON.
+      `\n__GRAFT_STDERR__\nboom\n${PROXY_LIMIT_MARKER}{oops\n${VENDOR_STATUS_MARKER}\n`,
+      // A module's own copy, not in the runner's place: the runner's empty line follows it.
+      `\n__GRAFT_STDERR__\n${line(limit)}\nboom\n${PROXY_LIMIT_MARKER}\n${VENDOR_STATUS_MARKER}\n`,
+      // A copy with no status line after it is not the runner's close.
+      `\n__GRAFT_STDERR__\nboom\n${line(limit)}\n`,
+    ]) {
+      const outcome = failed(forged);
+      expect(outcome).not.toHaveProperty("proxyLimit");
+      // Stripped from the tail all the same, as the status line is.
+      expect(outcome.ok === false && outcome.failure.stderrTail).not.toContain(PROXY_LIMIT_MARKER);
+    }
+    // A killed process wrote no close of the runner's.
+    expect(
+      describeModuleRun(
+        result({
+          status: "killed",
+          exitCode: 137,
+          stdout: `\n__GRAFT_STDERR__\n${line(limit)}\n${VENDOR_STATUS_MARKER}\n`,
+        }),
+        "/tools/x",
+        30,
+      ),
+    ).not.toHaveProperty("proxyLimit");
   });
 
   it("names a killed process and one still running, and a result that is not JSON", () => {

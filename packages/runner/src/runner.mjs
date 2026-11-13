@@ -221,6 +221,20 @@ const RESULT_MARKER = "__GRAFT_RESULT__:";
 const VENDOR_STATUS_MARKER = "__GRAFT_VENDOR_STATUS__:";
 /** The last error status a vendor answered `ctx.fetch` with, or null — see `VENDOR_STATUS_MARKER`. */
 let lastVendorErrorStatus = null;
+/**
+ * The line before the vendor status line on every failure the runner words (GRA-350): the marker,
+ * then the last refusal the proxy made of a `ctx.fetch` call because a limit was hit, as one line of
+ * JSON `{ reason, message }`, or nothing when none was. Always written, so the server reads the
+ * runner's line by its place and a module's own copy of it is never believed. `PROXY_LIMIT_MARKER`,
+ * `PROXY_LIMIT_REASONS` and `MAX_PROXY_LIMIT_MESSAGE_CHARS` in `runner-source.ts`.
+ */
+const PROXY_LIMIT_MARKER = "__GRAFT_PROXY_LIMIT__:";
+/** The refusal reasons that mean a limit was hit, read off `PROXY_REFUSED_HEADER`. */
+const PROXY_LIMIT_REASONS = ["relay_budget_exhausted", "repeated_request"];
+/** How much of the proxy's sentence the line carries. */
+const MAX_PROXY_LIMIT_MESSAGE_CHARS = 1_000;
+/** The last limit refusal the proxy answered `ctx.fetch` with, or null — see `PROXY_LIMIT_MARKER`. */
+let lastProxyLimit = null;
 /** The entry a directory is run through, first match wins — `MODULE_ENTRIES` in `runner-source.ts`. */
 const ENTRIES = ["index.ts", "index.mjs"];
 
@@ -436,8 +450,32 @@ function fail(code, message) {
     message.length > STDERR_TAIL_CHARS
       ? `…${message.slice(message.length - STDERR_TAIL_CHARS)}`
       : message;
+  const limit = `${PROXY_LIMIT_MARKER}${lastProxyLimit === null ? "" : JSON.stringify(lastProxyLimit)}`;
   const status = `${VENDOR_STATUS_MARKER}${lastVendorErrorStatus ?? ""}`;
-  process.stderr.write(`${text}\n${status}\n`, () => process.exit(code));
+  process.stderr.write(`${text}\n${limit}\n${status}\n`, () => process.exit(code));
+}
+
+/**
+ * Note a refusal the proxy made because a limit was hit (`PROXY_LIMIT_MARKER`), with the sentence its
+ * body carries, read off a clone so the module still reads the body it is handed; then the vendor
+ * status, as for every response.
+ */
+async function noteResponse(response) {
+  const reason = response.headers.get(PROXY_REFUSED_HEADER);
+  if (reason !== null && PROXY_LIMIT_REASONS.includes(reason)) {
+    let body = null;
+    try {
+      body = await response.clone().json();
+    } catch {
+      body = null;
+    }
+    const message =
+      body !== null && typeof body === "object" && typeof body.message === "string"
+        ? body.message.slice(0, MAX_PROXY_LIMIT_MESSAGE_CHARS)
+        : null;
+    lastProxyLimit = { reason, message };
+  }
+  return noteVendorStatus(response);
 }
 
 /**
@@ -731,9 +769,9 @@ function boundFetch(path, init = {}) {
   // Never follow: the proxy returned the vendor's 3xx unfollowed on purpose, and the only host this
   // sandbox can reach is the proxy — see the header.
   const request = { ...options, headers, redirect: "manual" };
-  if (!dryRun) return fetch(url, request).then(noteVendorStatus);
+  if (!dryRun) return fetch(url, request).then(noteResponse);
   return dryRunFetch(url, request, { method, path: recorded, headers, init: options }).then(
-    noteVendorStatus,
+    noteResponse,
   );
 }
 

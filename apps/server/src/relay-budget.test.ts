@@ -1,5 +1,8 @@
 import type { RelayBudgetDeps } from "@graft/core";
 import type { DbOrTx } from "@graft/db";
+import { createMcpDeps } from "@graft/mcp";
+import { createFakeDeps, createFakeStore } from "@graft/mcp/testing/fake-deps";
+import type { Capture } from "@graft/observability";
 import {
   type CapabilityClaims,
   createProxyApp,
@@ -9,7 +12,14 @@ import {
 } from "@graft/proxy";
 import { describe, expect, it } from "vitest";
 
-import { createRelayBudget, relayBudgetClause, relayBudgetLimitsFrom } from "./relay-budget";
+import {
+  createRelayBudget,
+  createRelayBudgetExhaustedCapture,
+  createRelayBudgetPeek,
+  relayBudgetClause,
+  relayBudgetLimitsFrom,
+} from "./relay-budget";
+import { runAgentTool } from "./tool-run";
 
 /**
  * The relay budget as the server binds it (GRA-349): the environment's two ceilings, the boot
@@ -167,5 +177,301 @@ describe("the incident's loop, through the proxy", () => {
     expect(body.reason).toBe("relay_budget_exhausted");
     expect(body.message).toMatch(/^This agent has made 250 relayed calls this hour/);
     expect(events.filter((event) => event.outcome === "relay_budget_exhausted")).toHaveLength(460);
+
+    // The analytics event (GRA-350): 460 refusals over two hours are two events, one per window.
+    const captured: Capture[] = [];
+    const { fromProxyEvent: capture } = createRelayBudgetExhaustedCapture(
+      (input) => captured.push(input),
+      {
+        now: count.now,
+      },
+    );
+    for (const event of events) capture(event);
+    expect(captured.map((input) => input.properties?.resets_at)).toEqual([
+      "2026-10-12T01:00:00.000Z",
+      "2026-10-12T02:00:00.000Z",
+    ]);
+    expect(captured[0]).toEqual({
+      distinctId: "person_1",
+      event: "relay_budget_exhausted",
+      properties: {
+        ceiling: "agent_hour",
+        limit: 250,
+        used: 250,
+        resets_at: "2026-10-12T01:00:00.000Z",
+        tool: "google-drive__read-xlsx-sheet-page",
+        agent_id: "agent_1",
+        relay: "test_relay",
+        dry_run: false,
+      },
+    });
+  });
+});
+
+/** A proxy event with the relay budget's word on it, the rest as a refused relayed call has it. */
+function proxyEvent(overrides: Partial<ProxyEvent> = {}): ProxyEvent {
+  return {
+    outcome: "relay_budget_exhausted",
+    status: 429,
+    upstreamStatus: null,
+    method: "GET",
+    path: "/files",
+    hasQuery: false,
+    connectionId: "conn_drive",
+    personId: "person_1",
+    agentId: "agent_1",
+    tool: "google-drive__read-drive-files",
+    host: "www.googleapis.example",
+    latencyMs: 1,
+    requestBytes: 0,
+    responseBytes: null,
+    redirectHops: 0,
+    dryRun: false,
+    dryRunOutcome: null,
+    oauth: null,
+    relay: "relay",
+    credentialEchoed: false,
+    failure: null,
+    budget: {
+      outcome: "exhausted",
+      ceiling: "agent_hour",
+      limit: 250,
+      used: 250,
+      resetsAt: "2026-10-12T14:00:00.000Z",
+    },
+    ...overrides,
+  };
+}
+
+describe("relay_budget_exhausted, counted (GRA-350)", () => {
+  const NOW = Date.parse("2026-10-12T13:20:00Z");
+
+  it("is one event per agent, ceiling and window however many calls are refused in it", () => {
+    const captured: Capture[] = [];
+    const { fromProxyEvent: capture } = createRelayBudgetExhaustedCapture(
+      (input) => captured.push(input),
+      {
+        now: () => NOW,
+      },
+    );
+    for (let i = 0; i < 1_000; i += 1) capture(proxyEvent());
+    expect(captured).toHaveLength(1);
+    // Another agent of the person's, and the person's own ceiling for the first: one more each.
+    capture(proxyEvent({ agentId: "agent_2" }));
+    const personDay = {
+      outcome: "exhausted" as const,
+      ceiling: "person_day" as const,
+      limit: 1000,
+      used: 1000,
+      resetsAt: "2026-10-13T09:00:00.000Z",
+    };
+    capture(proxyEvent({ budget: personDay }));
+    capture(proxyEvent({ budget: personDay }));
+    expect(
+      captured.map((input) => [input.properties?.agent_id, input.properties?.ceiling]),
+    ).toEqual([
+      ["agent_1", "agent_hour"],
+      ["agent_2", "agent_hour"],
+      ["agent_1", "person_day"],
+    ]);
+  });
+
+  it("is a new event in a new window", () => {
+    const captured: Capture[] = [];
+    let now = NOW;
+    const { fromProxyEvent: capture } = createRelayBudgetExhaustedCapture(
+      (input) => captured.push(input),
+      {
+        now: () => now,
+      },
+    );
+    capture(proxyEvent());
+    now += HOUR_MS;
+    const next = proxyEvent({
+      budget: {
+        outcome: "exhausted",
+        ceiling: "agent_hour",
+        limit: 250,
+        used: 250,
+        resetsAt: "2026-10-12T15:00:00.000Z",
+      },
+    });
+    capture(next);
+    capture(next);
+    expect(captured.map((input) => input.properties?.resets_at)).toEqual([
+      "2026-10-12T14:00:00.000Z",
+      "2026-10-12T15:00:00.000Z",
+    ]);
+  });
+
+  it("counts nothing for a call the budget did not refuse, or one with no agent on it", () => {
+    const captured: Capture[] = [];
+    const { fromProxyEvent: capture } = createRelayBudgetExhaustedCapture((input) =>
+      captured.push(input),
+    );
+    capture(proxyEvent({ outcome: "forwarded", status: 200, budget: null }));
+    capture(proxyEvent({ budget: { outcome: "unavailable", failure: "Error" } }));
+    capture(proxyEvent({ agentId: null }));
+    expect(captured).toEqual([]);
+  });
+
+  it("holds a bounded number of keys, forgetting the oldest first", () => {
+    const captured: Capture[] = [];
+    const { fromProxyEvent: capture } = createRelayBudgetExhaustedCapture(
+      (input) => captured.push(input),
+      {
+        maxKeys: 2,
+        now: () => NOW,
+      },
+    );
+    for (const agentId of ["a", "b", "c", "a"]) capture(proxyEvent({ agentId }));
+    // `a` was forgotten when `c` landed, so its next refusal counts again: a duplicate, never a miss.
+    expect(captured.map((input) => input.properties?.agent_id)).toEqual(["a", "b", "c", "a"]);
+  });
+
+  /**
+   * The incident's own shape (Greptile on #299): one relayed call per run, so the 250th call is
+   * allowed and fills the budget, and every run after it meets the door, never the proxy. The door's
+   * refusals are counted on the same keys as the proxy's, so a window counted by one is not counted
+   * again by the other.
+   */
+  it("counts a run the door refused, on the same keys as the proxy's refusals", () => {
+    const captured: Capture[] = [];
+    const { fromDoor, fromProxyEvent } = createRelayBudgetExhaustedCapture(
+      (input) => captured.push(input),
+      { now: () => NOW },
+    );
+    const door = {
+      personId: "person_1",
+      agentId: "agent_1",
+      tool: "google-drive__read-drive-files",
+      relay: "relay",
+      dryRun: false,
+      verdict: {
+        allowed: false as const,
+        ceiling: "agent_hour" as const,
+        limit: 250,
+        used: 250,
+        resetsAt: new Date("2026-10-12T14:00:00.000Z"),
+      },
+    };
+    for (let i = 0; i < 400; i += 1) fromDoor(door);
+    fromProxyEvent(proxyEvent());
+    expect(captured).toEqual([
+      {
+        distinctId: "person_1",
+        event: "relay_budget_exhausted",
+        properties: {
+          ceiling: "agent_hour",
+          limit: 250,
+          used: 250,
+          resets_at: "2026-10-12T14:00:00.000Z",
+          tool: "google-drive__read-drive-files",
+          agent_id: "agent_1",
+          relay: "relay",
+          dry_run: false,
+        },
+      },
+    ]);
+  });
+});
+
+describe("the run's door reads the same count (GRA-350)", () => {
+  it("binds no peek when no ceiling is set", () => {
+    expect(createRelayBudgetPeek(db, { agentHourly: null, personDaily: null })).toBeUndefined();
+  });
+
+  it("judges as the proxy's charge does, and counts nothing", async () => {
+    const count = memoryCount(Date.parse("2026-10-12T13:00:00Z"));
+    const limits = { agentHourly: 1, personDaily: null };
+    const peek = createRelayBudgetPeek(db, limits, count.deps);
+    const charge = createRelayBudget(db, limits, count.deps);
+    const scope = { personId: "person_1", agentId: "agent_1" };
+    expect(await peek?.peek(scope)).toEqual({ allowed: true });
+    expect(await peek?.peek(scope)).toEqual({ allowed: true });
+    await charge?.charge({ ...scope, connectionId: "conn", relay: "relay", dryRun: false });
+    expect(await peek?.peek(scope)).toMatchObject({ allowed: false, ceiling: "agent_hour" });
+  });
+
+  /**
+   * The console's run (`tool-run.ts`) is `runAuthoredTool`, so it meets the same door: a relayed
+   * connection past a ceiling is refused with the proxy's sentence before a sandbox is asked for
+   * (there is none here, and no key pair, so anything past the door would refuse otherwise).
+   */
+  it("refuses the console's run of a relayed tool past a ceiling, with the proxy's sentence", async () => {
+    const store = createFakeStore();
+    store.addConnection({
+      id: "conn_drive",
+      personId: "person_1",
+      vendor: "drive",
+      scheme: "relay",
+      schemeConfig: {},
+      primaryHost: "https://www.googleapis.example/drive/v3",
+    });
+    store.addAgent({
+      scopeMode: "listed",
+      id: "agent_1",
+      personId: "person_1",
+      token: "grft_token_relay_budget_console_000000000000",
+      connectionIds: ["conn_drive"],
+    });
+    store.addTool({
+      id: "tool_drive",
+      personId: "person_1",
+      vendor: "drive",
+      name: "read-drive-files",
+      description: "List files.",
+      inputSchema: { type: "object" },
+      readOnly: true,
+      destructive: false,
+      defaultConnectionId: "conn_drive",
+      path: "tools/drive/read-drive-files/v1",
+    });
+    store.promote("agent_1", "tool_drive");
+    const fake = createFakeDeps(store);
+    const resetsAt = new Date("2026-10-12T14:00:00Z");
+    const mcp = createMcpDeps({
+      ...fake,
+      sandbox: null,
+      keys: null,
+      proxyPublicUrl: "http://proxy.invalid",
+      handoff: {
+        consoleUrl: "http://console.invalid",
+        secret: "x".repeat(32),
+        waitMs: 0,
+        ttlMs: 1,
+      },
+      relayBudget: {
+        peek: async () => ({
+          allowed: false,
+          ceiling: "agent_hour",
+          limit: 250,
+          used: 250,
+          resetsAt,
+        }),
+      },
+    });
+    try {
+      const answer = await runAgentTool(
+        { db: fake.db },
+        { personId: "person_1" },
+        { agentId: "agent_1", vendor: "drive", name: "read-drive-files" },
+        {},
+        { agent: fake.agent, tool: fake.tool, workingSet: fake.workingSet, mcp },
+      );
+      expect(answer).toEqual({
+        ok: false,
+        reason: "relay_budget_exhausted",
+        message:
+          "This agent has made 250 relayed calls this hour, its limit of 250 an hour; relayed calls resume at 2026-10-12 14:00 UTC. An agent that reaches this limit is usually calling the same tool in a loop: stop, and tell the person what you were doing.",
+        answer: expect.objectContaining({ error: "refused", reason: "relay_budget_exhausted" }),
+      });
+      expect(store.usage).toEqual([
+        expect.objectContaining({ outcome: "refused", reason: "relay_budget_exhausted" }),
+      ]);
+    } finally {
+      mcp.inFlight?.close();
+      mcp.notifier?.close();
+    }
   });
 });

@@ -103,6 +103,31 @@ export const RESULT_MARKER = "__GRAFT_RESULT__:";
 export const VENDOR_STATUS_MARKER = "__GRAFT_VENDOR_STATUS__:";
 
 /**
+ * The line before `VENDOR_STATUS_MARKER`'s on every failure the runner words (GRA-350; `runner.mjs`):
+ * the marker, then the last refusal the proxy answered `ctx.fetch` with because a limit was hit, as
+ * one line of JSON `{ reason, message }` (the reason off `PROXY_REFUSED_HEADER`, one of
+ * `PROXY_LIMIT_REASONS`; the proxy's sentence off its body, at most
+ * `MAX_PROXY_LIMIT_MESSAGE_CHARS`), or nothing. `@graft/mcp`'s `run.ts` reads it into the run's
+ * refusal, so a run stopped by a limit reads as that refusal and not as the module's error or a
+ * vendor status. The three are asserted equal to `runner.mjs`'s in `runner.test.ts`.
+ */
+export const PROXY_LIMIT_MARKER = "__GRAFT_PROXY_LIMIT__:";
+
+/**
+ * The proxy's refusals that mean a limit was hit rather than that the call was wrong: the relay
+ * budget's (GRA-349; ADR 0019 as amended 2026-11-14) and a repeated request's (GRA-351).
+ */
+export const PROXY_LIMIT_REASONS = ["relay_budget_exhausted", "repeated_request"] as const;
+export type ProxyLimitReason = (typeof PROXY_LIMIT_REASONS)[number];
+
+export function isProxyLimitReason(value: unknown): value is ProxyLimitReason {
+  return typeof value === "string" && (PROXY_LIMIT_REASONS as readonly string[]).includes(value);
+}
+
+/** How much of the proxy's sentence `PROXY_LIMIT_MARKER`'s line carries. */
+export const MAX_PROXY_LIMIT_MESSAGE_CHARS = 1_000;
+
+/**
  * The first line of the runner's envelope, on stdout and in the detached result file (GRA-186; the
  * header of `runner.mjs`): the marker, a newline, one line of JSON `{ result, blobs }`. In the
  * family of `RESULT_MARKER`, and for the same reason: only the runner writes it, after the module
