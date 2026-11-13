@@ -66,6 +66,7 @@ import {
   createRelayBudget,
   relayBudgetClause,
   relayBudgetLimitsFrom,
+  relayRepeatClause,
   startRelayCallPrune,
 } from "./relay-budget";
 import { toolCalledProperties } from "./tool-called";
@@ -486,6 +487,8 @@ const app = createServer({
   followRedirects: env.GRAFT_PROXY_FOLLOW_REDIRECTS,
   // The body cap on both legs, the environment's over the proxy's default (GRA-183).
   maxBodyBytes: env.GRAFT_PROXY_MAX_BODY_BYTES,
+  // Repeat detection (GRA-351): identical relayed requests counted in this process; off unless set.
+  relayRepeatLimit: env.GRAFT_RELAY_REPEAT_LIMIT ?? null,
   api: {
     auth: {
       handler: (request) => auth.handler(request),
@@ -606,6 +609,7 @@ serve({ fetch: app.fetch, port: env.PORT }, (info) => {
       `, ${describeObservability(backings)}` +
       `, rate limit ${backings.rateLimiter.name}` +
       relayBudgetClause(relayBudgetLimits) +
+      relayRepeatClause(env.GRAFT_RELAY_REPEAT_LIMIT) +
       proxyBodyCapClause(env.GRAFT_PROXY_MAX_BODY_BYTES) +
       `, acquire runner: ${env.GRAFT_ACQUIRE_CONCURRENCY} job(s) at once, ` +
       `console ${existsSync(join(env.GRAFT_CONSOLE_DIR, "index.html")) ? `served from ${env.GRAFT_CONSOLE_DIR}` : `not built at ${env.GRAFT_CONSOLE_DIR} (console paths answer 404)`}`,

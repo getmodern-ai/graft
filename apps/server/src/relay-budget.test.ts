@@ -9,7 +9,12 @@ import {
 } from "@graft/proxy";
 import { describe, expect, it } from "vitest";
 
-import { createRelayBudget, relayBudgetClause, relayBudgetLimitsFrom } from "./relay-budget";
+import {
+  createRelayBudget,
+  relayBudgetClause,
+  relayBudgetLimitsFrom,
+  relayRepeatClause,
+} from "./relay-budget";
 
 /**
  * The relay budget as the server binds it (GRA-349): the environment's two ceilings, the boot
@@ -38,6 +43,14 @@ describe("the ceilings and the boot line", () => {
     );
     expect(relayBudgetClause({ agentHourly: null, personDaily: 1000 })).toBe(
       ", relay budget 1000/person-day",
+    );
+  });
+
+  it("names the repeat limit beside the budget, and says off when it is unset", () => {
+    expect(relayRepeatClause(undefined)).toBe(", relay repeat limit off");
+    expect(relayRepeatClause(null)).toBe(", relay repeat limit off");
+    expect(relayRepeatClause({ limit: 30, windowSeconds: 900 })).toBe(
+      ", relay repeat limit 30/900",
     );
   });
 

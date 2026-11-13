@@ -1155,6 +1155,27 @@ describe("the GRAFT_RELAY_BUDGET_* pair", () => {
   });
 });
 
+describe("GRAFT_RELAY_REPEAT_LIMIT", () => {
+  const repeat = serverSchema.GRAFT_RELAY_REPEAT_LIMIT;
+
+  it("is absent by default, so no relayed request is counted for repeats", () => {
+    expect(repeat.parse(undefined)).toBeUndefined();
+  });
+
+  it("takes <limit>/<windowSeconds>, as the rate limits do", () => {
+    expect(repeat.parse("30/900")).toEqual({ limit: 30, windowSeconds: 900 });
+    expect(repeat.parse(" 5 / 60 ")).toEqual({ limit: 5, windowSeconds: 60 });
+  });
+
+  it("refuses a bare number, a zero and a fraction with a sentence naming the variable", () => {
+    for (const bad of ["30", "0/900", "30/0", "2.5/60", "lots"]) {
+      const parsed = repeat.safeParse(bad);
+      expect(parsed.success, bad).toBe(false);
+      expect(parsed.error?.issues[0]?.message).toContain("GRAFT_RELAY_REPEAT_LIMIT");
+    }
+  });
+});
+
 describe("GRAFT_TRUSTED_PROXY_HOPS", () => {
   it("is zero unless set, so X-Forwarded-For is never read on a caller's say-so", () => {
     expect(trustedProxyHops.parse(undefined)).toBe(0);

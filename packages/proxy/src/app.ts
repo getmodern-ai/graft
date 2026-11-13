@@ -43,6 +43,7 @@ import { isPublicHost } from "./public-host";
 import { classifyRequest, parseJsonBody } from "./read-request";
 import { type Hop, isRedirect, nextHop, scrubReturnedRedirect } from "./redirects";
 import { chargeRelayBudget } from "./relay-budget";
+import { admitRepeat, createRepeatGuard, type RepeatGuard } from "./repeat-guard";
 import { SCHEMES, type SchemePlugin, type SchemeTarget } from "./schemes";
 import { createSingleFlight } from "./single-flight";
 import { extractToken, scrubToken } from "./token";
@@ -55,6 +56,7 @@ import type {
   ProxyDeps,
   ProxyEvent,
   ProxyOptions,
+  ProxyRepeatTrace,
   SchemeConfig,
   SchemeRuntime,
   SingleFlight,
@@ -126,6 +128,7 @@ export const DEFAULT_PROXY_OPTIONS: ProxyOptions = {
   followRedirects: false,
   upstreamTimeoutMs: 30_000,
   maxBodyBytes: 10 * 1024 * 1024,
+  repeatLimit: null,
 };
 
 /**
@@ -164,6 +167,8 @@ export function createProxyApp(deps: ProxyDeps): Hono {
   // One cache and one single-flight per app: per process in production, per harness in a test.
   const cache = createDerivedCredentialCache(now);
   const once = createSingleFlight();
+  // Repeat detection's window, held for the life of the app like the cache (`repeat-guard.ts`).
+  const repeats = options.repeatLimit ? createRepeatGuard(options.repeatLimit) : null;
   // What the host bound, with what it throws recorded by class name and never by message
   // (`failure.ts`). Everything below reads the host through `host`, never through `deps`.
   const host = guardHostDeps(deps);
@@ -186,7 +191,8 @@ export function createProxyApp(deps: ProxyDeps): Hono {
     return c.json(jwks, 200, { "cache-control": "public, max-age=300" });
   });
 
-  const handle = (c: Context) => proxyCall(c, host, options, { upstream, cache, now, once });
+  const handle = (c: Context) =>
+    proxyCall(c, host, options, { upstream, cache, now, once, repeats });
   // Both shapes, because `/c/:id/*` alone does not match a bare `/c/:id` (the vendor's root). The
   // explicit host form is inside the wildcard and read out of the raw path by `routeOf`.
   app.all("/c/:connectionId", handle);
@@ -201,6 +207,8 @@ type Shared = {
   cache: DerivedCredentialCache;
   now: () => number;
   once: SingleFlight;
+  /** Repeat detection's count, or null when `ProxyOptions.repeatLimit` is. */
+  repeats: RepeatGuard | null;
 };
 
 /** What the wide event learns as the call gets further; nulls for what it never reached. */
@@ -219,6 +227,8 @@ type Trace = {
   relay: string | null;
   /** What the relay budget said, once it was asked (`ProxyEvent.budget`). */
   budget: ProxyBudgetTrace | null;
+  /** What repeat detection refused, once it refused (`ProxyEvent.repeat`). */
+  repeat: ProxyRepeatTrace | null;
 };
 
 type Answered = {
@@ -275,6 +285,7 @@ async function proxyCall(
     oauth: null,
     relay: null,
     budget: null,
+    repeat: null,
   };
 
   let result: Refused | Answered | Intercepted;
@@ -502,6 +513,34 @@ async function decide(
     return intercept(call.method, target.url, named.headerNames, body, requestBytes);
   }
 
+  /**
+   * Repeat detection's rung (GRA-351): a relayed request this agent has already sent identically as
+   * often as the window allows is refused as a probable loop. After the dry-run rung, so an
+   * intercepted write is not counted; before `forward`, whose `beforeSend` charges the budget, so a
+   * refused repeat is never charged. One caller request is one count, whatever redirects `forward`
+   * then follows. The URL is read after the token sweep above, so a token a caller put in the query
+   * is not part of it. A call the proxy signs itself is never counted. A call whose first hop the
+   * budget refuses is taken back out of the window, so `Retry-After` is not held up by it.
+   */
+  let releaseRepeat: (() => void) | null = null;
+  if (source.mode === "relay" && shared.repeats) {
+    const admitted = admitRepeat(
+      shared.repeats,
+      {
+        agentId: claims.agent,
+        tool: claims.tool,
+        method: call.method,
+        url: target.url.href,
+        body,
+      },
+      shared.now(),
+      trace,
+      requestBytes,
+    );
+    if (admitted.kind === "refused") return admitted;
+    releaseRepeat = admitted.release;
+  }
+
   let credential: CredentialFields;
   try {
     credential = await source.obtain();
@@ -520,10 +559,13 @@ async function decide(
    * A call the proxy signs itself is never asked about: it costs the deployment nothing.
    */
   const { relayBudget } = deps;
+  // Whether a hop has been let past the budget yet: a refusal of the first means nothing left, and
+  // the repeat window gives the request back (GRA-351); a refused redirect hop keeps its count.
+  let hopsSent = 0;
   const beforeSend =
     source.mode === "relay" && relayBudget
-      ? () =>
-          chargeRelayBudget(
+      ? async () => {
+          const refused = await chargeRelayBudget(
             relayBudget,
             {
               personId: claims.person,
@@ -535,7 +577,11 @@ async function decide(
             shared.now(),
             trace,
             requestBytes,
-          )
+          );
+          if (!refused) hopsSent += 1;
+          else if (hopsSent === 0) releaseRepeat?.();
+          return refused;
+        }
       : null;
   const { storeCredential, credentialRefreshFailed } = deps;
   return forward(

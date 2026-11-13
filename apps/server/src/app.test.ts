@@ -390,6 +390,59 @@ describe("the proxy's body cap from the environment (GRA-183)", () => {
   });
 });
 
+/**
+ * Repeat detection (GRA-351) reaches the proxy from `ServerDeps.relayRepeatLimit`, which `index.ts`
+ * binds to `GRAFT_RELAY_REPEAT_LIMIT`; the rung itself is `@graft/proxy`'s `repeat-guard.test.ts`.
+ */
+describe("the relay repeat limit", () => {
+  async function withRelay(overrides: Partial<ServerDeps> = {}) {
+    const h = await harness(overrides);
+    h.connections.put({
+      id: "conn_relay",
+      personId: PERSON,
+      authScheme: null,
+      primaryHost: "https://www.vendor.example/v1",
+      hosts: ["www.vendor.example"],
+      schemeConfig: null,
+      credentialCiphertext: null,
+      relay: {
+        plugin: {
+          kind: "relay",
+          scheme: "test_relay",
+          rules: { prefix: null, passThrough: [], refuse: [], refusePrefixes: [] },
+          relay(target) {
+            target.url.href = `https://relay.example/proxy?to=${encodeURIComponent(target.url.href)}`;
+          },
+          headerNames: () => [],
+        },
+        obtain: async () => ({}),
+      },
+    });
+    const token = await mint({ connectionIds: ["conn_relay"] });
+    const send = () =>
+      h.app.request("/api/proxy/c/conn_relay/files/abc/export", {
+        headers: { authorization: `Bearer ${token}` },
+      });
+    return { ...h, send };
+  }
+
+  it("reaches the proxy, which refuses the identical request past the limit", async () => {
+    const h = await withRelay({ relayRepeatLimit: { limit: 2, windowSeconds: 900 } });
+    expect((await h.send()).status).toBe(200);
+    expect((await h.send()).status).toBe(200);
+    const refused = await h.send();
+    expect(refused.status).toBe(429);
+    expect(await refused.json()).toMatchObject({ reason: "repeated_request" });
+    expect(h.forwarded).toHaveLength(2);
+    expect(h.events.at(-1)?.repeat).toEqual({ count: 2, limit: 2, windowSeconds: 900 });
+  });
+
+  it("counts nothing when the server is given no limit", async () => {
+    const h = await withRelay();
+    for (let i = 0; i < 5; i += 1) expect((await h.send()).status).toBe(200);
+  });
+});
+
 describe("the seed", () => {
   it("adds the primary's hostname to the host set and encrypts the credential", async () => {
     const store = createInMemoryConnections();

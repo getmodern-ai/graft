@@ -5,6 +5,7 @@ import {
   type ProxyDeps,
   type ProxyEvent,
   type RelayBudget,
+  type RepeatLimit,
   type UpstreamFetch,
 } from "@graft/proxy";
 import { type CapabilityTokenKeys, createCapabilityTokenVerifier } from "@graft/token";
@@ -75,6 +76,12 @@ export type ServerDeps = {
    * operator sets a `GRAFT_RELAY_BUDGET_*` ceiling, relayed calls are not counted.
    */
   relayBudget?: RelayBudget;
+  /**
+   * Repeat detection (GRA-351; `@graft/proxy`'s `repeat-guard.ts`): at most `limit` identical
+   * relayed requests by one agent in any `windowSeconds`, `GRAFT_RELAY_REPEAT_LIMIT`. Absent or
+   * null, the default in both forms, nothing is counted.
+   */
+  relayRepeatLimit?: RepeatLimit | null;
   /**
    * A test's fake vendor; production takes the proxy's default, undici behind the guarded resolver
    * with no exemption — a gateway relay's own fetch rides on its connection (ADR 0019, GRA-58).
@@ -190,6 +197,7 @@ export function createServer(deps: ServerDeps): Hono<EvlogVariables> {
       options: {
         followRedirects: deps.followRedirects,
         ...(deps.maxBodyBytes !== undefined ? { maxBodyBytes: deps.maxBodyBytes } : {}),
+        ...(deps.relayRepeatLimit ? { repeatLimit: deps.relayRepeatLimit } : {}),
       },
       ...(deps.upstreamFetch ? { upstreamFetch: deps.upstreamFetch } : {}),
       ...(deps.relayBudget ? { relayBudget: deps.relayBudget } : {}),
