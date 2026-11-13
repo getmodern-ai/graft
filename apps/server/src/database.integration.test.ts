@@ -7,6 +7,7 @@ import { createAuth, setFirstPassword } from "@graft/auth";
 import {
   addConnectionToAgentScope,
   allowVendor,
+  chargeRelayCall,
   createAgent,
   createAgentAwaitingHarness,
   createConnectionDeps,
@@ -16,6 +17,7 @@ import {
   defaultActivityDeps,
   defaultAgentDeps,
   defaultApprovalDeps,
+  defaultRelayBudgetDeps,
   defaultSetupDeps,
   defaultStockDeps,
   defaultSuggestedIntegrationDeps,
@@ -47,6 +49,7 @@ import {
   loadStockCatalogue,
   modelKeyScope,
   promoteTool,
+  pruneRelayCallCounts,
   registerConnection,
   requireAgent,
   revokeAgent,
@@ -68,6 +71,7 @@ import { upsertApproval, upsertVendorApproval } from "@graft/db/repo/approval";
 import { addConnectionHosts } from "@graft/db/repo/connection";
 import { insertPendingAction, listSuggestedConnectionAsks } from "@graft/db/repo/pending-action";
 import { markPersonEmailVerified } from "@graft/db/repo/person";
+import { listRelayCallBuckets } from "@graft/db/repo/relay-call";
 import { findSetup, lockSetup, saveSetup } from "@graft/db/repo/setup";
 import { insertUsage } from "@graft/db/repo/usage";
 import type { ProxyEvent, UpstreamRequest } from "@graft/proxy";
@@ -230,6 +234,7 @@ describe.skipIf(!adminUrl)("the schema, the account and the services over a real
       "mcp_token",
       "pending_action",
       "person_model_key",
+      "relay_call_count",
       "setup",
       "tool_version",
       "usage_ledger",
@@ -378,6 +383,57 @@ describe.skipIf(!adminUrl)("the schema, the account and the services over a real
     await expect(
       rotateAgentToken(ctx, principal, created.agent.id, defaultAgentDeps),
     ).rejects.toMatchObject({ code: "CONFLICT", details: { reason: "agent_token_not_rotatable" } });
+  });
+
+  /**
+   * The relay budget's count (GRA-349) against the real table: two calls in one hour are one row of
+   * two, another hour is another row, the daily read is the person's alone, the ceiling refuses
+   * the call past it without counting it, and the prune takes only hours past the retention.
+   */
+  it("counts relayed calls per agent-hour, refuses past a ceiling without counting, and prunes old hours", async () => {
+    const personId = await signUp("relay-budget@example.com");
+    const otherId = await signUp("relay-budget-other@example.com");
+    const ctx: ServiceContext = { db };
+    const agent = await createAgent(ctx, { personId }, { name: "looper" }, defaultAgentDeps);
+    const other = await createAgent(
+      ctx,
+      { personId: otherId },
+      { name: "other" },
+      defaultAgentDeps,
+    );
+    const scope = { personId, agentId: agent.agent.id };
+    let now = new Date("2026-10-12T13:05:00Z");
+    const deps = { ...defaultRelayBudgetDeps, now: () => now };
+    const limits = { agentHourly: 2, personDaily: 3 };
+
+    expect(await chargeRelayCall(ctx, scope, limits, deps)).toEqual({ allowed: true });
+    expect(await chargeRelayCall(ctx, scope, limits, deps)).toEqual({ allowed: true });
+    expect(await chargeRelayCall(ctx, scope, limits, deps)).toMatchObject({
+      allowed: false,
+      ceiling: "agent_hour",
+      used: 2,
+    });
+    await chargeRelayCall(ctx, { personId: otherId, agentId: other.agent.id }, limits, deps);
+
+    now = new Date("2026-10-12T14:05:00Z");
+    expect(await chargeRelayCall(ctx, scope, limits, deps)).toEqual({ allowed: true });
+    expect(await chargeRelayCall(ctx, scope, limits, deps)).toMatchObject({
+      allowed: false,
+      ceiling: "person_day",
+      used: 3,
+    });
+
+    const buckets = await listRelayCallBuckets(db, personId, new Date("2026-10-11T00:00:00Z"));
+    expect(buckets.map((bucket) => [bucket.hourStart.toISOString(), bucket.calls])).toEqual([
+      ["2026-10-12T13:00:00.000Z", 2],
+      ["2026-10-12T14:00:00.000Z", 1],
+    ]);
+
+    now = new Date("2026-10-14T14:05:00Z");
+    expect(await pruneRelayCallCounts(ctx, deps)).toBeGreaterThanOrEqual(2);
+    expect(await listRelayCallBuckets(db, personId, new Date("2026-10-11T00:00:00Z"))).toEqual([
+      expect.objectContaining({ hourStart: new Date("2026-10-12T14:00:00Z"), calls: 1 }),
+    ]);
   });
 
   /**

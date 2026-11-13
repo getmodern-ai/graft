@@ -86,6 +86,7 @@ import {
 } from "./pending-action";
 import { countPersons, markPersonEmailVerified } from "./person";
 import { deletePersonModelKey, findPersonModelKey, upsertPersonModelKey } from "./person-model-key";
+import { deleteRelayCallCountsBefore, listRelayCallBuckets, recordRelayCall } from "./relay-call";
 import {
   findCurrentStockTool,
   findStockToolVersionById,
@@ -1586,5 +1587,40 @@ describe("locked reads of a standing answer", () => {
     const s = only();
     expect(s.sql).toContain('"authored_tool"."person_id" = $');
     expect(s.sql).toMatch(/ for no key update$/);
+  });
+});
+
+/**
+ * The relay budget's count (GRA-349): the daily read names the person, the write carries both ids
+ * of the scope the proxy verified, and the prune is the sweep's, unscoped and recognisable as such.
+ */
+describe("the relay budget's count", () => {
+  it("reads one person's hours since the window opened, by the person in the statement", async () => {
+    const since = new Date("2026-10-11T14:00:00Z");
+    await listRelayCallBuckets(db, "person_1", since);
+    const s = only();
+    expect(s.sql).toMatch(
+      /^select "agent_id", "hour_start", "calls" from "relay_call_count" where \("relay_call_count"\."person_id" = \$1 and "relay_call_count"\."hour_start" >= \$2\) order by "relay_call_count"\."hour_start" asc$/,
+    );
+    expect(s.params[0]).toBe("person_1");
+  });
+
+  it("counts a call under both ids of the scope, incrementing the hour in place", async () => {
+    const hour = new Date("2026-10-12T13:00:00Z");
+    await recordRelayCall(db, SCOPE, hour);
+    const s = only();
+    expect(s.sql).toMatch(
+      /^insert into "relay_call_count" \("agent_id", "person_id", "hour_start", "calls", "owner", "created_at", "updated_at"\) values \(\$1, \$2, \$3, \$4, default, default, default\) on conflict \("agent_id","hour_start"\) do update set "calls" = "relay_call_count"\."calls" \+ 1, "updated_at" = now\(\)$/,
+    );
+    expect(s.params.slice(0, 2)).toEqual(["agent_1", "person_1"]);
+  });
+
+  it("the sweep's prune of old hours is unscoped, by name, and takes only the age", async () => {
+    await deleteRelayCallCountsBefore(db, new Date("2026-10-10T13:00:00Z"));
+    const s = only();
+    expect(s.sql).toMatch(
+      /^delete from "relay_call_count" where "relay_call_count"\."hour_start" < \$1 returning "agent_id"$/,
+    );
+    expect(s.sql).not.toContain("person_id");
   });
 });
