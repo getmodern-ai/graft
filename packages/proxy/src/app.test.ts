@@ -1539,6 +1539,7 @@ describe("limits", () => {
       followRedirects: false,
       upstreamTimeoutMs: 30_000,
       maxBodyBytes: 10 * 1024 * 1024,
+      repeatLimit: null,
     });
   });
 });
@@ -2121,6 +2122,7 @@ describe("the wide event", () => {
     "credentialEchoed",
     "failure",
     "budget",
+    "repeat",
   ].sort();
 
   it("writes exactly one event per forwarded call, with ids and counts and nothing secret", async () => {
@@ -2154,6 +2156,7 @@ describe("the wide event", () => {
       dryRunOutcome: null,
       failure: null,
       budget: null,
+      repeat: null,
     });
     expect(event.latencyMs).toBeGreaterThanOrEqual(0);
     const serialised = JSON.stringify(event);

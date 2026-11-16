@@ -376,7 +376,17 @@ export type ProxyOptions = {
    * `GRAFT_PROXY_MAX_BODY_BYTES` (GRA-183); `DEFAULT_PROXY_OPTIONS` holds the default.
    */
   maxBodyBytes: number;
+  /**
+   * Repeat detection (GRA-351; ADR 0019 as amended 2026-11-14): one agent may send one identical
+   * relayed request at most `limit` times in any `windowSeconds`, and the next is refused
+   * `repeated_request`. Null, the default in both forms, counts nothing. The server sets it from
+   * `GRAFT_RELAY_REPEAT_LIMIT`; the count is held in this app instance (`repeat-guard.ts`).
+   */
+  repeatLimit: RepeatLimit | null;
 };
+
+/** `ProxyOptions.repeatLimit`: at most `limit` identical relayed requests in any `windowSeconds`. */
+export type RepeatLimit = { limit: number; windowSeconds: number };
 
 /**
  * Why a call ended the way it did — one word per category, and the wide event's `outcome`. The
@@ -434,6 +444,12 @@ export type ProxyOutcome =
    * call was refused before it reached the upstream and cost nothing.
    */
   | "relay_budget_exhausted"
+  /**
+   * A relayed request one agent already sent identically, URL, query and body alike, as many times
+   * as `ProxyOptions.repeatLimit` allows in its window (GRA-351): refused as a probable loop before
+   * the relay budget is charged, so it cost nothing.
+   */
+  | "repeated_request"
   | "proxy_error";
 
 /**
@@ -514,7 +530,16 @@ export type ProxyEvent = {
    * and `failure` says why, in the class-name form `failure` above keeps.
    */
   budget: ProxyBudgetTrace | null;
+  /**
+   * Repeat detection's refusal (GRA-351): how many identical requests this agent made in the
+   * window, against the limit. Null on every call it did not refuse, and on every call that does
+   * not relay or ran where `ProxyOptions.repeatLimit` is null. Never the URL, the query or a digest.
+   */
+  repeat: ProxyRepeatTrace | null;
 };
+
+/** `ProxyEvent.repeat`: the count that reached the limit, the limit and its window. */
+export type ProxyRepeatTrace = { count: number; limit: number; windowSeconds: number };
 
 /** `ProxyEvent.budget`: the ceiling that refused a call, or a counter that could not answer. */
 export type ProxyBudgetTrace =

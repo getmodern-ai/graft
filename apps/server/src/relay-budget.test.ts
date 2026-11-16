@@ -18,6 +18,7 @@ import {
   createRelayBudgetPeek,
   relayBudgetClause,
   relayBudgetLimitsFrom,
+  relayRepeatClause,
 } from "./relay-budget";
 import { runAgentTool } from "./tool-run";
 
@@ -48,6 +49,14 @@ describe("the ceilings and the boot line", () => {
     );
     expect(relayBudgetClause({ agentHourly: null, personDaily: 1000 })).toBe(
       ", relay budget 1000/person-day",
+    );
+  });
+
+  it("names the repeat limit beside the budget, and says off when it is unset", () => {
+    expect(relayRepeatClause(undefined)).toBe(", relay repeat limit off");
+    expect(relayRepeatClause(null)).toBe(", relay repeat limit off");
+    expect(relayRepeatClause({ limit: 30, windowSeconds: 900 })).toBe(
+      ", relay repeat limit 30/900",
     );
   });
 
@@ -239,6 +248,7 @@ function proxyEvent(overrides: Partial<ProxyEvent> = {}): ProxyEvent {
       used: 250,
       resetsAt: "2026-10-12T14:00:00.000Z",
     },
+    repeat: null,
     ...overrides,
   };
 }
