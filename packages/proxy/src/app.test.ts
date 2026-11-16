@@ -2120,6 +2120,7 @@ describe("the wide event", () => {
     "relay",
     "credentialEchoed",
     "failure",
+    "budget",
   ].sort();
 
   it("writes exactly one event per forwarded call, with ids and counts and nothing secret", async () => {
@@ -2152,6 +2153,7 @@ describe("the wide event", () => {
       dryRun: false,
       dryRunOutcome: null,
       failure: null,
+      budget: null,
     });
     expect(event.latencyMs).toBeGreaterThanOrEqual(0);
     const serialised = JSON.stringify(event);

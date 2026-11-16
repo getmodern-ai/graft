@@ -428,6 +428,12 @@ export type ProxyOutcome =
   | "response_too_large"
   | "upstream_timeout"
   | "upstream_unreachable"
+  /**
+   * A relayed call past the deployment's relay budget (GRA-349; ADR 0019 as amended 2026-11-14):
+   * the agent's calls this hour or the person's over the last 24 hours reached the ceiling, so the
+   * call was refused before it reached the upstream and cost nothing.
+   */
+  | "relay_budget_exhausted"
   | "proxy_error";
 
 /**
@@ -500,6 +506,65 @@ export type ProxyEvent = {
    * stack, never a body.
    */
   failure: string | null;
+  /**
+   * What the relay budget said about this call (GRA-349), or null when it was not asked: a call
+   * that does not relay, a deployment with no budget, or a call refused or intercepted before the
+   * budget's rung. `exhausted` names the ceiling that refused it; `unavailable` is a counter that
+   * failed, in which case the call went through (the budget fails open, as the rate limiter does)
+   * and `failure` says why, in the class-name form `failure` above keeps.
+   */
+  budget: ProxyBudgetTrace | null;
+};
+
+/** `ProxyEvent.budget`: the ceiling that refused a call, or a counter that could not answer. */
+export type ProxyBudgetTrace =
+  | {
+      outcome: "exhausted";
+      ceiling: RelayBudgetCeiling;
+      limit: number;
+      used: number;
+      /** ISO 8601: when calls under this ceiling free up again. */
+      resetsAt: string;
+    }
+  | { outcome: "unavailable"; failure: string | null };
+
+/**
+ * The two ceilings of the relay budget (GRA-349): an agent's relayed calls in the current clock
+ * hour, and a person's over the rolling 24 hours — the current hour and the 23 before it.
+ */
+export type RelayBudgetCeiling = "agent_hour" | "person_day";
+
+/** What the proxy tells the budget about one relayed call it is about to send. */
+export type RelayBudgetCall = {
+  personId: string;
+  agentId: string;
+  connectionId: string;
+  /** The relay scheme that will carry it (`ProxyEvent.relay`). */
+  relay: string;
+  dryRun: boolean;
+};
+
+/**
+ * The budget's answer. Allowed means the call has been counted; refused means it was not, and
+ * says which ceiling, its limit, the count that reached it, and when calls under it free up.
+ */
+export type RelayBudgetVerdict =
+  | { allowed: true }
+  | {
+      allowed: false;
+      ceiling: RelayBudgetCeiling;
+      limit: number;
+      used: number;
+      resetsAt: Date;
+    };
+
+/**
+ * The relay budget as the proxy sees it (GRA-349): one function that counts a relayed call or
+ * refuses it. The proxy holds no store and no numbers; the host binds this to its own (the server's
+ * is Postgres, `apps/server/src/relay-budget.ts`). Absent, nothing is counted.
+ */
+export type RelayBudget = {
+  charge: (call: RelayBudgetCall) => Promise<RelayBudgetVerdict>;
 };
 
 /**
@@ -538,6 +603,12 @@ export type ProxyDeps = {
   ) => Promise<void>;
   /** Defaults to `createUpstreamFetch()` — undici with a public-address-only resolver. */
   upstreamFetch?: UpstreamFetch;
+  /**
+   * The relay budget (GRA-349): asked just before each relayed hop is sent, a followed redirect
+   * included, so only what reaches the upstream is counted. Absent, relayed calls are not counted —
+   * the default in both forms until an operator sets a ceiling.
+   */
+  relayBudget?: RelayBudget;
   /** The wide-event sink. Called exactly once per proxied call, refused or forwarded. */
   log: (event: ProxyEvent) => void;
   /** The clock the derived-credential cache and the signing schemes read — injectable for tests. */

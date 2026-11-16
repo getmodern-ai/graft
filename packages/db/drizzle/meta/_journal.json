@@ -162,6 +162,13 @@
       "when": 1792035340422,
       "tag": "0022_approval_event",
       "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1794600549460,
+      "tag": "0023_relay_call_count",
+      "breakpoints": true
     }
   ]
 }

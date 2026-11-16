@@ -256,3 +256,25 @@ private knowledge:
   did before: the keyless connection's proof reads fail at the dry run with the vendor's refusal,
   and the job's diagnostics say so.
 
+
+- **A relayed call is counted against a budget, when the deployment sets one** (2026-11-14;
+  GRA-348, GRA-349). An upstream that holds the credential bills the deployment per call it
+  relays, and nothing bounded that: over four days in October one agent looping unattended made
+  tens of thousands of relayed calls, one every 7.5 seconds around the clock. A per-minute rate
+  limit cannot tell that loop (about eight a minute) from an honest tool run that fans out (180
+  reads in under half a minute), so the bound is a budget over hours, in two ceilings:
+  `GRAFT_RELAY_BUDGET_AGENT_HOURLY` per agent per clock hour, `GRAFT_RELAY_BUDGET_PERSON_DAILY` per
+  person over the current hour and the 23 before it. Each is optional and off by default in both
+  forms, as the rate limits are. The proxy asks the host's budget (`ProxyDeps.relayBudget`) just
+  before each relayed hop is sent, a followed redirect being another hop the upstream bills: so an
+  intercepted dry-run write costs nothing, a dry-run read that leaves is counted, and a call that
+  fails before it leaves (the provider could not assemble its fields) is not. Past a ceiling the
+  call is refused `429 relay_budget_exhausted` with `Retry-After` and a sentence naming the
+  ceiling, when it lifts, and the likely loop; the event carries `budget`. The count is
+  `relay_call_count`, hourly buckets per agent in Postgres, because a count in the process forgets
+  on every deploy and a loop outlives deploys. The decision is `@graft/core`'s
+  `relay-budget.rules.ts`; a call is judged before it is counted, so a refused call is never
+  counted, and calls judged together may pass a ceiling by as many as are in flight, which a row
+  lock per relayed call would cost every honest call to prevent. A counter that fails lets the
+  call through. Only relayed calls count: a call the proxy signs itself costs the deployment
+  nothing.

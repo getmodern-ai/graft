@@ -48,6 +48,8 @@ export type Refused = {
    * vendor's own and say what stood in the way. Never set when the vendor did answer.
    */
   unreached?: VendorUnreached;
+  /** Whole seconds for `Retry-After`, on a refusal that lifts by itself: the relay budget's (GRA-349). */
+  retryAfterSeconds?: number;
 };
 
 /**
@@ -142,6 +144,7 @@ const ERROR_WORDS: Record<number, string> = {
   408: "request_timeout",
   409: "conflict",
   413: "payload_too_large",
+  429: "too_many_requests",
   500: "internal",
   501: "not_implemented",
   502: "bad_gateway",
@@ -187,6 +190,7 @@ export type HostDependency =
   | "decryptCredential"
   | "storeCredential"
   | "credentialRefreshFailed"
+  | "relayBudget.charge"
   /** A relayed connection's `obtain` — the host's, handed over on the row rather than on `ProxyDeps` (ADR 0019). */
   | "relay.obtain";
 
@@ -230,7 +234,7 @@ function describeThrownNames(thrown: unknown): string {
  * is not wrapped because nothing is left to record its failure to; `now` and `options` are values.
  */
 export function guardHostDeps(deps: ProxyDeps): ProxyDeps {
-  const { storeCredential, credentialRefreshFailed } = deps;
+  const { storeCredential, credentialRefreshFailed, relayBudget } = deps;
   return {
     ...deps,
     verifyToken: (token) => fromHost("verifyToken", () => deps.verifyToken(token)),
@@ -250,6 +254,13 @@ export function guardHostDeps(deps: ProxyDeps): ProxyDeps {
       ? {
           credentialRefreshFailed: (scope, detail) =>
             fromHost("credentialRefreshFailed", () => credentialRefreshFailed(scope, detail)),
+        }
+      : {}),
+    ...(relayBudget
+      ? {
+          relayBudget: {
+            charge: (call) => fromHost("relayBudget.charge", () => relayBudget.charge(call)),
+          },
         }
       : {}),
   };

@@ -70,6 +70,12 @@ scheme is one of the proxy's schemes and never one a person may choose.
 _Avoid_: forward (what the proxy does with every call), proxy (the relay goes *through* one),
 broker
 
+**Relay budget**:
+The deployment's ceilings on relayed calls, which its upstream bills it for: an agent's in the
+current clock hour and a person's over the last 24 hours. Past one, the proxy refuses the call
+until the ceiling lifts. Off unless the operator sets a number. ADR 0019 as amended 2026-11-14.
+_Avoid_: quota (a blob's, ADR 0023), rate limit (a door's per-minute count, GRA-149), credits
+
 **Scope**:
 The connections an agent may use: every connection of the person's unless the person limits the
 agent to a list (ADR 0007 as amended 2026-09-19). The capability token minted for an exec names
