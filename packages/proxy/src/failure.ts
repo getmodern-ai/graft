@@ -48,7 +48,7 @@ export type Refused = {
    * vendor's own and say what stood in the way. Never set when the vendor did answer.
    */
   unreached?: VendorUnreached;
-  /** Whole seconds for `Retry-After`, on a refusal that lifts by itself: the relay budget's (GRA-349). */
+  /** Whole seconds for `Retry-After`, on a refusal that lifts by itself: the relay budget's (GRA-349) and repeat detection's (GRA-351). */
   retryAfterSeconds?: number;
 };
 

@@ -7,7 +7,7 @@ import {
   type RelayBudgetLimits,
 } from "@graft/core";
 import type { DbOrTx } from "@graft/db";
-import type { RelayBudget } from "@graft/proxy";
+import type { RelayBudget, RepeatLimit } from "@graft/proxy";
 
 /**
  * The server's half of the relay budget (GRA-349; ADR 0019 as amended 2026-11-14): the ceilings
@@ -35,6 +35,15 @@ export function relayBudgetClause(limits: RelayBudgetLimits): string {
     limits.personDaily !== null ? `${limits.personDaily}/person-day` : null,
   ].filter((part) => part !== null);
   return `, relay budget ${parts.join(" ")}`;
+}
+
+/**
+ * Repeat detection's clause beside the budget's (GRA-351): `, relay repeat limit off`, or the
+ * limit over its window in seconds, as `GRAFT_RELAY_REPEAT_LIMIT` spells it.
+ */
+export function relayRepeatClause(limit: RepeatLimit | null | undefined): string {
+  if (!limit) return ", relay repeat limit off";
+  return `, relay repeat limit ${limit.limit}/${limit.windowSeconds}`;
 }
 
 /** The proxy's hook over the database, or undefined when no ceiling is set. */
