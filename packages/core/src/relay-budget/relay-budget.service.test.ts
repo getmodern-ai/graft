@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 
 import type { RelayBudgetDeps } from "./relay-budget.deps";
 import { HOUR_MS } from "./relay-budget.rules";
-import { chargeRelayCall, pruneRelayCallCounts } from "./relay-budget.service";
+import { chargeRelayCall, peekRelayBudget, pruneRelayCallCounts } from "./relay-budget.service";
 
 /**
  * The relay budget's service over an in-memory count (GRA-349): what a charge reads, when it
@@ -79,6 +79,36 @@ describe("charging a relayed call", () => {
       });
     }
     expect([...m.rows.values()].map((row) => row.calls)).toEqual([2]);
+  });
+});
+
+describe("peeking at the budget (GRA-350)", () => {
+  it("judges as a charge does and never counts, under a ceiling or past it", async () => {
+    const m = memoryDeps(new Date("2026-10-12T13:00:00Z"));
+    const limits = { agentHourly: 2, personDaily: null };
+    expect(await peekRelayBudget({ db }, SCOPE, limits, m.deps)).toEqual({ allowed: true });
+    expect(m.rows.size).toBe(0);
+    await chargeRelayCall({ db }, SCOPE, limits, m.deps);
+    await chargeRelayCall({ db }, SCOPE, limits, m.deps);
+    const peeked = await peekRelayBudget({ db }, SCOPE, limits, m.deps);
+    expect(peeked).toEqual({
+      allowed: false,
+      ceiling: "agent_hour",
+      limit: 2,
+      used: 2,
+      resetsAt: new Date("2026-10-12T14:00:00Z"),
+    });
+    // The charge the peek foresaw is refused alike, and neither moved the count.
+    expect(await chargeRelayCall({ db }, SCOPE, limits, m.deps)).toEqual(peeked);
+    expect([...m.rows.values()].map((row) => row.calls)).toEqual([2]);
+  });
+
+  it("reads nothing when the deployment set no ceiling", async () => {
+    const m = memoryDeps(new Date("2026-10-12T13:00:00Z"));
+    expect(
+      await peekRelayBudget({ db }, SCOPE, { agentHourly: null, personDaily: null }, m.deps),
+    ).toEqual({ allowed: true });
+    expect(m.reads).toHaveLength(0);
   });
 });
 

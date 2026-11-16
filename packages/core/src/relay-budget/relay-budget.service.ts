@@ -31,10 +31,36 @@ export async function chargeRelayCall(
 ): Promise<RelayBudgetVerdict> {
   if (!hasRelayBudget(limits)) return { allowed: true };
   const now = deps.now();
-  const buckets = await deps.listRelayCallBuckets(ctx.db, scope.personId, personWindowStart(now));
-  const verdict = judgeRelayBudget({ agentId: scope.agentId, buckets, limits, now });
+  const verdict = await judgeAt(ctx, scope, limits, deps, now);
   if (verdict.allowed) await deps.recordRelayCall(ctx.db, scope, hourStartOf(now));
   return verdict;
+}
+
+/**
+ * Whether the agent's next relayed call would go, counting nothing (GRA-350): the read and the
+ * judgement `chargeRelayCall` makes, never its write. A run's door asks it before a sandbox is
+ * touched for a tool whose connection relays (`@graft/mcp`'s `run.ts`). The proxy still charges
+ * every call that leaves, so a peek that says yes promises nothing about the calls the run makes.
+ */
+export async function peekRelayBudget(
+  ctx: ServiceContext,
+  scope: AgentScope,
+  limits: RelayBudgetLimits,
+  deps: RelayBudgetDeps,
+): Promise<RelayBudgetVerdict> {
+  if (!hasRelayBudget(limits)) return { allowed: true };
+  return judgeAt(ctx, scope, limits, deps, deps.now());
+}
+
+async function judgeAt(
+  ctx: ServiceContext,
+  scope: AgentScope,
+  limits: RelayBudgetLimits,
+  deps: RelayBudgetDeps,
+  now: Date,
+): Promise<RelayBudgetVerdict> {
+  const buckets = await deps.listRelayCallBuckets(ctx.db, scope.personId, personWindowStart(now));
+  return judgeRelayBudget({ agentId: scope.agentId, buckets, limits, now });
 }
 
 /** How long an hour's count is kept: twice the person's window, so nothing the budget reads is gone. */

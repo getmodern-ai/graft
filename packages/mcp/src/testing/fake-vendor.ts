@@ -87,6 +87,8 @@ export async function startFakeVendor(args: {
   rotation?: Pick<ProxyDeps, "storeCredential" | "credentialRefreshFailed">;
   /** The proxy's clock, for a suite that wants a stored token to read as expired. */
   now?: () => number;
+  /** The proxy's relay budget (GRA-349), for a suite whose relayed calls are counted or refused. */
+  relayBudget?: ProxyDeps["relayBudget"];
 }): Promise<FakeVendor> {
   const vault = createCredentialVault(createLocalKeyring(VAULT_SECRET));
   const rows = new Map<string, ProxyConnection>();
@@ -119,6 +121,7 @@ export async function startFakeVendor(args: {
     decryptCredential: (ciphertext, scope) => vault.decrypt(ciphertext, scope),
     ...args.rotation,
     ...(args.now ? { now: args.now } : {}),
+    ...(args.relayBudget ? { relayBudget: args.relayBudget } : {}),
     upstreamFetch: async (request) => {
       requests.push(request);
       return respond(request);

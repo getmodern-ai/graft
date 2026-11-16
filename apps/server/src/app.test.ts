@@ -124,6 +124,30 @@ describe("the server", () => {
     expect(await res.json()).toMatchObject({ reason: "token_missing" });
     expect(res.headers.get("access-control-allow-origin")).toBeNull();
   });
+
+  /** GRA-350: the relay budget's capture is told every proxy event after the sink, and cannot break a call. */
+  it("tells onProxyEvent each proxy event after the log, and a hook that throws changes nothing", async () => {
+    const told: ProxyEvent[] = [];
+    const h = await harness({ onProxyEvent: (event) => told.push(event) });
+    const token = await mint();
+    const res = await h.app.request("/api/proxy/c/conn_1/items", {
+      headers: { authorization: `Bearer ${token}` },
+    });
+    expect(res.status).toBe(200);
+    expect(told).toEqual(h.events);
+    expect(told).toHaveLength(1);
+
+    const throwing = await harness({
+      onProxyEvent: () => {
+        throw new Error("analytics down");
+      },
+    });
+    const again = await throwing.app.request("/api/proxy/c/conn_1/items", {
+      headers: { authorization: `Bearer ${token}` },
+    });
+    expect(again.status).toBe(200);
+    expect(throwing.events).toHaveLength(1);
+  });
 });
 
 describe("the proxy with the real verifier and the real vault", () => {
