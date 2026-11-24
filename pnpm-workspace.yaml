@@ -21,7 +21,7 @@ catalog:
   hono: ^4.13.9
   undici: ^8.11.2
   jose: ^6.2.4
-  zod: ^4.6.5
+  zod: ^4.6.6
   "@t3-oss/env-core": ^0.13.11
   # The Docker sandbox backing moves files in and out of a container as tar streams over the Engine
   # API (`packages/sandbox-docker/src/tar.ts`); this does the header arithmetic and the PAX records
